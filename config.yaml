@@ -1,0 +1,99 @@
+paths:
+  vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
+  saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
+  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES/00 - FILE.md"
+  media_root: "/volume1/NAS/MEDIA/SAVES"
+  cookies_dir: "cookies"
+  logs_dir: "logs"
+  state_file: "processing_state.json"
+  pending_approvals_file: "pending_approvals.json"
+
+# Windows dev override (comment/uncomment as needed):
+# vault_root: "N:/NAS/OBSIDIAN/Remote Vault"
+# media_root: "N:/NAS/MEDIA/SAVES"
+
+watcher:
+  debounce_seconds: 3
+
+processing:
+  concurrent_downloads: 1
+  retry_attempts: 3
+  retry_delay_seconds: 30
+  skip_duplicates: true
+
+media:
+  download_video: true
+  download_images: true
+  max_video_size_mb: 500
+  video_quality: "bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best"
+
+transcription:
+  enabled: true
+  model: "base"              # tiny|base|small|medium|large
+  language: "en"
+  skip_if_captions_available: true
+  max_duration_minutes: 30
+
+ai:
+  model: "claude-opus-4-8"
+  max_tokens: 4096
+  temperature: 0.3
+  max_content_chars: 20000
+
+platforms:
+  reddit:
+    use_praw: true
+    top_comments_count: 5
+    include_op_top_level_comments: true
+    praw_delay: 0
+    delay_seconds: 1.0
+  instagram:
+    delay_seconds: 4.0
+    cookie_expiry_days: 21
+    cookie_warning_days_ahead: 7
+  tiktok:
+    no_watermark: true
+    delay_seconds: 1.5
+    cookie_expiry_days: 21
+    cookie_warning_days_ahead: 7
+  facebook:
+    delay_seconds: 7.0
+    cookie_expiry_days: 30
+    cookie_warning_days_ahead: 7
+  reddit_cookies:
+    delay_seconds: 1.0
+    cookie_expiry_days: 30
+    cookie_warning_days_ahead: 7
+  youtube:
+    download_video: false
+    download_subtitles: true
+    subtitle_language: "en"
+    delay_seconds: 1.0
+  generic:
+    playwright_timeout_seconds: 30
+    wait_for_network_idle: true
+    auto_click_cookie_banners: true
+    delay_seconds: 2.0
+
+discord:
+  channel_approvals: "SAVES-approvals"
+  channel_log: "SAVES-logs"
+  channel_alerts: "SAVES-alerts"
+  auto_approve_on_timeout: false
+  auto_approve_timeout_hours: 48
+
+notes:
+  include_metadata_section: true
+  collapse_transcript: true
+  date_format: "%Y-%m-%d"
+  filename_max_length: 60
+  tags_min: 10
+  tags_max: 20
+
+credentials:
+  keys:
+    - ANTHROPIC_API_KEY
+    - DISCORD_BOT_TOKEN
+    - REDDIT_CLIENT_ID
+    - REDDIT_CLIENT_SECRET
+    - REDDIT_USER_AGENT

@@ -1,0 +1,30 @@
+# Secrets and credentials
+.env
+cookies/*.txt
+cookies/instagram.txt
+cookies/tiktok.txt
+cookies/reddit.txt
+cookies/facebook.txt
+
+# Runtime state
+processing_state.json
+pending_approvals.json
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Whisper / ML cache
+*.pt
+
+# OS
+.DS_Store
+Thumbs.db
