@@ -1,2 +1,10 @@
-openai-whisper>=20231117
-torch>=2.0.0
+# Install this on the workstation running whisper_server.py:
+#   pip install -r requirements-whisper.txt
+#
+# For GPU (Linux + ROCm 6.1 only, RX 6800 XT is NOT supported by ROCm 7):
+#   pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
+#   then: python scripts/whisper_server.py --device cuda --compute-type float16
+#
+# CPU (recommended for Windows / 7950X — no driver setup needed):
+#   python scripts/whisper_server.py --model large-v3-turbo
+faster-whisper>=1.0.0

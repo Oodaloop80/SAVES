@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  saves-automation:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: saves_app
+    restart: unless-stopped
+    env_file: ../.env
+    volumes:
+      - /volume1/NAS/OBSIDIAN/Remote Vault:/vault:rw
+      - /volume1/NAS/MEDIA/SAVES:/media:rw
+      - ../cookies:/app/cookies:ro
+      - ../config.yaml:/app/config.yaml:ro
+      - ../logs:/app/logs:rw
+      - ../processing_state.json:/app/processing_state.json:rw
+      - ../pending_approvals.json:/app/pending_approvals.json:rw
+      - instaloader-session:/root/.config/instaloader
+      - whisper-cache:/root/.cache/whisper
+
+volumes:
+  instaloader-session:
+  whisper-cache:

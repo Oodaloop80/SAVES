@@ -29,10 +29,18 @@ media:
 
 transcription:
   enabled: true
-  model: "base"              # tiny|base|small|medium|large
+  mode: "remote"             # "local" | "remote" — use remote since Whisper runs on workstation
+  remote_url: "http://YOUR-DESKTOP-IP:5000/transcribe"
+  model: "large-v3-turbo"    # large-v3-turbo (recommended), large-v3, medium.en, small.en
   language: "en"
   skip_if_captions_available: true
   max_duration_minutes: 30
+
+vision:
+  enabled: true              # Send images/video frames to Claude for visual text extraction
+  max_images: 5              # Max images per analysis request (cost control)
+  max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
+  skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
 
 ai:
   model: "claude-opus-4-8"
@@ -89,6 +97,20 @@ notes:
   filename_max_length: 60
   tags_min: 10
   tags_max: 20
+
+preferences:
+  file: "preferences.json"
+  enabled: true
+
+fact_checking:
+  enabled: true
+  topics:
+    - health
+    - political
+    - finance
+
+travel_verification:
+  enabled: true
 
 credentials:
   keys:
