@@ -79,22 +79,36 @@ def _yt_dlp_download(
     cmd = [
         "yt-dlp",
         "-f", video_quality,
+        "--merge-output-format", "mp4",   # mux separate video+audio streams (needs ffmpeg)
         f"--max-filesize={max_size_mb}M",
         "--no-warnings",
-        "-o", os.path.join(save_dir, "%(title).40s.%(ext)s"),
+        "--no-playlist",
+        "--print", "after_move:filepath",  # print the final muxed file path to stdout
+        "--no-simulate",                   # ...but still download
+        "-o", os.path.join(save_dir, "%(title).80s.%(ext)s"),
     ]
     if cookies_path:
         cmd += ["--cookies", cookies_path]
     cmd.append(url)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
-        # Find newest file in save_dir
+        # The final, post-merge filepath is the last non-empty stdout line
+        lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+        if lines and os.path.exists(lines[-1]):
+            return lines[-1]
+        # Fallback: newest file in save_dir
         files = sorted(
             [os.path.join(save_dir, f) for f in os.listdir(save_dir)],
             key=os.path.getmtime,
         )
         if files:
             return files[-1]
+    else:
+        logger.warning(
+            "yt-dlp failed (rc=%s) for %s. If you see a muxing/ffmpeg error, install "
+            "ffmpeg and ensure it is on PATH. stderr: %s",
+            result.returncode, url, (result.stderr or "")[:300],
+        )
     return None
 
 
@@ -121,6 +135,10 @@ def _url_looks_like_video(url: str) -> bool:
 
 
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
-    """Return vault-relative path for Obsidian embeds. Formatter wraps in ![[]] once.
-    Uses forward slashes so the path works on both Windows Obsidian and Linux Docker."""
-    return os.path.relpath(abs_path, vault_root).replace("\\", "/")
+    """Return the media path RELATIVE TO media_root, with forward slashes.
+
+    The note references it via the External File Embed plugin as `media://<this>`,
+    where each device maps the `media://` virtual directory to its own MEDIA root
+    (DEV path, N:\\ on Windows, Tailscale mount on mobile). This keeps notes
+    device-independent while media lives outside the vault."""
+    return os.path.relpath(abs_path, media_root).replace("\\", "/")

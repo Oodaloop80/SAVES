@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.config import load_config
 from src.credentials import load_credentials
 from src.extractors import get_extractor
+from src.extractors.enrich import enrich_embedded_media
 from src.media.downloader import download_media, abs_to_obsidian_embed
 from src.media.transcriber import transcribe
 from src.media.vision import prepare_images_for_claude
@@ -34,6 +35,11 @@ async def run(url: str, dry_run: bool = False):
     extractor = get_extractor(url, config)
     print("Extracting content...")
     content = await extractor.extract(url)
+    content = await enrich_embedded_media(content, config)
+    if content.metadata.get("youtube_url"):
+        print(f"  Enriched with embedded YouTube: {content.metadata['youtube_url']}")
+        if content.captions:
+            print(f"  YouTube captions available ({len(content.captions)} chars) — Whisper will be skipped")
     print(f"  Title: {content.title}")
     print(f"  Author: {content.author}")
     print(f"  Body length: {len(content.body_text)} chars")

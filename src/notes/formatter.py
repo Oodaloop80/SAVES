@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date, datetime, timezone
 
 from src.extractors.base import ExtractedContent
@@ -91,13 +92,29 @@ def _takeaways_section(ai_result: dict) -> str:
     return f"## Key Takeaways\n{bullets}\n"
 
 
+def _author_link(content: ExtractedContent) -> str:
+    """Render author as a clickable link where the platform supports it."""
+    a = content.author or ""
+    if not a:
+        return ""
+    m = content.metadata or {}
+    if content.platform == "reddit":
+        handle = a.split("/")[-1]  # "u/name" -> "name"
+        return f"[{a}](https://reddit.com/u/{handle})"
+    if content.platform == "youtube" and m.get("channel_id"):
+        return f"[{a}](https://youtube.com/channel/{m['channel_id']})"
+    return a
+
+
 def _metadata_section(content: ExtractedContent, saved_date: str) -> str:
     lines = [f"- **Platform:** {content.platform}"]
-    if content.author:
-        lines.append(f"- **Author:** {content.author}")
+    author = _author_link(content)
+    if author:
+        lines.append(f"- **Author:** {author}")
     m = content.metadata or {}
     if m.get("subreddit"):
-        lines.append(f"- **Subreddit:** r/{m['subreddit']}")
+        sub = m["subreddit"]
+        lines.append(f"- **Subreddit:** [r/{sub}](https://reddit.com/r/{sub})")
     if m.get("upload_date"):
         lines.append(f"- **Posted:** {_format_posted(m['upload_date'])}")
     elif m.get("created_utc"):
@@ -106,23 +123,58 @@ def _metadata_section(content: ExtractedContent, saved_date: str) -> str:
         lines.append(f"- **Views:** {m['view_count']:,}")
     if m.get("score"):
         lines.append(f"- **Score:** {m['score']}")
+    # Embedded YouTube source (when a post links a YouTube video)
+    if m.get("youtube_url"):
+        yt_line = f"- **Video Source:** [YouTube]({m['youtube_url']})"
+        extras = []
+        if m.get("youtube_channel"):
+            extras.append(m["youtube_channel"])
+        if m.get("youtube_views") is not None:
+            extras.append(f"{m['youtube_views']:,} views")
+        if m.get("youtube_duration"):
+            extras.append(_format_duration(m["youtube_duration"]))
+        if extras:
+            yt_line += " — " + " · ".join(extras)
+        lines.append(yt_line)
     lines.append(f"- **Saved:** {saved_date}")
     return "## Metadata\n" + "\n".join(lines) + "\n"
 
 
+def _format_duration(seconds) -> str:
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return str(seconds)
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
 def _media_embeds(media_paths: list[str]) -> str:
+    """Emit External File Embed plugin blocks. Each device maps `media://` to its
+    own MEDIA root, so the same note embeds correctly on any device/platform."""
     if not media_paths:
         return ""
-    return "\n".join(f"![[{p}]]" for p in media_paths) + "\n"
+    blocks = [f"```EmbedRelativeTo\nmedia://{p}\n```" for p in media_paths]
+    return "\n\n".join(blocks) + "\n"
+
+
+def _paragraphize(text: str, sentences_per: int = 4) -> list[str]:
+    """Group a flat run-on transcript into readable paragraphs by sentence."""
+    text = " ".join(text.split())  # collapse whitespace/newlines
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    sentences = [s for s in sentences if s]
+    return [" ".join(sentences[i:i + sentences_per])
+            for i in range(0, len(sentences), sentences_per)]
 
 
 def _transcript_block(transcript: str, collapse: bool) -> str:
     if not transcript:
         return ""
-    safe = transcript[:8000].replace("\n", "\n> ")
+    paras = _paragraphize(transcript[:100000])
     if collapse:
-        return f"> [!note]- Full Transcript\n> {safe}\n"
-    return f"## Full Transcript\n{transcript[:8000]}\n"
+        body = "\n>\n> ".join(paras)
+        return f"> [!note]- Full Transcript\n> {body}\n"
+    return "## Full Transcript\n\n" + "\n\n".join(paras) + "\n"
 
 
 def _body_quote(content: ExtractedContent) -> str:
@@ -187,20 +239,25 @@ def _location_callout(lc: dict) -> str:
 # Per-type renderers
 # ─────────────────────────────────────────────────────────
 
+def _chapters_block(content: ExtractedContent) -> str:
+    if not content.chapters:
+        return ""
+    m = content.metadata or {}
+    vid_id = m.get("video_id") or m.get("youtube_video_id") or ""
+    base = m.get("youtube_url") or content.url
+    ch_lines = []
+    for ch in content.chapters:
+        secs = ch.get("seconds", 0)
+        link = f"https://youtube.com/watch?v={vid_id}&t={secs}" if vid_id else base
+        ch_lines.append(f"> - [**{ch['time_str']}**]({link}) {ch['title']}")
+    return "> [!abstract]- Chapters\n" + "\n".join(ch_lines) + "\n"
+
+
 def _render_youtube_video(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = []
     parts.append(f"![{ai_result.get('title', '')}]({content.url})\n")
-
-    if content.chapters:
-        vid_id = (content.metadata or {}).get("video_id", "")
-        ch_lines = []
-        for ch in content.chapters:
-            secs = ch.get("seconds", 0)
-            link = f"https://youtube.com/watch?v={vid_id}&t={secs}" if vid_id else content.url
-            ch_lines.append(f"> - [**{ch['time_str']}**]({link}) {ch['title']}")
-        parts.append("> [!abstract]- Chapters\n" + "\n".join(ch_lines) + "\n")
-
+    parts.append(_chapters_block(content))
     parts.append(_summary_section(ai_result))
     parts.append(_takeaways_section(ai_result))
     parts.append(_transcript_block(transcript, collapse))
@@ -238,6 +295,7 @@ def _render_reddit_video(ai_result, content, media_paths, transcript, collapse):
     parts = [
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
+        _chapters_block(content),
         _transcript_block(transcript, collapse),
         _summary_section(ai_result),
         _body_quote(content),

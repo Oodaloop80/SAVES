@@ -7,6 +7,7 @@ from src.ai.verifier import check_travel_location
 from src.discord_bot.approval import new_pending
 from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
+from src.extractors.enrich import enrich_embedded_media
 from src.media.downloader import download_media, abs_to_obsidian_embed
 from src.media.transcriber import transcribe
 from src.media.vision import prepare_images_for_claude
@@ -74,6 +75,9 @@ async def _process_one(
             state.mark_failed(url, err_msg)
             await send_alert(bot, alert_channel, f"Extraction failed: {url}\n{err_msg}")
         return
+
+    # 1b. Enrich with embedded cross-platform media (e.g. a YouTube video in a Reddit post)
+    content = await enrich_embedded_media(content, config)
 
     # 2. Build preferences hint for this source
     source_key = get_source_key(platform, content.metadata or {}, content.author)
