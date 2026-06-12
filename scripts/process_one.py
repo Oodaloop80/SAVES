@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Manually process a single URL end-to-end and print the formatted note."""
+"""Manually process a single URL end-to-end, write the note, and print a summary.
+
+Usage:
+    python scripts/process_one.py <URL>
+    python scripts/process_one.py <URL> --dry-run   # print note only, no file write
+"""
 import asyncio
 import os
 import sys
@@ -14,10 +19,11 @@ from src.media.transcriber import transcribe
 from src.media.vision import prepare_images_for_claude
 from src.ai.claude_client import analyze_content, fact_check
 from src.notes.formatter import format_note
+from src.notes.file_manager import write_note
 from src.utils.url_parser import detect_platform, normalize_url
 
 
-async def run(url: str):
+async def run(url: str, dry_run: bool = False):
     load_credentials()
     config = load_config()
 
@@ -36,8 +42,8 @@ async def run(url: str):
     print(f"  Media URLs extracted: {content.media_urls}")
 
     paths = config.get("paths", {})
-    media_root = paths.get("media_root", "/tmp/saves-test-media")
-    vault_root = paths.get("vault_root", "/tmp/saves-test-vault")
+    media_root = paths.get("media_root", "test-media")
+    vault_root = paths.get("vault_root", "test-vault")
 
     print("Downloading media...")
     media_paths_abs = await download_media(
@@ -57,6 +63,13 @@ async def run(url: str):
     if content.captions:
         transcript = content.captions
         print(f"  Using existing captions ({len(transcript)} chars)")
+    elif media_paths_abs:
+        print("  Attempting transcription...")
+        transcript = await transcribe(media_paths_abs[0], config)
+        if transcript:
+            print(f"  Transcript: {len(transcript)} chars")
+        else:
+            print("  Transcription skipped or unavailable")
 
     image_blocks = []
     if media_paths_abs and platform != "youtube":
@@ -69,6 +82,7 @@ async def run(url: str):
         content, transcript, config,
         image_blocks=image_blocks or None,
     )
+    print(f"  Note type: {ai_result.get('note_type')}")
     print(f"  Folder: {ai_result.get('folder_path')}")
     print(f"  Tags ({len(ai_result.get('tags', []))}): {', '.join(ai_result.get('tags', []))}")
 
@@ -90,9 +104,26 @@ async def run(url: str):
     print(note_md)
     print("=" * 60)
 
+    if dry_run:
+        print("\n[dry-run] Note not written to disk.")
+        return
+
+    folder_path = ai_result.get("folder_path", "SAVES/_UNSORTED")
+    filename = ai_result.get("filename") or _safe_filename(content.title or url)
+    note_path = write_note(vault_root, folder_path, filename, note_md)
+    print(f"\nNote written to: {note_path}")
+
+
+def _safe_filename(text: str) -> str:
+    import re
+    s = re.sub(r'[^\w\s-]', '', text.lower())
+    s = re.sub(r'[\s_]+', '-', s).strip('-')
+    return s[:60] or "untitled"
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python scripts/process_one.py <URL>")
+        print("Usage: python scripts/process_one.py <URL> [--dry-run]")
         sys.exit(1)
-    asyncio.run(run(sys.argv[1]))
+    dry = "--dry-run" in sys.argv
+    asyncio.run(run(sys.argv[1], dry_run=dry))

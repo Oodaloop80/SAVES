@@ -1,0 +1,10 @@
+# Local dev overrides — copy this file to config.local.yaml and fill in your paths.
+# config.local.yaml is gitignored and never committed.
+# Values here override config.yaml when running locally on Windows.
+
+paths:
+  vault_root: "C:/DEV/Apps/SAVES/OBSIDIAN"
+  saves_root: "C:/DEV/Apps/SAVES/OBSIDIAN/SAVES"
+  inbox_file: "C:/DEV/Apps/SAVES/OBSIDIAN/SAVES/00 - FILE.md"
+  media_root: "C:/DEV/Apps/SAVES/MEDIA"
+  cookies_dir: "cookies"

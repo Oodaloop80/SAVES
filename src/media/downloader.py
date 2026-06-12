@@ -30,9 +30,7 @@ async def download_media(
     if not media_urls:
         return []
 
-    slug = _slug(title)
-    author_safe = _slug(author or "unknown", 30)
-    save_dir = os.path.join(media_root, platform, author_safe, slug)
+    save_dir = os.path.join(media_root, platform)
     os.makedirs(save_dir, exist_ok=True)
 
     mcfg = config.get("media", {})

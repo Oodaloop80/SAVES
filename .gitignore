@@ -6,6 +6,9 @@ cookies/tiktok.txt
 cookies/reddit.txt
 cookies/facebook.txt
 
+# Local dev config overrides (never commit — contains machine-specific paths)
+config.local.yaml
+
 # Runtime state
 processing_state.json
 pending_approvals.json
