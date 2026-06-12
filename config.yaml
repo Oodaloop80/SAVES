@@ -50,10 +50,8 @@ ai:
 
 platforms:
   reddit:
-    use_praw: true
     top_comments_count: 5
     include_op_top_level_comments: true
-    praw_delay: 0
     delay_seconds: 1.0
   instagram:
     delay_seconds: 4.0
@@ -66,10 +64,6 @@ platforms:
     cookie_warning_days_ahead: 7
   facebook:
     delay_seconds: 7.0
-    cookie_expiry_days: 30
-    cookie_warning_days_ahead: 7
-  reddit_cookies:
-    delay_seconds: 1.0
     cookie_expiry_days: 30
     cookie_warning_days_ahead: 7
   youtube:
@@ -116,6 +110,3 @@ credentials:
   keys:
     - ANTHROPIC_API_KEY
     - DISCORD_BOT_TOKEN
-    - REDDIT_CLIENT_ID
-    - REDDIT_CLIENT_SECRET
-    - REDDIT_USER_AGENT

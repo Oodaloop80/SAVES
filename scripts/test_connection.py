@@ -50,27 +50,26 @@ try:
 except Exception as e:
     check("Discord bot", False, str(e))
 
-# 3. Vault path
+# 3. Reddit JSON API (no credentials needed)
+try:
+    import requests
+    resp = requests.get(
+        "https://www.reddit.com/r/test/new.json",
+        headers={"User-Agent": "saves-automation/1.0 (connection test)"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    check("Reddit JSON API", True, "no credentials required")
+except Exception as e:
+    check("Reddit JSON API", False, str(e))
+
+# 4. Vault path
 vault_root = paths.get("vault_root", "")
 check("Vault root exists", os.path.exists(vault_root), vault_root)
 
-# 4. Media root
+# 5. Media root
 media_root = paths.get("media_root", "")
 check("Media root exists", os.path.exists(media_root), media_root)
-
-# 5. PRAW
-try:
-    import praw
-    reddit = praw.Reddit(
-        client_id=os.environ["REDDIT_CLIENT_ID"],
-        client_secret=os.environ["REDDIT_CLIENT_SECRET"],
-        user_agent=os.environ["REDDIT_USER_AGENT"],
-    )
-    sub = reddit.subreddit("test")
-    _ = sub.display_name
-    check("Reddit PRAW", True)
-except Exception as e:
-    check("Reddit PRAW", False, str(e))
 
 print()
 passed = sum(results)
