@@ -24,15 +24,31 @@ def _call(
     user: str | list,
     config: dict,
 ) -> str:
-    """Call the Claude API. `user` may be a plain string or a list of content blocks."""
+    """Call the Claude API. `user` may be a plain string or a list of content blocks.
+
+    Newer models (e.g. claude-opus-4-8) reject the `temperature` parameter. We send it
+    when configured, but transparently retry without it if the API reports it deprecated.
+    """
     ai_cfg = config.get("ai", {})
-    msg = client.messages.create(
-        model=ai_cfg.get("model", "claude-opus-4-8"),
-        max_tokens=ai_cfg.get("max_tokens", 4096),
-        temperature=ai_cfg.get("temperature", 0.3),
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
+    params = {
+        "model": ai_cfg.get("model", "claude-opus-4-8"),
+        "max_tokens": ai_cfg.get("max_tokens", 4096),
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    temperature = ai_cfg.get("temperature")
+    if temperature is not None:
+        params["temperature"] = temperature
+
+    try:
+        msg = client.messages.create(**params)
+    except anthropic.BadRequestError as e:
+        if "temperature" in str(e) and "temperature" in params:
+            logger.info("Model rejects `temperature`; retrying without it")
+            params.pop("temperature", None)
+            msg = client.messages.create(**params)
+        else:
+            raise
     return msg.content[0].text
 
 
