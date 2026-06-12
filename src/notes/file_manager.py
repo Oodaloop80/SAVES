@@ -8,10 +8,11 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
-def _safe_filename(filename: str, max_len: int = 60) -> str:
-    s = re.sub(r'[<>:"/\\|?*]', '-', filename)
-    s = re.sub(r'\s+', '-', s).strip('-')
-    return (s[:max_len] or "untitled").lower()
+def _safe_filename(filename: str, max_len: int = 80) -> str:
+    """Strip filesystem-illegal chars; preserve case and spaces for readable filenames."""
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s[:max_len] or "untitled"
 
 
 def write_note(vault_root: str, folder_path: str, filename: str, content: str) -> str:

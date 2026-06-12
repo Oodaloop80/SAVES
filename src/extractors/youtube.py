@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
@@ -13,6 +14,7 @@ class YouTubeExtractor(BaseExtractor):
         self.config = config
         pcfg = config.get("platforms", {}).get("youtube", {})
         self.subtitle_language = pcfg.get("subtitle_language", "en")
+        self.cookies_dir = config.get("paths", {}).get("cookies_dir", "cookies")
 
     def can_handle(self, url: str) -> bool:
         return "youtube.com" in url or "youtu.be" in url
@@ -30,12 +32,21 @@ class YouTubeExtractor(BaseExtractor):
                 f"--sub-lang={self.subtitle_language}",
                 "--no-warnings",
                 "-o", os.path.join(tmpdir, "%(id)s.%(ext)s"),
-                url,
             ]
-            subprocess.run(cmd, capture_output=True, timeout=60)
+            # YouTube increasingly blocks anonymous metadata requests ("Sign in to
+            # confirm you're not a bot"). Use cookies/youtube.txt when available.
+            cookies_path = os.path.join(self.cookies_dir, "youtube.txt")
+            if os.path.exists(cookies_path):
+                cmd += ["--cookies", cookies_path]
+            cmd.append(url)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
             if not info_files:
+                logging.getLogger(__name__).warning(
+                    "YouTube metadata extraction produced no info.json for %s (rc=%s). %s",
+                    url, result.returncode, (result.stderr or "")[:300],
+                )
                 return ExtractedContent(url=url, platform="youtube", title=url)
 
             with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:

@@ -49,17 +49,35 @@ async def enrich_embedded_media(content: ExtractedContent, config: dict) -> Extr
         content.chapters = yt.chapters
 
     ym = yt.metadata or {}
-    content.metadata.setdefault("youtube_url", yt.url)
+    # Always record the canonical YouTube link, even if metadata extraction was thin.
+    content.metadata["youtube_url"] = yt.url
     if yt.author:
         content.metadata["youtube_channel"] = yt.author
+    if ym.get("channel_id"):
+        content.metadata["youtube_channel_id"] = ym["channel_id"]
+    if yt.title:
+        content.metadata["youtube_title"] = yt.title
     if ym.get("video_id"):
         content.metadata["youtube_video_id"] = ym["video_id"]
     if ym.get("view_count") is not None:
         content.metadata["youtube_views"] = ym["view_count"]
+    if ym.get("like_count") is not None:
+        content.metadata["youtube_likes"] = ym["like_count"]
     if ym.get("duration") is not None:
         content.metadata["youtube_duration"] = ym["duration"]
     if ym.get("upload_date"):
         content.metadata["youtube_upload_date"] = ym["upload_date"]
 
-    logger.info(f"Enriched {content.platform} post with embedded YouTube video {yt_url}")
+    # The YouTube description usually holds the full recipe / instructions / links.
+    # Stored in metadata so the formatter renders it in a dedicated section and the
+    # prompt builder feeds it to Claude for tagging — without overwriting the host
+    # post's own body or mis-attributing it.
+    if yt.body_text:
+        content.metadata["youtube_description"] = yt.body_text
+
+    logger.info(
+        "Enriched %s post with YouTube video %s (captions=%s, chapters=%s, description=%d chars)",
+        content.platform, yt_url, bool(yt.captions), bool(yt.chapters),
+        len(yt.body_text or ""),
+    )
     return content

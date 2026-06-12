@@ -123,19 +123,25 @@ def _metadata_section(content: ExtractedContent, saved_date: str) -> str:
         lines.append(f"- **Views:** {m['view_count']:,}")
     if m.get("score"):
         lines.append(f"- **Score:** {m['score']}")
-    # Embedded YouTube source (when a post links a YouTube video)
+    # Embedded YouTube source (when a post links/embeds a YouTube video)
     if m.get("youtube_url"):
-        yt_line = f"- **Video Source:** [YouTube]({m['youtube_url']})"
-        extras = []
-        if m.get("youtube_channel"):
-            extras.append(m["youtube_channel"])
+        lines.append(f"- **Video Source:** [YouTube]({m['youtube_url']})")
+        channel = m.get("youtube_channel")
+        if channel:
+            if m.get("youtube_channel_id"):
+                channel = f"[{channel}](https://youtube.com/channel/{m['youtube_channel_id']})"
+            lines.append(f"- **YouTube Channel:** {channel}")
+        if m.get("youtube_upload_date"):
+            lines.append(f"- **YouTube Posted:** {_format_posted(m['youtube_upload_date'])}")
+        yt_stats = []
         if m.get("youtube_views") is not None:
-            extras.append(f"{m['youtube_views']:,} views")
+            yt_stats.append(f"{m['youtube_views']:,} views")
+        if m.get("youtube_likes") is not None:
+            yt_stats.append(f"{m['youtube_likes']:,} likes")
         if m.get("youtube_duration"):
-            extras.append(_format_duration(m["youtube_duration"]))
-        if extras:
-            yt_line += " — " + " · ".join(extras)
-        lines.append(yt_line)
+            yt_stats.append(_format_duration(m["youtube_duration"]))
+        if yt_stats:
+            lines.append(f"- **YouTube:** {' · '.join(yt_stats)}")
     lines.append(f"- **Saved:** {saved_date}")
     return "## Metadata\n" + "\n".join(lines) + "\n"
 
@@ -186,6 +192,16 @@ def _body_quote(content: ExtractedContent) -> str:
         author_line += f" — {m['score']:,} upvotes"
     quoted = "\n".join(f"> {l}" for l in content.body_text[:4000].splitlines())
     return f"## Original Content\n> {author_line}\n>\n{quoted}\n"
+
+
+def _video_description_block(content: ExtractedContent) -> str:
+    """Render an embedded YouTube video's description (recipe / instructions / links)."""
+    desc = (content.metadata or {}).get("youtube_description")
+    if not desc:
+        return ""
+    channel = (content.metadata or {}).get("youtube_channel", "YouTube")
+    quoted = "\n".join(f"> {l}" for l in desc[:6000].splitlines())
+    return f"## Video Description\n> [!quote]- From {channel} (YouTube)\n{quoted}\n"
 
 
 def _comments_section(content: ExtractedContent) -> str:
@@ -260,6 +276,7 @@ def _render_youtube_video(ai_result, content, media_paths, transcript, collapse)
     parts.append(_chapters_block(content))
     parts.append(_summary_section(ai_result))
     parts.append(_takeaways_section(ai_result))
+    parts.append(_video_description_block(content))
     parts.append(_transcript_block(transcript, collapse))
     parts.append(_metadata_section(content, saved_date))
     return "\n".join(p for p in parts if p)
@@ -283,6 +300,7 @@ def _render_reddit_gallery(ai_result, content, media_paths, transcript, collapse
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _summary_section(ai_result),
+        _video_description_block(content),
         _body_quote(content),
         _comments_section(content),
         _metadata_section(content, saved_date),
@@ -296,8 +314,10 @@ def _render_reddit_video(ai_result, content, media_paths, transcript, collapse):
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _chapters_block(content),
-        _transcript_block(transcript, collapse),
         _summary_section(ai_result),
+        _takeaways_section(ai_result),
+        _video_description_block(content),
+        _transcript_block(transcript, collapse),
         _body_quote(content),
         _comments_section(content),
         _metadata_section(content, saved_date),

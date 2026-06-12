@@ -250,7 +250,7 @@ class SAVESBot(discord.Client):
         note_path = write_note(
             vault_root=paths.get("vault_root", "/vault"),
             folder_path=pending.ai_result["folder_path"],
-            filename=pending.ai_result["filename"],
+            filename=pending.ai_result.get("title") or pending.ai_result.get("filename", "untitled"),
             content=note_md,
         )
 

@@ -38,8 +38,14 @@ async def run(url: str, dry_run: bool = False):
     content = await enrich_embedded_media(content, config)
     if content.metadata.get("youtube_url"):
         print(f"  Enriched with embedded YouTube: {content.metadata['youtube_url']}")
+        if content.metadata.get("youtube_channel"):
+            print(f"    Channel: {content.metadata['youtube_channel']}")
+        if content.metadata.get("youtube_description"):
+            print(f"    Description: {len(content.metadata['youtube_description'])} chars (recipe/instructions)")
         if content.captions:
             print(f"  YouTube captions available ({len(content.captions)} chars) — Whisper will be skipped")
+        else:
+            print("  No YouTube captions found — will fall back to Whisper on the downloaded video")
     print(f"  Title: {content.title}")
     print(f"  Author: {content.author}")
     print(f"  Body length: {len(content.body_text)} chars")
@@ -115,16 +121,10 @@ async def run(url: str, dry_run: bool = False):
         return
 
     folder_path = ai_result.get("folder_path", "SAVES/_UNSORTED")
-    filename = ai_result.get("filename") or _safe_filename(content.title or url)
+    filename = ai_result.get("title") or ai_result.get("filename") or content.title or url
     note_path = write_note(vault_root, folder_path, filename, note_md)
     print(f"\nNote written to: {note_path}")
 
-
-def _safe_filename(text: str) -> str:
-    import re
-    s = re.sub(r'[^\w\s-]', '', text.lower())
-    s = re.sub(r'[\s_]+', '-', s).strip('-')
-    return s[:60] or "untitled"
 
 
 if __name__ == "__main__":

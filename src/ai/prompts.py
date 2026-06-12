@@ -53,6 +53,18 @@ Generate 10-20 tags covering ALL applicable dimensions:
 - Temporal: summer, holiday, make-ahead, seasonal when relevant
 Use hyphens for multi-word tags. Prefer specific over generic.
 
+## Recipe / Cooking Tagging (REQUIRED when content is food, cooking, or a recipe)
+When the content is a recipe or cooking video, ALWAYS add tags across these dimensions:
+- Key ingredients: the main components (e.g. chicken, shrimp, cheddar, biscuits, garlic,
+  heavy-cream, puff-pastry). Tag the notable ones, not every pantry staple.
+- Cooking method: baking, frying, deep-frying, air-frying, grilling, smoking, roasting,
+  sauteing, braising, boiling, slow-cooking, sous-vide, no-cook — whichever apply.
+- Dish type: pot-pie, sandwich, pasta, soup, stew, casserole, salad, dessert, cake,
+  cookies, breakfast, dip, sauce, side-dish — be specific.
+- Cuisine when identifiable: italian, mexican, cajun, southern, thai, indian, etc.
+- Meal/occasion: breakfast, lunch, dinner, snack, holiday, weeknight, meal-prep.
+Pull ingredient and method tags from the YouTube description / transcript when present.
+
 ## Folder Organization
 Place notes under SAVES/ with CATEGORY/SUBCATEGORY.
 Examples: SAVES/COOKING/BBQ, SAVES/FINANCE/CREDIT-CARDS, SAVES/TRAVEL/CARIBBEAN,
@@ -89,14 +101,24 @@ def build_user_prompt(
         parts.append(f"Preference hint: {preferences_hint}")
 
     meta_lines = []
+    skip_keys = ("possible_paywall", "embedded_article_url", "youtube_description")
     for k, v in (content.metadata or {}).items():
-        if v is not None and k not in ("possible_paywall", "embedded_article_url"):
+        if v is not None and k not in skip_keys:
             meta_lines.append(f"  {k}: {v}")
     if meta_lines:
         parts.append("Metadata:\n" + "\n".join(meta_lines))
 
     if content.body_text:
         parts.append(f"Content:\n{content.body_text[:8000]}")
+
+    # An embedded YouTube video's description often contains the full recipe,
+    # ingredient list, instructions, and source links — feed it to Claude.
+    yt_desc = (content.metadata or {}).get("youtube_description")
+    if yt_desc:
+        parts.append(
+            "Embedded YouTube video description (often the full recipe / ingredients / "
+            f"instructions / links):\n{yt_desc[:6000]}"
+        )
 
     if transcript:
         parts.append(f"Transcript:\n{transcript[:12000]}")
