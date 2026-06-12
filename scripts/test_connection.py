@@ -39,14 +39,16 @@ except Exception as e:
 
 # 2. Discord token
 try:
-    import urllib.request, json as _json
-    req = urllib.request.Request(
+    import requests as _requests
+    resp = _requests.get(
         "https://discord.com/api/v10/users/@me",
         headers={"Authorization": f"Bot {os.environ['DISCORD_BOT_TOKEN']}"},
+        timeout=10,
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = _json.loads(resp.read())
-    check("Discord bot", True, f"Logged in as {data.get('username')}")
+    if resp.status_code == 200:
+        check("Discord bot", True, f"Logged in as {resp.json().get('username')}")
+    else:
+        check("Discord bot", False, f"HTTP {resp.status_code}: {resp.text[:100]}")
 except Exception as e:
     check("Discord bot", False, str(e))
 
