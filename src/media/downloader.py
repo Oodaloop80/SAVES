@@ -123,6 +123,5 @@ def _url_looks_like_video(url: str) -> bool:
 
 
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
-    """Convert absolute media path to Obsidian ![[...]] relative embed path."""
-    rel = os.path.relpath(abs_path, vault_root)
-    return f"![[{rel}]]"
+    """Return vault-relative path for Obsidian embeds. Formatter wraps in ![[]] once."""
+    return os.path.relpath(abs_path, vault_root)

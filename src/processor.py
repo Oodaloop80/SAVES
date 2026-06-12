@@ -164,6 +164,8 @@ async def _process_one(
         "title": content.title,
         "author": content.author,
         "platform": content.platform,
+        "body_text": content.body_text,
+        "captions": content.captions,
         "metadata": content.metadata,
         "chapters": content.chapters,
         "top_comments": content.top_comments,

@@ -30,7 +30,7 @@ media:
 transcription:
   enabled: true
   mode: "remote"             # "local" | "remote" — use remote since Whisper runs on workstation
-  remote_url: "http://YOUR-DESKTOP-IP:5000/transcribe"
+  remote_url: "http://192.168.1.90:5000/transcribe"
   model: "large-v3-turbo"    # large-v3-turbo (recommended), large-v3, medium.en, small.en
   language: "en"
   skip_if_captions_available: true

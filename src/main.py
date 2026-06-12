@@ -11,6 +11,8 @@ from src.queue_manager import ProcessingState, QueueManager
 from src.utils.preferences import PreferencesStore
 from src.watcher import FileWatcher
 
+os.makedirs("logs", exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -26,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    os.makedirs("logs", exist_ok=True)
-
     config = load_config()
     load_credentials()
 
@@ -44,8 +44,8 @@ async def main():
     queue: asyncio.Queue = asyncio.Queue()
     queue_manager = QueueManager(queue, state)
 
-    bot = SAVESBot(config, prefs)
-    loop = asyncio.get_event_loop()
+    bot = SAVESBot(config, prefs, state)
+    loop = asyncio.get_running_loop()
 
     def on_file_change():
         asyncio.ensure_future(queue_manager.enqueue_from_file(inbox_path))

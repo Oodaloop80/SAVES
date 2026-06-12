@@ -16,7 +16,6 @@ def check_all_cookies(config: dict, cookies_dir: str) -> list[dict]:
         "instagram": "instagram.txt",
         "tiktok": "tiktok.txt",
         "facebook": "facebook.txt",
-        "reddit_cookies": "reddit.txt",
     }
 
     for platform, filename in platform_cookie_files.items():

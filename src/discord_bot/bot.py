@@ -134,12 +134,13 @@ class TagsModal(discord.ui.Modal, title="Edit Tags"):
 
 
 class SAVESBot(discord.Client):
-    def __init__(self, config: dict, prefs: PreferencesStore):
+    def __init__(self, config: dict, prefs: PreferencesStore, state=None):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
         self.config = config
         self.prefs = prefs
+        self.state = state
         self.tree = discord.app_commands.CommandTree(self)
         paths = config.get("paths", {})
         self.store = PendingApprovalsStore(paths.get("pending_approvals_file", "pending_approvals.json"))
@@ -230,6 +231,8 @@ class SAVESBot(discord.Client):
             platform=pending.platform,
             title=cs.get("title", ""),
             author=cs.get("author"),
+            body_text=cs.get("body_text", ""),
+            captions=cs.get("captions"),
             metadata=cs.get("metadata", {}),
             chapters=cs.get("chapters"),
             top_comments=cs.get("top_comments"),
@@ -255,6 +258,9 @@ class SAVESBot(discord.Client):
         source_key = pending.ai_result.get("_source_key")
         final_path = pending.ai_result["folder_path"]
         self.prefs.set(source_key, final_path)
+
+        if self.state is not None:
+            self.state.mark_done(pending.url, note_path)
 
         remove_url_from_inbox(paths.get("inbox_file", ""), pending.url)
         self.store.remove(pending.id)
