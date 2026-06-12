@@ -1,0 +1,80 @@
+From 8a9a3d1f53788ea872ba4e8b8bb4289ad2e5021d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 14:58:15 +0000
+Subject: [PATCH] Wire in Reddit cookie loading from cookies/reddit.txt
+
+The previous fix mentioned cookies/reddit.txt in its error message but never
+actually loaded the file. Now RedditExtractor loads the Netscape-format cookie
+file (exported via "Get cookies.txt LOCALLY") into the shared session once,
+domain-scoped to .reddit.com so it applies to both old and www. This carries a
+logged-in session past Cloudflare/Reddit bot blocking.
+---
+ src/extractors/reddit.py | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/src/extractors/reddit.py b/src/extractors/reddit.py
+index 95f7fee..edd0b40 100644
+--- a/src/extractors/reddit.py
++++ b/src/extractors/reddit.py
+@@ -1,6 +1,8 @@
+ import asyncio
+ import html
++import http.cookiejar
+ import logging
++import os
+ import re
+ import time
+ import urllib.parse
+@@ -27,6 +29,33 @@ _SESSION.headers.update({
+     "Sec-Fetch-Site": "same-origin",
+ })
+ 
++_COOKIES_LOADED = False
++
++
++def _load_cookies(cookies_dir: str) -> bool:
++    """Load cookies/reddit.txt (Netscape format) into the shared session, once.
++
++    Cookies are exported with "Get cookies.txt LOCALLY". They are domain-scoped to
++    .reddit.com, so they apply to both www.reddit.com and old.reddit.com. Returns
++    True if a cookie file was found and loaded.
++    """
++    global _COOKIES_LOADED
++    if _COOKIES_LOADED:
++        return True
++    cookie_path = os.path.join(cookies_dir, "reddit.txt")
++    if not os.path.exists(cookie_path):
++        return False
++    try:
++        jar = http.cookiejar.MozillaCookieJar(cookie_path)
++        jar.load(ignore_discard=True, ignore_expires=True)
++        _SESSION.cookies.update(jar)
++        _COOKIES_LOADED = True
++        logger.info("Loaded Reddit cookies from %s (%d cookies)", cookie_path, len(jar))
++        return True
++    except Exception as e:
++        logger.warning("Failed to load Reddit cookies from %s: %s", cookie_path, e)
++        return False
++
+ 
+ def _to_old_reddit_json(url: str) -> str:
+     """Convert any reddit.com URL to an old.reddit.com .json URL (path only, no query)."""
+@@ -43,6 +72,7 @@ class RedditExtractor(BaseExtractor):
+         pcfg = config.get("platforms", {}).get("reddit", {})
+         self.top_comments_count = pcfg.get("top_comments_count", 5)
+         self.include_op_top_level = pcfg.get("include_op_top_level_comments", True)
++        self.cookies_dir = config.get("paths", {}).get("cookies_dir", "cookies")
+ 
+     def can_handle(self, url: str) -> bool:
+         return "reddit.com" in url or "redd.it" in url
+@@ -52,6 +82,7 @@ class RedditExtractor(BaseExtractor):
+         return await asyncio.to_thread(self._extract_sync, url)
+ 
+     def _extract_sync(self, url: str) -> ExtractedContent:
++        _load_cookies(self.cookies_dir)
+         json_url = _to_old_reddit_json(url)
+         logger.debug("Reddit JSON URL: %s", json_url)
+ 
+-- 
+2.43.0
+

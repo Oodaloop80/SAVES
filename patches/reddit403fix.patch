@@ -1,0 +1,166 @@
+From c697fb7dd130e526f6de4f931c14390c6121959c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 14:45:59 +0000
+Subject: [PATCH] Fix Reddit 403: switch to old.reddit.com + persistent session
+ with full browser headers
+
+www.reddit.com sits behind aggressive Cloudflare bot detection that rejects requests
+even with a browser User-Agent. old.reddit.com bypasses this for public posts.
+Also adds a persistent requests.Session (reuses TCP + cookies), 429 retry-after
+handling, and a clear error message telling the user to export cookies if still
+blocked. test_connection.py updated to use the same endpoint.
+---
+ scripts/test_connection.py | 17 ++++++---
+ src/extractors/reddit.py   | 78 +++++++++++++++++++++++++++++++-------
+ 2 files changed, 75 insertions(+), 20 deletions(-)
+
+diff --git a/scripts/test_connection.py b/scripts/test_connection.py
+index 83a47f2..e709e11 100644
+--- a/scripts/test_connection.py
++++ b/scripts/test_connection.py
+@@ -50,14 +50,19 @@ try:
+ except Exception as e:
+     check("Discord bot", False, str(e))
+ 
+-# 3. Reddit JSON API (no credentials needed)
++# 3. Reddit JSON API (no credentials needed — uses old.reddit.com to bypass Cloudflare)
+ try:
+     import requests
+-    resp = requests.get(
+-        "https://www.reddit.com/r/test/new.json",
+-        headers={"User-Agent": "saves-automation/1.0 (connection test)"},
+-        timeout=10,
+-    )
++    sess = requests.Session()
++    sess.headers.update({
++        "User-Agent": (
++            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
++            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
++        ),
++        "Accept": "application/json, text/html, */*;q=0.9",
++        "Accept-Language": "en-US,en;q=0.9",
++    })
++    resp = sess.get("https://old.reddit.com/r/test/new.json", timeout=10)
+     resp.raise_for_status()
+     check("Reddit JSON API", True, "no credentials required")
+ except Exception as e:
+diff --git a/src/extractors/reddit.py b/src/extractors/reddit.py
+index 46e62bd..95f7fee 100644
+--- a/src/extractors/reddit.py
++++ b/src/extractors/reddit.py
+@@ -2,6 +2,8 @@ import asyncio
+ import html
+ import logging
+ import re
++import time
++import urllib.parse
+ 
+ import requests
+ 
+@@ -10,10 +12,29 @@ from src.utils.url_parser import resolve_reddit_short_url
+ 
+ logger = logging.getLogger(__name__)
+ 
+-_HEADERS = {
+-    "User-Agent": "saves-automation/1.0 (personal archiving tool)",
+-    "Accept": "application/json",
+-}
++# Persistent session so Reddit/Cloudflare sees a consistent client.
++_SESSION = requests.Session()
++_SESSION.headers.update({
++    "User-Agent": (
++        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
++        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
++    ),
++    "Accept": "application/json, text/html, */*;q=0.9",
++    "Accept-Language": "en-US,en;q=0.9",
++    "Accept-Encoding": "gzip, deflate, br",
++    "Sec-Fetch-Dest": "empty",
++    "Sec-Fetch-Mode": "cors",
++    "Sec-Fetch-Site": "same-origin",
++})
++
++
++def _to_old_reddit_json(url: str) -> str:
++    """Convert any reddit.com URL to an old.reddit.com .json URL (path only, no query)."""
++    parsed = urllib.parse.urlparse(url)
++    # Force old.reddit.com — significantly less Cloudflare-protected
++    host = re.sub(r'^(www\.|new\.)?', 'old.', parsed.netloc, flags=re.IGNORECASE)
++    path = parsed.path.rstrip("/")
++    return f"{parsed.scheme}://{host}{path}.json"
+ 
+ 
+ class RedditExtractor(BaseExtractor):
+@@ -31,22 +52,51 @@ class RedditExtractor(BaseExtractor):
+         return await asyncio.to_thread(self._extract_sync, url)
+ 
+     def _extract_sync(self, url: str) -> ExtractedContent:
+-        json_url = re.sub(r'#.*$', '', url).rstrip('/') + ".json"
+-        resp = requests.get(json_url, headers=_HEADERS, timeout=15)
++        json_url = _to_old_reddit_json(url)
++        logger.debug("Reddit JSON URL: %s", json_url)
++
++        resp = _SESSION.get(json_url, timeout=20)
++
++        # 429 rate-limit — wait and retry once
++        if resp.status_code == 429:
++            retry_after = int(resp.headers.get("Retry-After", "10"))
++            logger.warning("Reddit rate-limited; waiting %ds", retry_after)
++            time.sleep(retry_after)
++            resp = _SESSION.get(json_url, timeout=20)
+ 
+         if resp.status_code == 403:
+-            try:
+-                reason = resp.json().get("reason", "")
+-            except Exception:
+-                reason = ""
++            # Try to read JSON reason; HTML means Cloudflare blocked (not a private sub)
++            reason = ""
++            if "application/json" in resp.headers.get("Content-Type", ""):
++                try:
++                    reason = resp.json().get("reason", "")
++                except Exception:
++                    pass
+             subreddit = _subreddit_from_url(url)
+             if reason == "private":
+-                raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
++                raise PermissionError(
++                    f"private subreddit — {subreddit} requires membership to view"
++                )
+             if reason == "quarantined":
+-                raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
+-            raise PermissionError(f"403 private/restricted: {subreddit}")
++                raise PermissionError(
++                    f"quarantined subreddit — {subreddit} requires opt-in to view"
++                )
++            raise PermissionError(
++                f"Reddit returned 403 for {subreddit}. "
++                "The subreddit may be private/restricted, or Reddit is blocking "
++                "this request. Try exporting your Reddit cookies and placing them "
++                "in cookies/reddit.txt."
++            )
+ 
+         resp.raise_for_status()
++
++        if "application/json" not in resp.headers.get("Content-Type", ""):
++            raise RuntimeError(
++                f"Reddit returned non-JSON response (likely a Cloudflare challenge). "
++                f"Content-Type: {resp.headers.get('Content-Type')}. "
++                "Export your Reddit browser cookies to cookies/reddit.txt to fix this."
++            )
++
+         data = resp.json()
+ 
+         if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
+@@ -109,7 +159,7 @@ class RedditExtractor(BaseExtractor):
+             }
+             for c in listing if c.get("kind") == "t1"
+         ]
+-        top = sorted(flat, key=lambda c: c["score"], reverse=True)[:self.top_comments_count]
++        top = sorted(flat, key=lambda c: c["score"], reverse=True)[: self.top_comments_count]
+         op_comments = [c for c in flat if self.include_op_top_level and c["author"] == op] if op else []
+         seen: set[str] = set()
+         combined = []
+-- 
+2.43.0
+

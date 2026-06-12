@@ -33,6 +33,7 @@ async def run(url: str):
     print(f"  Body length: {len(content.body_text)} chars")
     if content.top_comments:
         print(f"  Top comments: {len(content.top_comments)}")
+    print(f"  Media URLs extracted: {content.media_urls}")
 
     paths = config.get("paths", {})
     media_root = paths.get("media_root", "/tmp/saves-test-media")

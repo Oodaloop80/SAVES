@@ -1,0 +1,106 @@
+From 02650ca591c5e34c74fecc6641dbf157884e6443 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 14:32:28 +0000
+Subject: [PATCH] Fix Reddit extractor: correct .json URL construction, browser
+ UA, strip all utm_* params, non-JSON guard; Discord test via requests
+
+---
+ src/extractors/reddit.py | 29 ++++++++++++++++++++++++++---
+ src/utils/url_parser.py  | 10 +++++++---
+ 2 files changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/src/extractors/reddit.py b/src/extractors/reddit.py
+index 46e62bd..6a2f96c 100644
+--- a/src/extractors/reddit.py
++++ b/src/extractors/reddit.py
+@@ -2,6 +2,7 @@ import asyncio
+ import html
+ import logging
+ import re
++import urllib.parse
+ 
+ import requests
+ 
+@@ -10,8 +11,13 @@ from src.utils.url_parser import resolve_reddit_short_url
+ 
+ logger = logging.getLogger(__name__)
+ 
++# A browser-like User-Agent avoids Reddit/Cloudflare bot blocking on the public
++# .json endpoint. A generic "python-requests" or bot UA frequently gets a 403.
+ _HEADERS = {
+-    "User-Agent": "saves-automation/1.0 (personal archiving tool)",
++    "User-Agent": (
++        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
++        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
++    ),
+     "Accept": "application/json",
+ }
+ 
+@@ -31,7 +37,12 @@ class RedditExtractor(BaseExtractor):
+         return await asyncio.to_thread(self._extract_sync, url)
+ 
+     def _extract_sync(self, url: str) -> ExtractedContent:
+-        json_url = re.sub(r'#.*$', '', url).rstrip('/') + ".json"
++        # Build the .json URL from the path only — query strings (?utm_...=)
++        # and fragments must be dropped, or ".json" lands inside the query and
++        # Reddit returns an HTML page instead of JSON.
++        parsed = urllib.parse.urlparse(url)
++        path = parsed.path.rstrip("/")
++        json_url = f"{parsed.scheme}://{parsed.netloc}{path}.json"
+         resp = requests.get(json_url, headers=_HEADERS, timeout=15)
+ 
+         if resp.status_code == 403:
+@@ -44,9 +55,21 @@ class RedditExtractor(BaseExtractor):
+                 raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
+             if reason == "quarantined":
+                 raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
+-            raise PermissionError(f"403 private/restricted: {subreddit}")
++            raise PermissionError(
++                f"403 from Reddit for {subreddit}. The subreddit may be private/restricted, "
++                f"or Reddit is rate-limiting/blocking this request."
++            )
+ 
+         resp.raise_for_status()
++
++        # A non-JSON body means Reddit served an HTML block/error page rather
++        # than the API response — surface it clearly instead of a raw decode error.
++        ctype = resp.headers.get("content-type", "")
++        if "json" not in ctype.lower():
++            raise RuntimeError(
++                f"Reddit returned non-JSON ({ctype or 'unknown'}) for {json_url} — "
++                f"likely a Cloudflare block or rate limit. First bytes: {resp.text[:60]!r}"
++            )
+         data = resp.json()
+ 
+         if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
+diff --git a/src/utils/url_parser.py b/src/utils/url_parser.py
+index df86b96..9b58072 100644
+--- a/src/utils/url_parser.py
++++ b/src/utils/url_parser.py
+@@ -5,8 +5,12 @@ import requests
+ 
+ URL_RE = re.compile(r'https?://[^\s\)\]\>"\']+')
+ 
+-_TRACKING_PARAMS = {"igsh", "igshid", "utm_source", "utm_medium", "utm_campaign",
+-                    "utm_term", "utm_content", "fbclid", "ref", "share_id"}
++_TRACKING_PARAMS = {"igsh", "igshid", "fbclid", "ref", "share_id"}
++
++
++def _is_tracking_param(key: str) -> bool:
++    # Strip all utm_* params (utm_source, utm_name, utm_content, ...) plus the explicit set
++    return key.startswith("utm_") or key in _TRACKING_PARAMS
+ 
+ 
+ def extract_urls(text: str) -> list[str]:
+@@ -16,7 +20,7 @@ def extract_urls(text: str) -> list[str]:
+ def normalize_url(url: str) -> str:
+     parsed = urllib.parse.urlparse(url)
+     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+-    cleaned = {k: v for k, v in params.items() if k not in _TRACKING_PARAMS}
++    cleaned = {k: v for k, v in params.items() if not _is_tracking_param(k)}
+     new_query = urllib.parse.urlencode(cleaned, doseq=True)
+     return urllib.parse.urlunparse(parsed._replace(query=new_query))
+ 
+-- 
+2.43.0
+

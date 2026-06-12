@@ -1,0 +1,718 @@
+From f7beeea85f9e1083137adcac11ed0f39583fbeec Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 03:32:25 +0000
+Subject: [PATCH 1/3] =?UTF-8?q?Add=20CLAUDE.md=20=E2=80=94=20full=20projec?=
+ =?UTF-8?q?t=20context=20for=20future=20sessions?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ CLAUDE.md | 297 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 297 insertions(+)
+ create mode 100644 CLAUDE.md
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..7f5dfcf
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,297 @@
++# SAVES — Smart Archival & Vault Entry System
++
++## What This Is
++
++SAVES is a personal content archiving pipeline. It watches a single Obsidian file
++(`00 - FILE.md`) for URLs, extracts content from social/web platforms, downloads media
++to NAS, transcribes audio via remote Whisper, reads on-screen text via Claude vision,
++sends the result to a Discord bot for approval, then writes a structured Obsidian note
++to a Synology NAS vault.
++
++**Owner:** Bora (Oodaloop80)
++**Runtime:** Docker on Synology NAS (python:3.11-slim)
++**Dev machine:** Windows workstation at `C:\DEV\SAVES_app`
++**Workstation IP (Whisper server):** `192.168.1.90`
++
++---
++
++## Hard Constraints — Never Violate
++
++1. **Zero delete calls.** No `os.remove`, `os.unlink`, `shutil.rmtree`, or `Path.unlink`
++   anywhere in the codebase. Atomic writes use `tempfile + os.replace()`. Cross-volume
++   moves rename source to `.bak`. Orphaned tmp files are left in place on error.
++   Verify with: `grep -rn "os.remove\|os.unlink\|shutil.rmtree\|\.unlink(" src/ scripts/`
++
++2. **Single asyncio event loop.** The watchdog thread bridges to it via
++   `call_soon_threadsafe`. Never create a second event loop or use
++   `asyncio.run()` inside an already-running loop.
++
++---
++
++## Repository Structure
++
++```
++SAVES/
++├── src/
++│   ├── main.py                    # Entry point — starts watcher, processor, Discord bot
++│   ├── config.py                  # yaml.safe_load; get_config() returns cached dict
++│   ├── credentials.py             # Loads .env, validates required keys from config
++│   ├── processor.py               # Core pipeline: extract→download→transcribe→AI→Discord
++│   ├── watcher.py                 # Watchdog Observer, 3s debounce, bridges to asyncio queue
++│   ├── queue_manager.py           # ProcessingState (JSON), QueueManager.enqueue_from_file()
++│   ├── extractors/
++│   │   ├── base.py                # ExtractedContent dataclass, BaseExtractor ABC
++│   │   ├── __init__.py            # get_extractor(url, config) — routes to correct extractor
++│   │   ├── reddit.py              # Reddit JSON API (no credentials needed — public API)
++│   │   ├── youtube.py             # yt-dlp --write-info-json --write-auto-sub
++│   │   ├── instagram.py           # yt-dlp + gallery-dl; cookie support
++│   │   ├── tiktok.py              # yt-dlp --write-info-json; cookie support
++│   │   ├── facebook.py            # yt-dlp + cookies; detects embedded articles
++│   │   └── generic.py             # Playwright + readability-lxml; cookie banner auto-click
++│   ├── media/
++│   │   ├── downloader.py          # download_media() → {media_root}/{platform}/{author}/{slug}/
++│   │   │                          # abs_to_obsidian_embed() returns BARE relative path (no ![[]])
++│   │   ├── transcriber.py         # mode=remote: POST to 192.168.1.90:5000; mode=local: faster-whisper
++│   │   └── vision.py              # Images → base64; videos → ffmpeg frames at 10/33/57/80%
++│   ├── ai/
++│   │   ├── prompts.py             # SYSTEM_PROMPT, build_user_prompt(), fact-check/travel prompts
++│   │   ├── claude_client.py       # analyze_content(), fact_check(), nl_edit()
++│   │   └── verifier.py            # check_travel_location() — called only when travel in topics
++│   ├── discord_bot/
++│   │   ├── approval.py            # PendingApproval dataclass, PendingApprovalsStore (JSON)
++│   │   ├── notifications.py       # send_approval_request(), send_log(), send_alert()
++│   │   └── bot.py                 # SAVESBot; ApprovalView (4 buttons); _finalize() writes note
++│   ├── notes/
++│   │   ├── formatter.py           # format_note() dispatches to 13 per-type renderers
++│   │   └── file_manager.py        # write_note() atomic; move_note() with SHA256 verify
++│   └── utils/
++│       ├── url_parser.py          # extract_urls(), normalize_url(), detect_platform()
++│       ├── file_io.py             # read_inbox(), remove_url_from_inbox() (atomic)
++│       ├── preferences.py         # PreferencesStore — learned folder routing per source
++│       ├── cookie_checker.py      # Checks instagram/tiktok/facebook cookie file mtimes
++│       └── retry.py               # with_retry() decorator — defined but not yet wired in
++├── scripts/
++│   ├── process_one.py             # CLI test: run full pipeline for one URL, print note
++│   ├── test_connection.py         # Smoke test: Anthropic API, Discord bot, Reddit JSON API
++│   ├── whisper_server.py          # Flask server (runs on WORKSTATION, not NAS)
++│   └── refresh_cookies.py         # Instructions for exporting browser cookies
++├── docker/
++│   ├── Dockerfile                 # python:3.11-slim + ffmpeg + chromium + playwright
++│   └── docker-compose.yml         # 8 volumes: vault, media, cookies, config, logs, state files
++├── config.yaml                    # All configuration (see key values below)
++├── .env.example                   # Template: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
++└── cookies/                       # instagram.txt, tiktok.txt, facebook.txt (gitignored)
++```
++
++---
++
++## Data Flow
++
++```
++00 - FILE.md
++    │  (watchdog, 3s debounce)
++    ▼
++asyncio.Queue
++    │  (processor.py — serial, one URL at a time)
++    ▼
++1. extractor.extract(url)           → ExtractedContent
++2. prefs.hint(source_key)           → preferences_hint for Claude
++3. download_media()                 → list of absolute paths
++4. transcribe()                     → transcript str | None
++5. prepare_images_for_claude()      → vision image blocks
++6. analyze_content()                → ai_result dict (note_type, folder, tags, etc.)
++7. fact_check() + check_travel()    → parallel, non-fatal
++8. new_pending() + send_for_approval() → Discord message with approval buttons
++   (processor returns; picks next URL)
++
++[Hours/days later — Discord button click]
++    ▼
++bot._finalize()
++    │
++    ├── format_note()               → Markdown string (per-type template)
++    ├── write_note()                → Obsidian vault file (atomic)
++    ├── prefs.set(source_key, path) → learned preference saved
++    ├── state.mark_done(url, path)  → processing_state.json updated
++    └── remove_url_from_inbox()     → URL removed from 00 - FILE.md
++```
++
++---
++
++## Key Configuration Values (`config.yaml`)
++
++```yaml
++paths:
++  vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
++  saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
++  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES/00 - FILE.md"
++  media_root: "/volume1/NAS/MEDIA/SAVES"
++
++transcription:
++  mode: "remote"                          # POSTs audio to workstation
++  remote_url: "http://192.168.1.90:5000/transcribe"
++  model: "large-v3-turbo"
++
++ai:
++  model: "claude-opus-4-8"               # Main analysis model
++
++discord:
++  auto_approve_on_timeout: false
++  auto_approve_timeout_hours: 48
++
++credentials:
++  keys: [ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN]   # Reddit needs NO credentials
++```
++
++---
++
++## Note Types (13 total — Claude picks one)
++
++| note_type | Platform | Key sections |
++|---|---|---|
++| `youtube_video` | YouTube | embed, Chapters, Transcript↕, Summary, Takeaways, Metadata |
++| `reddit_text` | Reddit | Summary, Takeaways, Original Content (blockquote), Comments, Metadata |
++| `reddit_gallery` | Reddit | Image embeds, Summary, Original Content, Comments, Metadata |
++| `reddit_video` | Reddit | Video embed, Summary, Original Content, Comments, Metadata |
++| `instagram_reel` | Instagram | Video embed, Transcript↕, Caption, Summary, Metadata |
++| `instagram_post` | Instagram | Image embeds, Caption, Summary, Metadata |
++| `tiktok_video` | TikTok | Video embed, Transcript↕, Caption, Summary, Metadata |
++| `facebook_video` | Facebook | Video embed, Transcript↕, Caption, Summary, Metadata |
++| `facebook_post` | Facebook | Summary, Original Content, Metadata |
++| `web_recipe` | Generic | Summary, Ingredients, Instructions, Hero image, Metadata |
++| `web_travel` | Web | Summary, Key Details, Images, Metadata |
++| `web_article` | Web | Summary, Takeaways, Original Content, Hero image, Metadata |
++| `web_generic` | Web | Summary, Takeaways, Original Content, Metadata |
++
++All types include YAML frontmatter: title, source_url, platform, saved_date, author, tags, type: save.
++
++---
++
++## Discord Bot Buttons
++
++Every approval message has:
++- **✅ Approve** — writes note, saves learned preference, removes URL from inbox
++- **📁 Change Path** — modal prompt → updates folder_path → saves preference
++- **🏷️ Edit Tags** — modal prompt with +add / -remove syntax
++- **✏️ NL Edit** — natural language edit via a second Claude call
++
++If fact-check or location dispute was found:
++- **⚠️ Approve + Include Warning** — adds `> [!warning]` callout to the written note
++
++---
++
++## Learned Folder Preferences (`preferences.json`)
++
++Source keys:
++- Reddit: `reddit:r/{subreddit}`
++- YouTube: `youtube:{channel_name}`
++- Instagram/TikTok/Facebook: `{platform}:{handle}`
++- Generic web: `domain:{hostname}`
++
++On new item: checks preferences.json → injects hint into Claude's prompt.
++On approval: saves final folder_path back to preferences.json automatically.
++
++---
++
++## Platforms — Key Notes
++
++**Reddit:** Uses public JSON API (`<url>.json`) — no API key, no PRAW, no credentials.
++Private/quarantined subreddits raise `PermissionError` with a descriptive message → alert.
++
++**YouTube:** No video downloaded by default (`download_video: false`). Gets subtitles/
++auto-captions. Vision is skipped for YouTube (only thumbnail available).
++
++**Instagram/TikTok/Facebook:** Require cookie files in `cookies/` folder.
++Cookie expiry is monitored — alerts sent to `#SAVES-alerts` when approaching expiry.
++Export cookies from browser using "Get cookies.txt LOCALLY" extension.
++
++**Whisper transcription:** Runs on the Windows workstation (Ryzen 9 7950X, 64GB RAM).
++Start with: `python scripts\whisper_server.py --model large-v3-turbo`
++The NAS Docker container POSTs audio files to it via HTTP.
++
++---
++
++## Environment & Deployment
++
++**Workstation (Windows, `C:\DEV\SAVES_app`):**
++- Git repo, development
++- Runs `whisper_server.py` when transcription is needed
++- `N:\` mapped to `\\NAS-hostname\NAS` (SMB)
++- Obsidian vault at `N:\NAS\OBSIDIAN\Remote Vault`
++
++**NAS (Synology, Docker):**
++- `docker-compose up --build` from `docker/` directory
++- `.env` must exist with ANTHROPIC_API_KEY and DISCORD_BOT_TOKEN
++- Vault and media paths are volume-mounted
++
++**Discord server:** "Bora's AI Ops"
++Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
++
++---
++
++## Current State (as of this session)
++
++**Code complete and compiles.** All 40 Python files pass `python -m compileall`.
++
++**Bugs fixed in this session (not yet end-to-end tested):**
++1. `facebook.py` — missing `import asyncio` (crash on every Facebook URL)
++2. `downloader.py` — `abs_to_obsidian_embed` was wrapping in `![[]]`; formatter also
++   wraps → double-wrapped embeds. Fixed: function now returns bare relative path.
++3. `processor.py` + `bot.py` — `body_text` and `captions` were missing from
++   `content_summary`, so approved notes had empty "Original Content" / "Caption" sections.
++4. `bot.py` + `main.py` — `state.mark_done()` was never called; state stayed `"pending"`
++   forever. Fixed: `state` passed into `SAVESBot`, called in `_finalize()`.
++5. `main.py` — `logging.basicConfig` opened log files before `os.makedirs("logs")`
++   ran → crash if `logs/` didn't exist. Fixed: makedirs moved to module level.
++6. `cookie_checker.py` — dead `reddit_cookies` entry (Reddit no longer uses cookies).
++
++**Not yet done / not yet tested:**
++- `with_retry()` in `src/utils/retry.py` is defined but never called anywhere.
++  Should be wired into extractor/download calls for resilience.
++- `config.yaml` has several unused keys: `processing.concurrent_downloads`,
++  `processing.retry_attempts`, `media.download_video`, `media.download_images`,
++  `notes.tags_min/max`, `transcription.skip_if_captions_available`.
++  These are either dead config or features not yet wired in — leave them for now.
++- No end-to-end test has been run yet. `scripts/process_one.py <url>` is the first
++  real test — run this before anything else.
++
++---
++
++## First Run Checklist
++
++1. Fill in `C:\DEV\SAVES_app\.env` — only 2 keys needed:
++   ```
++   ANTHROPIC_API_KEY=sk-ant-...
++   DISCORD_BOT_TOKEN=...
++   ```
++2. Create Discord server "Bora's AI Ops" with channels:
++   `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
++3. Create Discord bot at discord.com/developers → Bot → copy token
++4. Start Whisper server on workstation:
++   `python scripts\whisper_server.py --model large-v3-turbo`
++5. Run smoke test: `python scripts\test_connection.py`
++6. Run first real test: `python scripts\process_one.py "https://reddit.com/r/..."` 
++   — prints the formatted note, no Discord, no file writes
++7. Run full pipeline: `python src\main.py`, paste a URL into `00 - FILE.md`,
++   watch Discord, approve, verify note appears in vault
++8. Deploy to NAS: `docker-compose up --build` from `docker/`
++
++---
++
++## Git Workflow (Important)
++
++This repo is developed via Claude Code on the web (ultraplan session). Claude cannot
++push to GitHub directly — the session has no credentials. After Claude commits changes:
++
++**You run from `C:\DEV\SAVES_app`:**
++```bash
++git am <patch-file>    # if changes were delivered as a patch
++git push origin main
++```
++
++Or if Claude has already committed to a connected session:
++```bash
++git pull origin main
++git push origin main
++```
++
++Pushing is always your manual step. Claude commits; you push.
+-- 
+2.43.0
+
+
+From f742dd1486b81ba0d08734c1291dcc1d1da50c34 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 03:32:25 +0000
+Subject: [PATCH 2/3] Fix 6 bugs: facebook asyncio, double embeds, missing
+ body_text, mark_done, logging crash, dead cookie key; set IP; add CLAUDE.md
+
+---
+ config.yaml                 | 2 +-
+ src/discord_bot/bot.py      | 8 +++++++-
+ src/extractors/facebook.py  | 1 +
+ src/main.py                 | 8 ++++----
+ src/media/downloader.py     | 5 ++---
+ src/processor.py            | 2 ++
+ src/utils/cookie_checker.py | 1 -
+ 7 files changed, 17 insertions(+), 10 deletions(-)
+
+diff --git a/config.yaml b/config.yaml
+index b919059..8bcc81f 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -30,7 +30,7 @@ media:
+ transcription:
+   enabled: true
+   mode: "remote"             # "local" | "remote" — use remote since Whisper runs on workstation
+-  remote_url: "http://YOUR-DESKTOP-IP:5000/transcribe"
++  remote_url: "http://192.168.1.90:5000/transcribe"
+   model: "large-v3-turbo"    # large-v3-turbo (recommended), large-v3, medium.en, small.en
+   language: "en"
+   skip_if_captions_available: true
+diff --git a/src/discord_bot/bot.py b/src/discord_bot/bot.py
+index 46d3c38..a24526c 100644
+--- a/src/discord_bot/bot.py
++++ b/src/discord_bot/bot.py
+@@ -134,12 +134,13 @@ class TagsModal(discord.ui.Modal, title="Edit Tags"):
+ 
+ 
+ class SAVESBot(discord.Client):
+-    def __init__(self, config: dict, prefs: PreferencesStore):
++    def __init__(self, config: dict, prefs: PreferencesStore, state=None):
+         intents = discord.Intents.default()
+         intents.message_content = True
+         super().__init__(intents=intents)
+         self.config = config
+         self.prefs = prefs
++        self.state = state
+         self.tree = discord.app_commands.CommandTree(self)
+         paths = config.get("paths", {})
+         self.store = PendingApprovalsStore(paths.get("pending_approvals_file", "pending_approvals.json"))
+@@ -230,6 +231,8 @@ class SAVESBot(discord.Client):
+             platform=pending.platform,
+             title=cs.get("title", ""),
+             author=cs.get("author"),
++            body_text=cs.get("body_text", ""),
++            captions=cs.get("captions"),
+             metadata=cs.get("metadata", {}),
+             chapters=cs.get("chapters"),
+             top_comments=cs.get("top_comments"),
+@@ -256,6 +259,9 @@ class SAVESBot(discord.Client):
+         final_path = pending.ai_result["folder_path"]
+         self.prefs.set(source_key, final_path)
+ 
++        if self.state is not None:
++            self.state.mark_done(pending.url, note_path)
++
+         remove_url_from_inbox(paths.get("inbox_file", ""), pending.url)
+         self.store.remove(pending.id)
+ 
+diff --git a/src/extractors/facebook.py b/src/extractors/facebook.py
+index e4bb2d0..1e16682 100644
+--- a/src/extractors/facebook.py
++++ b/src/extractors/facebook.py
+@@ -1,3 +1,4 @@
++import asyncio
+ import json
+ import os
+ import subprocess
+diff --git a/src/main.py b/src/main.py
+index b02d34d..8174397 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -11,6 +11,8 @@ from src.queue_manager import ProcessingState, QueueManager
+ from src.utils.preferences import PreferencesStore
+ from src.watcher import FileWatcher
+ 
++os.makedirs("logs", exist_ok=True)
++
+ logging.basicConfig(
+     level=logging.INFO,
+     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+@@ -26,8 +28,6 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ async def main():
+-    os.makedirs("logs", exist_ok=True)
+-
+     config = load_config()
+     load_credentials()
+ 
+@@ -44,8 +44,8 @@ async def main():
+     queue: asyncio.Queue = asyncio.Queue()
+     queue_manager = QueueManager(queue, state)
+ 
+-    bot = SAVESBot(config, prefs)
+-    loop = asyncio.get_event_loop()
++    bot = SAVESBot(config, prefs, state)
++    loop = asyncio.get_running_loop()
+ 
+     def on_file_change():
+         asyncio.ensure_future(queue_manager.enqueue_from_file(inbox_path))
+diff --git a/src/media/downloader.py b/src/media/downloader.py
+index 3d6903a..1ad8ba8 100644
+--- a/src/media/downloader.py
++++ b/src/media/downloader.py
+@@ -123,6 +123,5 @@ def _url_looks_like_video(url: str) -> bool:
+ 
+ 
+ def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
+-    """Convert absolute media path to Obsidian ![[...]] relative embed path."""
+-    rel = os.path.relpath(abs_path, vault_root)
+-    return f"![[{rel}]]"
++    """Return vault-relative path for Obsidian embeds. Formatter wraps in ![[]] once."""
++    return os.path.relpath(abs_path, vault_root)
+diff --git a/src/processor.py b/src/processor.py
+index 66fbb21..af273ba 100644
+--- a/src/processor.py
++++ b/src/processor.py
+@@ -164,6 +164,8 @@ async def _process_one(
+         "title": content.title,
+         "author": content.author,
+         "platform": content.platform,
++        "body_text": content.body_text,
++        "captions": content.captions,
+         "metadata": content.metadata,
+         "chapters": content.chapters,
+         "top_comments": content.top_comments,
+diff --git a/src/utils/cookie_checker.py b/src/utils/cookie_checker.py
+index 63d9f4a..20a4af7 100644
+--- a/src/utils/cookie_checker.py
++++ b/src/utils/cookie_checker.py
+@@ -16,7 +16,6 @@ def check_all_cookies(config: dict, cookies_dir: str) -> list[dict]:
+         "instagram": "instagram.txt",
+         "tiktok": "tiktok.txt",
+         "facebook": "facebook.txt",
+-        "reddit_cookies": "reddit.txt",
+     }
+ 
+     for platform, filename in platform_cookie_files.items():
+-- 
+2.43.0
+
+
+From 70fea4e06cd2dd8aa91c550c6eac8b5126e6963b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 12 Jun 2026 03:32:25 +0000
+Subject: [PATCH 3/3] Fix reddit.py: rewrite clean (remove merge artifacts, add
+ _HEADERS)
+
+---
+ src/extractors/reddit.py | 197 ++++++++++++++++++---------------------
+ 1 file changed, 93 insertions(+), 104 deletions(-)
+
+diff --git a/src/extractors/reddit.py b/src/extractors/reddit.py
+index 60ec90e..46e62bd 100644
+--- a/src/extractors/reddit.py
++++ b/src/extractors/reddit.py
+@@ -1,15 +1,20 @@
+ import asyncio
+-import os
+-import subprocess
+ import html
+ import logging
+ import re
+-import requests
+ 
++import requests
+ 
+ from src.extractors.base import BaseExtractor, ExtractedContent
+ from src.utils.url_parser import resolve_reddit_short_url
+ 
++logger = logging.getLogger(__name__)
++
++_HEADERS = {
++    "User-Agent": "saves-automation/1.0 (personal archiving tool)",
++    "Accept": "application/json",
++}
++
+ 
+ class RedditExtractor(BaseExtractor):
+     def __init__(self, config: dict):
+@@ -17,7 +22,6 @@ class RedditExtractor(BaseExtractor):
+         pcfg = config.get("platforms", {}).get("reddit", {})
+         self.top_comments_count = pcfg.get("top_comments_count", 5)
+         self.include_op_top_level = pcfg.get("include_op_top_level_comments", True)
+-        
+ 
+     def can_handle(self, url: str) -> bool:
+         return "reddit.com" in url or "redd.it" in url
+@@ -27,111 +31,96 @@ class RedditExtractor(BaseExtractor):
+         return await asyncio.to_thread(self._extract_sync, url)
+ 
+     def _extract_sync(self, url: str) -> ExtractedContent:
+-+        json_url = re.sub(r'#.*$', '', url).rstrip('/') + ".json"
+-+        resp = requests.get(json_url, headers=_HEADERS, timeout=15)
+-
+-+        # Reddit returns 403 JSON with a "reason" field for private/quarantined
+-+        if resp.status_code == 403:
+-+            try:
+-+                reason = resp.json().get("reason", "")
+-+            except Exception:
+-+                reason = ""
+-+            subreddit = _subreddit_from_url(url)
+-+            if reason == "private":
+-+                raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
+-+            if reason == "quarantined":
+-+                raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
+-+            raise PermissionError(f"403 private/restricted: {subreddit}")        
+-
+-+        resp.raise_for_status()
+-+        data = resp.json()
+-
+-        # Gated community: 200 but wrapped in a "requires_subscribed" structure
+-+        if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
+-+            subreddit = _subreddit_from_url(url)
+-+            raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
+-+
+-+        post = data[0]["data"]["children"][0]["data"]
+-+        comments_listing = data[1]["data"]["children"] if len(data) > 1 else []
++        json_url = re.sub(r'#.*$', '', url).rstrip('/') + ".json"
++        resp = requests.get(json_url, headers=_HEADERS, timeout=15)
++
++        if resp.status_code == 403:
++            try:
++                reason = resp.json().get("reason", "")
++            except Exception:
++                reason = ""
++            subreddit = _subreddit_from_url(url)
++            if reason == "private":
++                raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
++            if reason == "quarantined":
++                raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
++            raise PermissionError(f"403 private/restricted: {subreddit}")
++
++        resp.raise_for_status()
++        data = resp.json()
++
++        if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
++            subreddit = _subreddit_from_url(url)
++            raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
++
++        post = data[0]["data"]["children"][0]["data"]
++        comments_listing = data[1]["data"]["children"] if len(data) > 1 else []
+ 
+         return ExtractedContent(
+             url=url,
+             platform="reddit",
+             title=post.get("title", ""),
+-+           author=f"u/{post['author']}" if post.get("author") not in (None, "[deleted]") else None,
+-+           body_text=post.get("selftext") or "",
++            author=f"u/{post['author']}" if post.get("author") not in (None, "[deleted]") else None,
++            body_text=post.get("selftext") or "",
+             metadata={
+-+                "subreddit": post.get("subreddit", ""),
+-+                "score": post.get("score", 0),
+-+                "flair": post.get("link_flair_text"),
+-+                "created_utc": post.get("created_utc"),
+-+                "permalink": f"https://reddit.com{post['permalink']}" if post.get("permalink") else url
+-             },
+-+            media_urls=self._media_urls(post),
+-+            top_comments=self._top_comments(post, comments_listing),
++                "subreddit": post.get("subreddit", ""),
++                "score": post.get("score", 0),
++                "flair": post.get("link_flair_text"),
++                "created_utc": post.get("created_utc"),
++                "permalink": f"https://reddit.com{post['permalink']}" if post.get("permalink") else url,
++            },
++            media_urls=self._media_urls(post),
++            top_comments=self._top_comments(post, comments_listing),
+         )
+ 
+-# ------------------------------------------------------------------ media
+-+
+-+    def _media_urls(self, post: dict) -> list[str]:
+-+        # Native video
+-+        if post.get("is_video"):
+-+            video_url = (post.get("media") or {}).get("reddit_video", {}).get("fallback_url")
+-+            if video_url:
+-+                return [video_url]
+-+
+-+        # Gallery
+-+        if post.get("is_gallery") and post.get("media_metadata"):
+-+            return self._gallery_urls(post)
+-+
+-+        # Direct image link
+-+        post_url = post.get("url", "")
+-+        if re.search(r'\.(jpg|jpeg|png|gif|webp)(\?|$)', post_url, re.IGNORECASE):
+-+            return [post_url]
+-+
+-+        return []
+-+
+-+    def _gallery_urls(self, post: dict) -> list[str]:
+-+        metadata = post.get("media_metadata", {})
+-+        items = post.get("gallery_data", {}).get("items", [])
+-+        ordered_ids = [item["media_id"] for item in items if "media_id" in item] or list(metadata)
+-+        urls = []
+-+        for media_id in ordered_ids:
+-+            meta = metadata.get(media_id, {})
+-+            if meta.get("status") == "valid":
+-+                img_url = html.unescape(meta.get("s", {}).get("u", ""))
+-+                if img_url:
+-+                    urls.append(img_url)
+-+        return urls
+-+
+-+    # --------------------------------------------------------------- comments
+-+
+-+    def _top_comments(self, post: dict, listing: list) -> list[dict] | None:
+-+        op = post.get("author", "")
+-+        flat = [
+-+            {
+-+                "id": c["data"].get("id", ""),
+-+                "author": c["data"].get("author", "[deleted]"),
+-+                "score": c["data"].get("score", 0),
+-+                "text": c["data"].get("body", ""),
+-+            }
+-+            for c in listing if c.get("kind") == "t1"
+-+        ]
+-+
+-+        top = sorted(flat, key=lambda c: c["score"], reverse=True)[:self.top_comments_count]
+-+        op_comments = [c for c in flat if self.include_op_top_level and c["author"] == op] if op else []
+-+
+-+        seen: set[str] = set()
+-+        combined = []
+-+        for c in top + op_comments:
+-+            if c["id"] not in seen:
+-+                seen.add(c["id"])
+-+                combined.append({"author": c["author"], "score": c["score"], "text": c["text"]})
+-+
+-+        combined.sort(key=lambda x: x["score"], reverse=True)
+-+        return combined or None
+-+
+-+
+-+def _subreddit_from_url(url: str) -> str:
+-+    m = re.search(r'reddit\.com/r/([^/]+)', url)
+-+    return f"r/{m.group(1)}" if m else "unknown subreddit"
++    def _media_urls(self, post: dict) -> list[str]:
++        if post.get("is_video"):
++            video_url = (post.get("media") or {}).get("reddit_video", {}).get("fallback_url")
++            if video_url:
++                return [video_url]
++        if post.get("is_gallery") and post.get("media_metadata"):
++            return self._gallery_urls(post)
++        post_url = post.get("url", "")
++        if re.search(r'\.(jpg|jpeg|png|gif|webp)(\?|$)', post_url, re.IGNORECASE):
++            return [post_url]
++        return []
++
++    def _gallery_urls(self, post: dict) -> list[str]:
++        metadata = post.get("media_metadata", {})
++        items = post.get("gallery_data", {}).get("items", [])
++        ordered_ids = [item["media_id"] for item in items if "media_id" in item] or list(metadata)
++        urls = []
++        for media_id in ordered_ids:
++            meta = metadata.get(media_id, {})
++            if meta.get("status") == "valid":
++                img_url = html.unescape(meta.get("s", {}).get("u", ""))
++                if img_url:
++                    urls.append(img_url)
++        return urls
++
++    def _top_comments(self, post: dict, listing: list) -> list[dict] | None:
++        op = post.get("author", "")
++        flat = [
++            {
++                "id": c["data"].get("id", ""),
++                "author": c["data"].get("author", "[deleted]"),
++                "score": c["data"].get("score", 0),
++                "text": c["data"].get("body", ""),
++            }
++            for c in listing if c.get("kind") == "t1"
++        ]
++        top = sorted(flat, key=lambda c: c["score"], reverse=True)[:self.top_comments_count]
++        op_comments = [c for c in flat if self.include_op_top_level and c["author"] == op] if op else []
++        seen: set[str] = set()
++        combined = []
++        for c in top + op_comments:
++            if c["id"] not in seen:
++                seen.add(c["id"])
++                combined.append({"author": c["author"], "score": c["score"], "text": c["text"]})
++        combined.sort(key=lambda x: x["score"], reverse=True)
++        return combined or None
++
++
++def _subreddit_from_url(url: str) -> str:
++    m = re.search(r'reddit\.com/r/([^/]+)', url)
++    return f"r/{m.group(1)}" if m else "unknown subreddit"
+-- 
+2.43.0
+

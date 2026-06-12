@@ -1,7 +1,27 @@
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 
 from src.extractors.base import ExtractedContent
+
+
+def _format_posted(value) -> str:
+    """Render a post date. Accepts a Unix epoch (int/float/numeric str) or a
+    YYYYMMDD string (yt-dlp upload_date). Falls back to the raw value as text."""
+    if value is None:
+        return ""
+    # yt-dlp upload_date: "20240115"
+    s = str(value)
+    if s.isdigit() and len(s) == 8:
+        try:
+            return datetime.strptime(s, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    # Unix epoch seconds (Reddit created_utc, possibly float)
+    try:
+        ts = float(value)
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return s
 
 # ─────────────────────────────────────────────────────────
 # Public entry point
@@ -79,9 +99,9 @@ def _metadata_section(content: ExtractedContent, saved_date: str) -> str:
     if m.get("subreddit"):
         lines.append(f"- **Subreddit:** r/{m['subreddit']}")
     if m.get("upload_date"):
-        lines.append(f"- **Posted:** {m['upload_date']}")
+        lines.append(f"- **Posted:** {_format_posted(m['upload_date'])}")
     elif m.get("created_utc"):
-        lines.append(f"- **Posted:** {m['created_utc']}")
+        lines.append(f"- **Posted:** {_format_posted(m['created_utc'])}")
     if m.get("view_count"):
         lines.append(f"- **Views:** {m['view_count']:,}")
     if m.get("score"):

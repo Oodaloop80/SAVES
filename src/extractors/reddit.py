@@ -155,14 +155,24 @@ class RedditExtractor(BaseExtractor):
         )
 
     def _media_urls(self, post: dict) -> list[str]:
+        # Reddit-hosted video (v.redd.it): hand the permalink to yt-dlp, which muxes
+        # the separate DASH video+audio streams. The raw fallback_url is video-ONLY.
         if post.get("is_video"):
+            permalink = post.get("permalink")
+            if permalink:
+                return [f"https://www.reddit.com{permalink}"]
             video_url = (post.get("media") or {}).get("reddit_video", {}).get("fallback_url")
-            if video_url:
-                return [video_url]
+            return [video_url] if video_url else []
         if post.get("is_gallery") and post.get("media_metadata"):
             return self._gallery_urls(post)
         post_url = post.get("url", "")
+        # Direct image link
         if re.search(r'\.(jpg|jpeg|png|gif|webp)(\?|$)', post_url, re.IGNORECASE):
+            return [post_url]
+        # External video host linked from the post (YouTube, Streamable, etc.) —
+        # yt-dlp will resolve it. post_hint marks these as "rich:video"/"hosted:video".
+        hint = post.get("post_hint", "")
+        if hint in ("rich:video", "hosted:video") and post_url:
             return [post_url]
         return []
 
