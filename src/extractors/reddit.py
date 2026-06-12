@@ -1,7 +1,10 @@
 import asyncio
 import html
+import http.cookiejar
 import logging
+import os
 import re
+import time
 import urllib.parse
 
 import requests
@@ -11,15 +14,56 @@ from src.utils.url_parser import resolve_reddit_short_url
 
 logger = logging.getLogger(__name__)
 
-# A browser-like User-Agent avoids Reddit/Cloudflare bot blocking on the public
-# .json endpoint. A generic "python-requests" or bot UA frequently gets a 403.
-_HEADERS = {
+# Persistent session so Reddit/Cloudflare sees a consistent client.
+_SESSION = requests.Session()
+_SESSION.headers.update({
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json",
-}
+    "Accept": "application/json, text/html, */*;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+})
+
+_COOKIES_LOADED = False
+
+
+def _load_cookies(cookies_dir: str) -> bool:
+    """Load cookies/reddit.txt (Netscape format) into the shared session, once.
+
+    Cookies are exported with "Get cookies.txt LOCALLY". They are domain-scoped to
+    .reddit.com, so they apply to both www.reddit.com and old.reddit.com. Returns
+    True if a cookie file was found and loaded.
+    """
+    global _COOKIES_LOADED
+    if _COOKIES_LOADED:
+        return True
+    cookie_path = os.path.join(cookies_dir, "reddit.txt")
+    if not os.path.exists(cookie_path):
+        return False
+    try:
+        jar = http.cookiejar.MozillaCookieJar(cookie_path)
+        jar.load(ignore_discard=True, ignore_expires=True)
+        _SESSION.cookies.update(jar)
+        _COOKIES_LOADED = True
+        logger.info("Loaded Reddit cookies from %s (%d cookies)", cookie_path, len(jar))
+        return True
+    except Exception as e:
+        logger.warning("Failed to load Reddit cookies from %s: %s", cookie_path, e)
+        return False
+
+
+def _to_old_reddit_json(url: str) -> str:
+    """Convert any reddit.com URL to an old.reddit.com .json URL (path only, no query)."""
+    parsed = urllib.parse.urlparse(url)
+    # Force old.reddit.com — significantly less Cloudflare-protected
+    host = re.sub(r'^(www\.|new\.)?', 'old.', parsed.netloc, flags=re.IGNORECASE)
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{host}{path}.json"
 
 
 class RedditExtractor(BaseExtractor):
@@ -28,6 +72,7 @@ class RedditExtractor(BaseExtractor):
         pcfg = config.get("platforms", {}).get("reddit", {})
         self.top_comments_count = pcfg.get("top_comments_count", 5)
         self.include_op_top_level = pcfg.get("include_op_top_level_comments", True)
+        self.cookies_dir = config.get("paths", {}).get("cookies_dir", "cookies")
 
     def can_handle(self, url: str) -> bool:
         return "reddit.com" in url or "redd.it" in url
@@ -37,39 +82,52 @@ class RedditExtractor(BaseExtractor):
         return await asyncio.to_thread(self._extract_sync, url)
 
     def _extract_sync(self, url: str) -> ExtractedContent:
-        # Build the .json URL from the path only — query strings (?utm_...=)
-        # and fragments must be dropped, or ".json" lands inside the query and
-        # Reddit returns an HTML page instead of JSON.
-        parsed = urllib.parse.urlparse(url)
-        path = parsed.path.rstrip("/")
-        json_url = f"{parsed.scheme}://{parsed.netloc}{path}.json"
-        resp = requests.get(json_url, headers=_HEADERS, timeout=15)
+        _load_cookies(self.cookies_dir)
+        json_url = _to_old_reddit_json(url)
+        logger.debug("Reddit JSON URL: %s", json_url)
+
+        resp = _SESSION.get(json_url, timeout=20)
+
+        # 429 rate-limit — wait and retry once
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", "10"))
+            logger.warning("Reddit rate-limited; waiting %ds", retry_after)
+            time.sleep(retry_after)
+            resp = _SESSION.get(json_url, timeout=20)
 
         if resp.status_code == 403:
-            try:
-                reason = resp.json().get("reason", "")
-            except Exception:
-                reason = ""
+            # Try to read JSON reason; HTML means Cloudflare blocked (not a private sub)
+            reason = ""
+            if "application/json" in resp.headers.get("Content-Type", ""):
+                try:
+                    reason = resp.json().get("reason", "")
+                except Exception:
+                    pass
             subreddit = _subreddit_from_url(url)
             if reason == "private":
-                raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
+                raise PermissionError(
+                    f"private subreddit — {subreddit} requires membership to view"
+                )
             if reason == "quarantined":
-                raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
+                raise PermissionError(
+                    f"quarantined subreddit — {subreddit} requires opt-in to view"
+                )
             raise PermissionError(
-                f"403 from Reddit for {subreddit}. The subreddit may be private/restricted, "
-                f"or Reddit is rate-limiting/blocking this request."
+                f"Reddit returned 403 for {subreddit}. "
+                "The subreddit may be private/restricted, or Reddit is blocking "
+                "this request. Try exporting your Reddit cookies and placing them "
+                "in cookies/reddit.txt."
             )
 
         resp.raise_for_status()
 
-        # A non-JSON body means Reddit served an HTML block/error page rather
-        # than the API response — surface it clearly instead of a raw decode error.
-        ctype = resp.headers.get("content-type", "")
-        if "json" not in ctype.lower():
+        if "application/json" not in resp.headers.get("Content-Type", ""):
             raise RuntimeError(
-                f"Reddit returned non-JSON ({ctype or 'unknown'}) for {json_url} — "
-                f"likely a Cloudflare block or rate limit. First bytes: {resp.text[:60]!r}"
+                f"Reddit returned non-JSON response (likely a Cloudflare challenge). "
+                f"Content-Type: {resp.headers.get('Content-Type')}. "
+                "Export your Reddit browser cookies to cookies/reddit.txt to fix this."
             )
+
         data = resp.json()
 
         if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
@@ -132,7 +190,7 @@ class RedditExtractor(BaseExtractor):
             }
             for c in listing if c.get("kind") == "t1"
         ]
-        top = sorted(flat, key=lambda c: c["score"], reverse=True)[:self.top_comments_count]
+        top = sorted(flat, key=lambda c: c["score"], reverse=True)[: self.top_comments_count]
         op_comments = [c for c in flat if self.include_op_top_level and c["author"] == op] if op else []
         seen: set[str] = set()
         combined = []
