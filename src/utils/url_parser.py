@@ -5,8 +5,12 @@ import requests
 
 URL_RE = re.compile(r'https?://[^\s\)\]\>"\']+')
 
-_TRACKING_PARAMS = {"igsh", "igshid", "utm_source", "utm_medium", "utm_campaign",
-                    "utm_term", "utm_content", "fbclid", "ref", "share_id"}
+_TRACKING_PARAMS = {"igsh", "igshid", "fbclid", "ref", "share_id"}
+
+
+def _is_tracking_param(key: str) -> bool:
+    # Strip all utm_* params (utm_source, utm_name, utm_content, ...) plus the explicit set
+    return key.startswith("utm_") or key in _TRACKING_PARAMS
 
 
 def extract_urls(text: str) -> list[str]:
@@ -16,7 +20,7 @@ def extract_urls(text: str) -> list[str]:
 def normalize_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-    cleaned = {k: v for k, v in params.items() if k not in _TRACKING_PARAMS}
+    cleaned = {k: v for k, v in params.items() if not _is_tracking_param(k)}
     new_query = urllib.parse.urlencode(cleaned, doseq=True)
     return urllib.parse.urlunparse(parsed._replace(query=new_query))
 

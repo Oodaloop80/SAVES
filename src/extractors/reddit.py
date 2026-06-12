@@ -2,6 +2,7 @@ import asyncio
 import html
 import logging
 import re
+import urllib.parse
 
 import requests
 
@@ -10,8 +11,13 @@ from src.utils.url_parser import resolve_reddit_short_url
 
 logger = logging.getLogger(__name__)
 
+# A browser-like User-Agent avoids Reddit/Cloudflare bot blocking on the public
+# .json endpoint. A generic "python-requests" or bot UA frequently gets a 403.
 _HEADERS = {
-    "User-Agent": "saves-automation/1.0 (personal archiving tool)",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
     "Accept": "application/json",
 }
 
@@ -31,7 +37,12 @@ class RedditExtractor(BaseExtractor):
         return await asyncio.to_thread(self._extract_sync, url)
 
     def _extract_sync(self, url: str) -> ExtractedContent:
-        json_url = re.sub(r'#.*$', '', url).rstrip('/') + ".json"
+        # Build the .json URL from the path only — query strings (?utm_...=)
+        # and fragments must be dropped, or ".json" lands inside the query and
+        # Reddit returns an HTML page instead of JSON.
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path.rstrip("/")
+        json_url = f"{parsed.scheme}://{parsed.netloc}{path}.json"
         resp = requests.get(json_url, headers=_HEADERS, timeout=15)
 
         if resp.status_code == 403:
@@ -44,9 +55,21 @@ class RedditExtractor(BaseExtractor):
                 raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
             if reason == "quarantined":
                 raise PermissionError(f"quarantined subreddit — {subreddit} requires opt-in to view")
-            raise PermissionError(f"403 private/restricted: {subreddit}")
+            raise PermissionError(
+                f"403 from Reddit for {subreddit}. The subreddit may be private/restricted, "
+                f"or Reddit is rate-limiting/blocking this request."
+            )
 
         resp.raise_for_status()
+
+        # A non-JSON body means Reddit served an HTML block/error page rather
+        # than the API response — surface it clearly instead of a raw decode error.
+        ctype = resp.headers.get("content-type", "")
+        if "json" not in ctype.lower():
+            raise RuntimeError(
+                f"Reddit returned non-JSON ({ctype or 'unknown'}) for {json_url} — "
+                f"likely a Cloudflare block or rate limit. First bytes: {resp.text[:60]!r}"
+            )
         data = resp.json()
 
         if isinstance(data, dict) and data.get("reason") in ("private", "quarantined"):
