@@ -10,7 +10,7 @@ to a Synology NAS vault.
 
 **Owner:** Bora (Oodaloop80)
 **Runtime:** Docker on Synology NAS (python:3.11-slim)
-**Dev machine:** Windows workstation at `C:\DEV\SAVES_app`
+**Dev machine:** Windows workstation. Repo at `C:\DEV\Apps\SAVES\SAVES_app`; patch files go in `C:\DEV\Apps\SAVES\SAVES_app\patches`
 **Workstation IP (Whisper server):** `192.168.1.90`
 
 ---
@@ -212,7 +212,7 @@ The NAS Docker container POSTs audio files to it via HTTP.
 
 ## Environment & Deployment
 
-**Workstation (Windows, `C:\DEV\SAVES_app`):**
+**Workstation (Windows, `C:\DEV\Apps\SAVES\SAVES_app`):**
 - Git repo, development
 - Runs `whisper_server.py` when transcription is needed
 - `N:\` mapped to `\\NAS-hostname\NAS` (SMB)
@@ -258,7 +258,7 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
 
 ## First Run Checklist
 
-1. Fill in `C:\DEV\SAVES_app\.env` — only 2 keys needed:
+1. Fill in `C:\DEV\Apps\SAVES\SAVES_app\.env` — only 2 keys needed:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
    DISCORD_BOT_TOKEN=...
@@ -282,11 +282,16 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
 This repo is developed via Claude Code on the web (ultraplan session). Claude cannot
 push to GitHub directly — the session has no credentials. After Claude commits changes:
 
-**You run from `C:\DEV\SAVES_app`:**
+**You run from `C:\DEV\Apps\SAVES\SAVES_app`:**
 ```bash
-git am <patch-file>    # if changes were delivered as a patch
+git am patches\<patch-file>    # patches are delivered to the patches\ folder
 git push origin main
 ```
+
+**Patch filename convention:** use underscores only, NO dashes. The file-delivery
+download strips dashes from filenames, so `saves-foo-patch.patch` arrives as
+`savesfoopatch.patch` and breaks the `git am` command. Name patches like
+`saves_foo_patch.patch`.
 
 Or if Claude has already committed to a connected session:
 ```bash
