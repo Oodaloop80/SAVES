@@ -66,9 +66,34 @@ When the content is a recipe or cooking video, ALWAYS add tags across these dime
 Pull ingredient and method tags from the YouTube description / transcript when present.
 
 ## Folder Organization
-Place notes under SAVES/ with CATEGORY/SUBCATEGORY.
-Examples: SAVES/COOKING/BBQ, SAVES/FINANCE/CREDIT-CARDS, SAVES/TRAVEL/CARIBBEAN,
-SAVES/TECH/AI, SAVES/HEALTH/FITNESS, SAVES/FOOD/RECIPES, SAVES/PARENTING/NEWBORN
+Place notes under SAVES/ using as many levels as needed — typically 4, going deeper
+when warranted. STACK each meaningful dimension as its own level instead of collapsing
+them. Order broad → specific: CATEGORY / SUBCATEGORY / METHOD-or-STYLE / SUBJECT.
+Always go at least 3 levels deep; prefer 4+ whenever both a method/style AND a specific
+subject are identifiable.
+
+For BBQ/cooking, that means stacking the cooking method AND the specific cut/dish:
+  SAVES/COOKING/BBQ/SMOKING/CHUCK-ROAST   ← a smoked chuck roast (method + cut)
+  SAVES/COOKING/BBQ/SMOKING/BRISKET       ← a smoked brisket
+  SAVES/COOKING/BBQ/GRILLING/RIBEYE       ← a grilled ribeye
+  SAVES/COOKING/RECIPES/POT-PIE           ← a pot pie (no distinct method level)
+  SAVES/COOKING/RECIPES/PASTA/CARBONARA
+Do NOT flatten to SAVES/COOKING/BBQ/CHUCK-ROAST when the cook is clearly a smoke —
+the method (SMOKING) is its own level above the cut (CHUCK-ROAST).
+
+Other domains, same broad→specific stacking principle:
+  SAVES/FINANCE/INVESTING/REAL-ESTATE/RENTALS
+  SAVES/FINANCE/CREDIT-CARDS/TRAVEL-REWARDS/AMEX
+  SAVES/TRAVEL/CARIBBEAN/DOMINICAN-REPUBLIC/PUNTA-CANA
+  SAVES/TRAVEL/EUROPE/ITALY/ROME
+  SAVES/TECH/AI/TOOLS/CODING
+  SAVES/HEALTH/FITNESS/RUNNING/TRAINING-PLANS
+  SAVES/PARENTING/NEWBORN/SLEEP
+Each level must add new information — never repeat the level above it.
+
+If the user message includes an "Existing vault folders" list, treat it as the source of
+truth for what already exists: reuse an exact existing path when the content fits, and
+only invent a new path (still following the stacking conventions above) when none fits.
 
 ## key_takeaways
 3-6 concise actionable bullets. Omit if the content has no clear takeaways (e.g. reddit_video
@@ -87,6 +112,7 @@ def build_user_prompt(
     content: ExtractedContent,
     transcript: str | None,
     preferences_hint: str | None = None,
+    existing_folders: list[str] | None = None,
 ) -> str:
     parts = [
         f"Platform: {content.platform}",
@@ -99,6 +125,18 @@ def build_user_prompt(
 
     if preferences_hint:
         parts.append(f"Preference hint: {preferences_hint}")
+
+    if existing_folders:
+        folder_list = "\n".join(f"  {f}" for f in existing_folders)
+        parts.append(
+            "Existing vault folders (these already exist in the vault). STRONGLY prefer "
+            "reusing one of these exact paths when this content reasonably fits it, so "
+            "related saves stay together. Match an existing path even if your instinct "
+            "was slightly different wording (e.g. reuse SAVES/COOKING/BBQ/SMOKING instead "
+            "of inventing SAVES/COOKING/BARBECUE/SMOKED). Only create a NEW path (following "
+            "the conventions) when nothing here is a good fit — do not force a poor match:\n"
+            + folder_list
+        )
 
     meta_lines = []
     skip_keys = ("possible_paywall", "embedded_article_url", "youtube_description")

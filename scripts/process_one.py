@@ -22,6 +22,7 @@ from src.ai.claude_client import analyze_content, fact_check
 from src.notes.formatter import format_note
 from src.notes.file_manager import write_note
 from src.utils.url_parser import detect_platform, normalize_url
+from src.utils.vault_scanner import scan_saves_folders
 
 
 async def run(url: str, dry_run: bool = False):
@@ -89,10 +90,16 @@ async def run(url: str, dry_run: bool = False):
         if image_blocks:
             print(f"  Vision: {len(image_blocks)} image block(s) prepared for Claude")
 
+    saves_root = paths.get("saves_root") or os.path.join(vault_root, "SAVES")
+    existing_folders = scan_saves_folders(saves_root)
+    if existing_folders:
+        print(f"  Consulting {len(existing_folders)} existing vault folder(s) for placement")
+
     print("Sending to Claude for analysis...")
     ai_result = await analyze_content(
         content, transcript, config,
         image_blocks=image_blocks or None,
+        existing_folders=existing_folders,
     )
     print(f"  Note type: {ai_result.get('note_type')}")
     print(f"  Folder: {ai_result.get('folder_path')}")

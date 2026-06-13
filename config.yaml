@@ -1,7 +1,7 @@
 paths:
   vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
   saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
-  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES/00 - FILE.md"
+  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"
   media_root: "/volume1/NAS/MEDIA/SAVES"
   cookies_dir: "cookies"
   logs_dir: "logs"

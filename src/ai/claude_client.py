@@ -58,10 +58,12 @@ async def analyze_content(
     config: dict,
     preferences_hint: str | None = None,
     image_blocks: list[dict] | None = None,
+    existing_folders: list[str] | None = None,
 ) -> dict:
     import asyncio
     return await asyncio.to_thread(
-        _analyze_sync, content, transcript, config, preferences_hint, image_blocks
+        _analyze_sync, content, transcript, config, preferences_hint,
+        image_blocks, existing_folders,
     )
 
 
@@ -71,9 +73,10 @@ def _analyze_sync(
     config: dict,
     preferences_hint: str | None = None,
     image_blocks: list[dict] | None = None,
+    existing_folders: list[str] | None = None,
 ) -> dict:
     client = _make_client()
-    user_text = build_user_prompt(content, transcript, preferences_hint)
+    user_text = build_user_prompt(content, transcript, preferences_hint, existing_folders)
 
     if image_blocks:
         n = len(image_blocks)

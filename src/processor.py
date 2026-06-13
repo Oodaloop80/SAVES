@@ -14,6 +14,7 @@ from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key
 from src.utils.url_parser import detect_platform, normalize_url
+from src.utils.vault_scanner import scan_saves_folders
 
 logger = logging.getLogger(__name__)
 
@@ -126,11 +127,14 @@ async def _process_one(
         except Exception as e:
             logger.warning(f"Vision preparation failed (non-fatal): {e}")
 
-    # 6. AI analysis (text + vision, with preferences hint)
+    # 6. AI analysis (text + vision, with preferences hint + existing vault folders)
+    saves_root = config.get("paths", {}).get("saves_root") or os.path.join(vault_root, "SAVES")
+    existing_folders = await asyncio.to_thread(scan_saves_folders, saves_root)
     try:
         ai_result = await analyze_content(
             content, transcript, config, preferences_hint,
             image_blocks=image_blocks or None,
+            existing_folders=existing_folders,
         )
     except Exception as e:
         logger.error(f"AI analysis failed for {url}: {e}")

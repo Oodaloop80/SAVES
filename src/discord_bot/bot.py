@@ -56,6 +56,60 @@ class ApprovalView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="🗑️ Remove Tags", style=discord.ButtonStyle.secondary, custom_id="remove_tags")
+    async def remove_tags(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pending = self.bot.store.get_by_id(self.pending_id)
+        if not pending:
+            await interaction.response.send_message("Already processed.", ephemeral=True)
+            return
+        tags = pending.ai_result.get("tags") or []
+        if not tags:
+            await interaction.response.send_message("No tags to remove.", ephemeral=True)
+            return
+        view = TagRemoveView(self.bot, self.pending_id, tags)
+        tag_list = "  ".join(f"`{t}`" for t in tags)
+        await interaction.response.send_message(
+            f"**Current tags:**\n{tag_list}\n\nSelect tags to remove:",
+            view=view,
+            ephemeral=True,
+        )
+
+
+class TagRemoveView(discord.ui.View):
+    """Ephemeral view with a multi-select dropdown to remove individual tags."""
+
+    def __init__(self, bot: "SAVESBot", pending_id: str, tags: list[str]):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.pending_id = pending_id
+        options = [discord.SelectOption(label=t, value=t) for t in tags[:25]]
+        select = discord.ui.Select(
+            placeholder="Pick tags to remove (multi-select)…",
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        to_remove = set(interaction.data["values"])
+        pending = self.bot.store.get_by_id(self.pending_id)
+        if not pending:
+            await interaction.response.edit_message(content="Already processed.", view=None)
+            return
+        pending.ai_result["tags"] = [
+            t for t in (pending.ai_result.get("tags") or []) if t not in to_remove
+        ]
+        self.bot.store.update(pending)
+        remaining = "  ".join(f"`{t}`" for t in pending.ai_result["tags"])
+        msg = (
+            f"Removed **{len(to_remove)}** tag(s).\n"
+            f"**Remaining:** {remaining or '*(none)*'}\n\n"
+            f"Use ✅ Approve when ready."
+        )
+        await interaction.response.edit_message(content=msg, view=None)
+
 
 class ApprovalViewWithWarning(ApprovalView):
     """Shown when fact-check or location flags are present — adds ⚠️ Include Warning button."""
