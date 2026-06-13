@@ -110,9 +110,9 @@ class InstagramExtractor(BaseExtractor):
     def _gallery_dl_metadata(self, url: str) -> dict:
         """Extract post metadata via gallery-dl -j (works for public posts without cookies).
 
-        gallery-dl -j emits one JSON line per media item:
-          [type_int, "media_url", {metadata dict}]
-        We take the first item's metadata dict.
+        gallery-dl -j emits a single pretty-printed JSON array. Each element is a
+        message tuple: [3, "media_url", {kwdict}] for media, or [2, {kwdict}] for a
+        directory. The post metadata (username, description, etc.) lives in the kwdict.
         """
         import json
         cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
@@ -122,40 +122,58 @@ class InstagramExtractor(BaseExtractor):
         cmd.append(url)
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if not line.startswith("["):
-                    continue
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(item, list) or len(item) < 3 or not isinstance(item[2], dict):
-                    continue
-                meta = item[2]
-                # gallery-dl Instagram fields: username=@handle, fullname=display name,
-                # description=caption, date=datetime-like string, shortcode, likes
-                handle = (meta.get("username") or "").lstrip("@")
-                caption = meta.get("description") or meta.get("title") or ""
-                # date arrives as "YYYY-MM-DD HH:MM:SS" or a datetime object serialized
-                raw_date = str(meta.get("date") or "")
-                date_str = raw_date[:10].replace("-", "")  # → YYYYMMDD or ""
-                logger.info(
-                    "Instagram: gallery-dl metadata — author=%s, caption=%d chars",
-                    handle or "(none)", len(caption),
-                )
-                return {
-                    "caption": caption,
-                    "owner_username": meta.get("fullname") or meta.get("username") or "",
-                    "owner_handle": handle or None,
-                    "likes": meta.get("likes"),
-                    "shortcode": meta.get("shortcode") or self._shortcode_from_url(url),
-                    "date": date_str,
-                    "first_owner_comment": None,
-                }
+            try:
+                data = json.loads(result.stdout)
+            except ValueError:
+                logger.debug("Instagram: gallery-dl -j produced no parseable JSON")
+                return {}
+            # Find the first message tuple that carries a kwdict with post fields.
+            meta = self._first_gallery_dl_kwdict(data)
+            if not meta:
+                return {}
+            # gallery-dl Instagram fields: username=@handle, fullname=display name,
+            # description=caption, date="YYYY-MM-DD HH:MM:SS", post_shortcode, likes
+            handle = str(meta.get("username") or "").lstrip("@")
+            caption = meta.get("description") or meta.get("title") or ""
+            raw_date = str(meta.get("date") or "")
+            date_str = raw_date[:10].replace("-", "")  # → YYYYMMDD or ""
+            logger.info(
+                "Instagram: gallery-dl metadata — author=%s, caption=%d chars",
+                handle or "(none)", len(caption),
+            )
+            return {
+                "caption": caption,
+                "owner_username": meta.get("fullname") or meta.get("username") or "",
+                "owner_handle": handle or None,
+                "likes": meta.get("likes"),
+                "shortcode": (meta.get("post_shortcode") or meta.get("shortcode")
+                              or self._shortcode_from_url(url)),
+                "date": date_str,
+                "first_owner_comment": None,
+            }
         except Exception as e:
             logger.debug("Instagram: gallery-dl metadata fallback failed: %s", e)
         return {}
+
+    @staticmethod
+    def _first_gallery_dl_kwdict(data) -> dict | None:
+        """Pull the first kwdict (metadata dict) out of gallery-dl -j output.
+
+        Prefer a dict that actually has post fields (username/description) so we don't
+        grab an empty directory header."""
+        if not isinstance(data, list):
+            return None
+        fallback = None
+        for entry in data:
+            if not isinstance(entry, list):
+                continue
+            for part in entry:
+                if isinstance(part, dict):
+                    if part.get("username") or part.get("description"):
+                        return part
+                    if fallback is None:
+                        fallback = part
+        return fallback
 
     @staticmethod
     def _owner_id_set(info: dict, clean_handle: str | None) -> set:
