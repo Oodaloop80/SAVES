@@ -9,7 +9,7 @@ from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
 from src.media.downloader import download_media, abs_to_obsidian_embed
-from src.media.transcriber import transcribe
+from src.media.transcriber import transcribe, is_audio_video
 from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key
@@ -108,10 +108,7 @@ async def _process_one(
     if content.captions:
         transcript = content.captions
     elif media_paths_abs:
-        audio_candidates = [
-            p for p in media_paths_abs
-            if p.endswith((".mp4", ".webm", ".mp3", ".m4a", ".mov"))
-        ]
+        audio_candidates = [p for p in media_paths_abs if is_audio_video(p)]
         if audio_candidates and config.get("transcription", {}).get("enabled", True):
             transcript = await transcribe(audio_candidates[0], config)
 

@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 _whisper_model = None
 
+# Only these are worth handing to Whisper. Images and other files are skipped
+# (an image post has nothing to transcribe — Claude vision handles those).
+_AV_EXTENSIONS = {
+    ".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".m4v", ".ts", ".3gp",
+    ".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma",
+}
+
+
+def is_audio_video(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _AV_EXTENSIONS
+
 
 def _get_model(model_name: str, device: str = "cpu", compute_type: str = "int8"):
     global _whisper_model
@@ -24,6 +35,9 @@ async def transcribe(audio_path: str, config: dict) -> str | None:
     if not tcfg.get("enabled", True):
         return None
     if not os.path.exists(audio_path):
+        return None
+    if not _is_audio_video(audio_path):
+        logger.debug("Skipping transcription — not an audio/video file: %s", audio_path)
         return None
 
     mode = tcfg.get("mode", "local")

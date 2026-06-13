@@ -16,7 +16,7 @@ from src.credentials import load_credentials
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
 from src.media.downloader import download_media, abs_to_obsidian_embed
-from src.media.transcriber import transcribe
+from src.media.transcriber import transcribe, is_audio_video
 from src.media.vision import prepare_images_for_claude
 from src.ai.claude_client import analyze_content, fact_check
 from src.notes.formatter import format_note
@@ -76,13 +76,15 @@ async def run(url: str, dry_run: bool = False):
     if content.captions:
         transcript = content.captions
         print(f"  Using existing captions ({len(transcript)} chars)")
-    elif media_paths_abs:
+    elif media_paths_abs and is_audio_video(media_paths_abs[0]):
         print("  Attempting transcription...")
         transcript = await transcribe(media_paths_abs[0], config)
         if transcript:
             print(f"  Transcript: {len(transcript)} chars")
         else:
             print("  Transcription skipped or unavailable")
+    elif media_paths_abs:
+        print("  No audio/video media — skipping transcription")
 
     image_blocks = []
     if media_paths_abs and platform != "youtube":

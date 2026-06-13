@@ -59,8 +59,17 @@ def format_note(
             parts.append(_location_callout(location_check_result))
 
     renderer = _RENDERERS.get(note_type, _render_web_generic)
-    parts.append(renderer(ai_result, content, media_paths, transcript, collapse_transcript))
+    body = renderer(ai_result, content, media_paths, transcript, collapse_transcript)
 
+    # Safety net: never silently drop downloaded media. If the chosen template
+    # rendered no embed (e.g. a single-image post classified as reddit_text),
+    # embed the media at the top of the body so it always appears in the note.
+    if media_paths and "EmbedRelativeTo" not in body:
+        embeds = _media_embeds(media_paths)
+        if embeds:
+            body = embeds + "\n" + body
+
+    parts.append(body)
     return "\n".join(parts)
 
 
