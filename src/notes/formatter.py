@@ -73,16 +73,78 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
     tag_lines = "\n".join(f"  - {t}" for t in tags)
     title = ai_result.get("title", "").replace('"', "'")
     author = content.author or "unknown"
-    return f"""---
-title: "{title}"
-source_url: "{content.url}"
-platform: {content.platform}
-saved_date: {saved_date}
-author: "{author}"
-tags:
-{tag_lines}
-type: save
----"""
+    m = content.metadata or {}
+
+    lines = ["---", f'title: "{title}"']
+
+    post_title = (content.title or "").replace('"', "'")
+    if post_title:
+        lines.append(f'post_title: "{post_title}"')
+
+    lines += [
+        f'source_url: "{content.url}"',
+        f"platform: {content.platform}",
+        f"saved_date: {saved_date}",
+        f'author: "{author}"',
+    ]
+
+    if content.platform == "reddit":
+        handle = author.split("/")[-1] if "/" in author else author
+        if handle and handle not in ("unknown", ""):
+            lines.append(f'author_url: "https://reddit.com/u/{handle}"')
+        sub = m.get("subreddit", "")
+        if sub:
+            lines.append(f"subreddit: r/{sub}")
+            lines.append(f'subreddit_url: "https://reddit.com/r/{sub}"')
+        posted = _format_posted(m["created_utc"]) if m.get("created_utc") else ""
+        if posted:
+            lines.append(f"posted: {posted}")
+        yt_ch = m.get("youtube_channel")
+        yt_cid = m.get("youtube_channel_id", "")
+        if yt_ch:
+            lines.append(f'youtube_channel: "{yt_ch}"')
+            if yt_cid:
+                lines.append(f'youtube_channel_url: "https://youtube.com/channel/{yt_cid}"')
+    elif content.platform == "youtube":
+        cid = m.get("channel_id")
+        if cid:
+            lines.append(f'channel_url: "https://youtube.com/channel/{cid}"')
+        posted = _format_posted(m["upload_date"]) if m.get("upload_date") else ""
+        if posted:
+            lines.append(f"posted: {posted}")
+    elif content.platform == "instagram":
+        handle = author.lstrip("@")
+        if handle and handle != "unknown":
+            lines.append(f'author_url: "https://instagram.com/{handle}"')
+        raw_date = m.get("upload_date") or m.get("created_utc")
+        if raw_date:
+            posted = _format_posted(raw_date)
+            if posted:
+                lines.append(f"posted: {posted}")
+    elif content.platform == "tiktok":
+        handle = author.lstrip("@")
+        if handle and handle != "unknown":
+            lines.append(f'author_url: "https://tiktok.com/@{handle}"')
+        raw_date = m.get("upload_date") or m.get("created_utc")
+        if raw_date:
+            posted = _format_posted(raw_date)
+            if posted:
+                lines.append(f"posted: {posted}")
+    else:
+        try:
+            domain = urllib.parse.urlparse(content.url).netloc
+        except Exception:
+            domain = ""
+        if domain:
+            lines.append(f"domain: {domain}")
+        raw_date = m.get("upload_date") or m.get("created_utc")
+        if raw_date:
+            posted = _format_posted(raw_date)
+            if posted:
+                lines.append(f"posted: {posted}")
+
+    lines += ["tags:", tag_lines, "type: save", "---"]
+    return "\n".join(lines)
 
 
 def _source_line(content: ExtractedContent) -> str:
@@ -329,7 +391,6 @@ def _chapters_block(content: ExtractedContent) -> str:
 def _render_youtube_video(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         f"![{ai_result.get('title', '')}]({content.url})\n",
         _chapters_block(content),
         _summary_section(ai_result),
@@ -344,7 +405,6 @@ def _render_youtube_video(ai_result, content, media_paths, transcript, collapse)
 def _render_reddit_text(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
         _body_quote(content),
@@ -358,7 +418,6 @@ def _render_reddit_text(ai_result, content, media_paths, transcript, collapse):
 def _render_reddit_gallery(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _summary_section(ai_result),
@@ -374,7 +433,6 @@ def _render_reddit_gallery(ai_result, content, media_paths, transcript, collapse
 def _render_reddit_video(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _chapters_block(content),
@@ -394,7 +452,6 @@ def _render_instagram_reel(ai_result, content, media_paths, transcript, collapse
     saved_date = date.today().strftime("%Y-%m-%d")
     caption = content.body_text or content.captions or ""
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _transcript_block(transcript, collapse),
@@ -414,7 +471,6 @@ def _render_instagram_post(ai_result, content, media_paths, transcript, collapse
     saved_date = date.today().strftime("%Y-%m-%d")
     caption = content.body_text or ""
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
     ]
@@ -433,7 +489,6 @@ def _render_tiktok_video(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     caption = content.body_text or ""
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _transcript_block(transcript, collapse),
@@ -453,7 +508,6 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
     saved_date = date.today().strftime("%Y-%m-%d")
     caption = content.body_text or ""
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
         _transcript_block(transcript, collapse),
@@ -472,7 +526,6 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
 def _render_facebook_post(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         _media_embeds(media_paths),
         _summary_section(ai_result),
         _body_quote(content),
@@ -486,7 +539,6 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     hero = media_paths[:1]
     parts = [
-        _source_line(content),
         _media_embeds(hero),
         _summary_section(ai_result),
         "## Ingredients\n*(See original content below)*\n",
@@ -502,7 +554,6 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
 def _render_web_travel(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     parts = [
-        _source_line(content),
         _media_embeds(media_paths[:4]),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
@@ -519,7 +570,6 @@ def _render_web_article(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     hero = media_paths[:1]
     parts = [
-        _source_line(content),
         _media_embeds(hero),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
@@ -535,7 +585,6 @@ def _render_web_generic(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
     hero = media_paths[:1]
     parts = [
-        _source_line(content),
         _media_embeds(hero),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
