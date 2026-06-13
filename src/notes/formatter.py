@@ -70,7 +70,6 @@ def format_note(
 
 def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
     tags = ai_result.get("tags") or []
-    tag_lines = "\n".join(f"  - {t}" for t in tags)
     title = ai_result.get("title", "").replace('"', "'")
     author = content.author or "unknown"
     m = content.metadata or {}
@@ -143,7 +142,17 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
             if posted:
                 lines.append(f"posted: {posted}")
 
-    lines += ["tags:", tag_lines, "type: save", "---"]
+    if tags:
+        lines.append("tags:")
+        # Quote each tag so YAML never coerces a numeric-looking tag (e.g. "225",
+        # "2026") into an int — Obsidian flags non-string list items as
+        # "Type mismatch, expected Tags".
+        for t in tags:
+            lines.append(f'  - "{str(t).replace(chr(34), chr(39))}"')
+    else:
+        lines.append("tags: []")
+
+    lines += ["type: save", "---"]
     return "\n".join(lines)
 
 
