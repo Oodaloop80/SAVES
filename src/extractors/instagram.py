@@ -81,14 +81,20 @@ class InstagramExtractor(BaseExtractor):
         import tempfile, json
         with tempfile.TemporaryDirectory() as tmpdir:
             cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
+            cookies_exist = os.path.exists(cookies_path)
             cmd = ["yt-dlp", "--write-info-json", "--write-comments",
                    "--skip-download", "--no-warnings",
                    "-o", os.path.join(tmpdir, "%(id)s.%(ext)s")]
-            if os.path.exists(cookies_path):
+            if cookies_exist:
                 cmd += ["--cookies", cookies_path]
             cmd.append(url)
-            subprocess.run(cmd, capture_output=True, timeout=60)
+            logger.info("Instagram yt-dlp: cookies=%s", cookies_exist)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if proc.returncode != 0:
+                logger.warning("Instagram yt-dlp exited %d: %s", proc.returncode,
+                               (proc.stderr or proc.stdout or "")[:300])
             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
+            logger.info("Instagram yt-dlp: info.json files found = %s", info_files)
             if not info_files:
                 return {}
             with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
@@ -97,6 +103,8 @@ class InstagramExtractor(BaseExtractor):
             handle = (info.get("uploader_id") or info.get("channel_id") or info.get("channel"))
             clean_handle = handle.lstrip("@") if handle else None
             owner_ids = self._owner_id_set(info, clean_handle)
+            logger.info("Instagram yt-dlp: uploader=%r handle=%r comments=%d",
+                        info.get("uploader"), clean_handle, len(info.get("comments") or []))
             return {
                 "caption": info.get("description", ""),
                 "owner_username": info.get("uploader") or info.get("channel"),
