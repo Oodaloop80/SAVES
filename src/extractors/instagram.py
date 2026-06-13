@@ -1,11 +1,15 @@
 import asyncio
+import logging
 import os
 import random
+import re
 import subprocess
 import time
 
 from src.extractors.base import BaseExtractor, ExtractedContent
 from src.utils.url_parser import normalize_url
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramExtractor(BaseExtractor):
@@ -89,7 +93,15 @@ class InstagramExtractor(BaseExtractor):
                     or info.get("channel")
                 )
                 clean_handle = handle.lstrip("@") if handle else None
-                first_owner_comment = self._first_owner_comment(info, clean_handle)
+                # Identifiers that could mark a comment as the poster's own — collect
+                # every field yt-dlp might populate, since the comment's `author` is a
+                # username while `author_id` is numeric, and the post fields vary.
+                owner_ids = self._owner_id_set(info, clean_handle)
+                first_owner_comment = self._first_owner_comment(info, owner_ids)
+                # yt-dlp's Instagram comment support is unreliable — if it returned
+                # nothing, fall back to instaloader (purpose-built, uses the session).
+                if not first_owner_comment:
+                    first_owner_comment = self._instaloader_first_owner_comment(url)
                 return {
                     "caption": info.get("description", ""),
                     "owner_username": info.get("uploader") or info.get("channel"),
@@ -101,31 +113,113 @@ class InstagramExtractor(BaseExtractor):
                 }
         return {}
 
-    def _first_owner_comment(self, info: dict, owner_handle: str | None) -> str | None:
-        """Return the text of the poster's own first comment, if present.
+    @staticmethod
+    def _owner_id_set(info: dict, clean_handle: str | None) -> set:
+        """All lowercased identifiers that could mark a comment as the poster's own."""
+        ids = set()
+        for key in ("uploader_id", "channel_id", "channel", "uploader"):
+            v = info.get(key)
+            if v:
+                ids.add(str(v).lstrip("@").lower())
+        if clean_handle:
+            ids.add(clean_handle.lower())
+        return ids
+
+    def _first_owner_comment(self, info: dict, owner_ids: set) -> str | None:
+        """Return the text of the poster's own first comment from yt-dlp's comment list.
 
         Instagram accounts often post extra context (article text, ingredient lists,
         event details) as the very first comment on their own post. We capture it and
         append it to body_text so Claude and the note templates see the full content.
         """
         comments = info.get("comments") or []
-        if not comments or not owner_handle:
+        if not comments:
+            logger.debug("Instagram: yt-dlp returned no comments for this post")
             return None
-        # yt-dlp comment fields: author, author_id, text, timestamp, id
-        # author_id typically starts with "@" for Instagram
-        owner_lower = owner_handle.lower()
-        # Sort by timestamp ascending to find the chronologically first comment
-        sorted_comments = sorted(
-            comments,
-            key=lambda c: c.get("timestamp") or 0,
-        )
+        if not owner_ids:
+            return None
+        # yt-dlp comment fields: author (username), author_id (numeric), text, timestamp.
+        # Match on EITHER field so we don't miss when one is numeric and the other a handle.
+        sorted_comments = sorted(comments, key=lambda c: c.get("timestamp") or 0)
         for c in sorted_comments:
-            commenter = (c.get("author_id") or c.get("author") or "").lstrip("@").lower()
-            if commenter == owner_lower:
+            candidates = {
+                str(c.get("author") or "").lstrip("@").lower(),
+                str(c.get("author_id") or "").lstrip("@").lower(),
+            }
+            candidates.discard("")
+            if candidates & owner_ids:
                 text = (c.get("text") or "").strip()
                 if text:
+                    logger.info("Instagram: captured owner's first comment (%d chars)", len(text))
                     return text
+        logger.debug("Instagram: %d comments fetched, none from the post owner", len(comments))
         return None
+
+    @staticmethod
+    def _shortcode_from_url(url: str) -> str | None:
+        m = re.search(r"/(?:p|reel|tv)/([^/?#]+)", url)
+        return m.group(1) if m else None
+
+    def _instaloader_first_owner_comment(self, url: str) -> str | None:
+        """Fallback: use instaloader to fetch the owner's first comment.
+
+        Requires a logged-in instaloader session (mounted at
+        /root/.config/instaloader/session-<username>). Fully guarded — any failure
+        (no session, rate limit, import error, network) returns None without raising.
+        """
+        shortcode = self._shortcode_from_url(url)
+        if not shortcode:
+            return None
+        try:
+            import instaloader
+        except ImportError:
+            return None
+        try:
+            L = instaloader.Instaloader(
+                download_pictures=False, download_videos=False,
+                download_comments=False, save_metadata=False, quiet=True,
+            )
+            if not self._load_instaloader_session(instaloader, L):
+                logger.debug("Instagram: no instaloader session available for comments")
+                return None
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            owner = (post.owner_username or "").lower()
+            if not owner:
+                return None
+            best = None  # (timestamp, text) for the earliest owner comment
+            for c in post.get_comments():
+                if (c.owner.username or "").lower() != owner:
+                    continue
+                text = (c.text or "").strip()
+                if not text:
+                    continue
+                ts = c.created_at_utc.timestamp() if c.created_at_utc else 0
+                if best is None or ts < best[0]:
+                    best = (ts, text)
+            if best:
+                logger.info("Instagram: captured owner's first comment via instaloader (%d chars)", len(best[1]))
+                return best[1]
+        except Exception as e:
+            logger.debug("Instagram: instaloader comment fetch failed: %s", e)
+        return None
+
+    def _load_instaloader_session(self, instaloader, L) -> bool:
+        """Load the first available instaloader session file. Returns True on success."""
+        cfg_dir = os.path.expanduser("~/.config/instaloader")
+        try:
+            session_files = [
+                f for f in os.listdir(cfg_dir) if f.startswith("session-")
+            ]
+        except OSError:
+            return False
+        for fname in session_files:
+            username = fname[len("session-"):]
+            try:
+                L.load_session_from_file(username, os.path.join(cfg_dir, fname))
+                return True
+            except Exception:
+                continue
+        return False
 
     def _gallery_dl_urls(self, url: str) -> list[str]:
         cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
