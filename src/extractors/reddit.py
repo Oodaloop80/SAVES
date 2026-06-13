@@ -189,26 +189,88 @@ class RedditExtractor(BaseExtractor):
                     urls.append(img_url)
         return urls
 
+    def _collect_comments(
+        self, children: list, ancestors: list, result: list
+    ) -> None:
+        """Recursively traverse the comment tree, recording each comment with its ancestors."""
+        for c in children:
+            if c.get("kind") != "t1":
+                continue
+            d = c["data"]
+            permalink = (
+                f"https://reddit.com{d['permalink']}?context=3"
+                if d.get("permalink") else ""
+            )
+            entry = {
+                "id": d.get("id", ""),
+                "author": d.get("author", "[deleted]"),
+                "score": d.get("score", 0),
+                "text": d.get("body", ""),
+                "permalink": permalink,
+                "ancestors": list(ancestors),
+            }
+            result.append(entry)
+            replies = d.get("replies")
+            if replies and isinstance(replies, dict):
+                sub = replies.get("data", {}).get("children", [])
+                self._collect_comments(sub, ancestors + [entry], result)
+
     def _top_comments(self, post: dict, listing: list) -> list[dict] | None:
         op = post.get("author", "")
-        flat = [
-            {
-                "id": c["data"].get("id", ""),
-                "author": c["data"].get("author", "[deleted]"),
-                "score": c["data"].get("score", 0),
-                "text": c["data"].get("body", ""),
+
+        # Recursively collect every comment in the thread tree
+        all_comments: list[dict] = []
+        self._collect_comments(listing, [], all_comments)
+
+        top_level = [c for c in all_comments if not c["ancestors"]]
+        nested    = [c for c in all_comments if c["ancestors"]]
+
+        # Top N top-level comments by score
+        top_n = sorted(top_level, key=lambda c: c["score"], reverse=True)[:self.top_comments_count]
+
+        # OP's own top-level comments (may already be in top_n)
+        op_top = [c for c in top_level if self.include_op_top_level and c["author"] == op] if op else []
+
+        # OP nested replies — include up to 5, with their full ancestor chain for context
+        op_nested = [c for c in nested if c["author"] == op][:5] if op else []
+
+        def _fmt(c: dict, with_thread: bool) -> dict:
+            out: dict = {
+                "id": c["id"],
+                "author": c["author"],
+                "score": c["score"],
+                "text": c["text"],
+                "permalink": c["permalink"],
+                "is_op": bool(op and c["author"] == op),
+                "thread_context": None,
             }
-            for c in listing if c.get("kind") == "t1"
-        ]
-        top = sorted(flat, key=lambda c: c["score"], reverse=True)[: self.top_comments_count]
-        op_comments = [c for c in flat if self.include_op_top_level and c["author"] == op] if op else []
+            if with_thread and c["ancestors"]:
+                out["thread_context"] = [
+                    {
+                        "id": a["id"],
+                        "author": a["author"],
+                        "score": a["score"],
+                        "text": a["text"],
+                        "permalink": a["permalink"],
+                        "is_op": bool(op and a["author"] == op),
+                    }
+                    for a in c["ancestors"]
+                ]
+            return out
+
         seen: set[str] = set()
-        combined = []
-        for c in top + op_comments:
+        combined: list[dict] = []
+
+        for c in sorted(top_n + op_top, key=lambda x: x["score"], reverse=True):
             if c["id"] not in seen:
                 seen.add(c["id"])
-                combined.append({"author": c["author"], "score": c["score"], "text": c["text"]})
-        combined.sort(key=lambda x: x["score"], reverse=True)
+                combined.append(_fmt(c, with_thread=False))
+
+        for c in op_nested:
+            if c["id"] not in seen:
+                seen.add(c["id"])
+                combined.append(_fmt(c, with_thread=True))
+
         return combined or None
 
 

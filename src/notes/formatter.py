@@ -230,13 +230,34 @@ def _body_quote(content: ExtractedContent) -> str:
     return f"> [!quote]- Original Post\n{header}\n>\n{quoted}\n"
 
 
+def _render_comment_at_depth(c: dict, depth: int) -> str:
+    """Render one comment at a given blockquote depth (1 = >, 2 = >>, …)."""
+    prefix = "> " * depth
+    author = c.get("author", "[deleted]")
+    op_label = " **[OP]**" if c.get("is_op") else ""
+    permalink = c.get("permalink", "")
+    author_str = f"[u/{author}]({permalink})" if permalink else f"u/{author}"
+    header = f"{prefix}**{author_str}**{op_label} ({c.get('score', 0)} ↑)"
+    text = c.get("text", "")[:800]
+    body = "\n".join(f"{prefix}{line}" for line in text.splitlines())
+    return f"{header}\n{body}" if body else header
+
+
+def _render_comment_block(c: dict) -> str:
+    """Render a comment entry. Thread-context entries nest ancestors at increasing depth."""
+    thread = c.get("thread_context")
+    if thread:
+        # Render each ancestor at increasing depth, then the OP reply deepest
+        parts = [_render_comment_at_depth(a, i + 1) for i, a in enumerate(thread)]
+        parts.append(_render_comment_at_depth(c, len(thread) + 1))
+        return "\n".join(parts)
+    return _render_comment_at_depth(c, 1)
+
+
 def _comments_section(content: ExtractedContent) -> str:
     if not content.top_comments:
         return ""
-    blocks = []
-    for c in content.top_comments:
-        body = "\n".join(f"> {l}" for l in c["text"][:800].splitlines())
-        blocks.append(f"> **u/{c['author']}** ({c['score']} ↑)\n{body}")
+    blocks = [_render_comment_block(c) for c in content.top_comments]
     inner = "\n>\n".join(blocks)
     return f"> [!example]- Top Comments\n{inner}\n"
 
