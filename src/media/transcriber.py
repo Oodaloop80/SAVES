@@ -36,7 +36,7 @@ async def transcribe(audio_path: str, config: dict) -> str | None:
         return None
     if not os.path.exists(audio_path):
         return None
-    if not _is_audio_video(audio_path):
+    if not is_audio_video(audio_path):
         logger.debug("Skipping transcription — not an audio/video file: %s", audio_path)
         return None
 
