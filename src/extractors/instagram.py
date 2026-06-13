@@ -82,8 +82,12 @@ class InstagramExtractor(BaseExtractor):
         with tempfile.TemporaryDirectory() as tmpdir:
             cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
             cookies_exist = os.path.exists(cookies_path)
+            # Instagram image posts have no video formats, which yt-dlp treats as a
+            # fatal error and then writes no info.json (and no comments). The
+            # --ignore-no-formats-error flag downgrades that to a warning so yt-dlp
+            # still produces the metadata + comments for image posts.
             cmd = ["yt-dlp", "--write-info-json", "--write-comments",
-                   "--skip-download", "--no-warnings",
+                   "--skip-download", "--no-warnings", "--ignore-no-formats-error",
                    "-o", os.path.join(tmpdir, "%(id)s.%(ext)s")]
             if cookies_exist:
                 cmd += ["--cookies", cookies_path]
