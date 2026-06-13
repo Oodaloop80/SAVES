@@ -163,18 +163,47 @@ class RedditExtractor(BaseExtractor):
                 return [f"https://www.reddit.com{permalink}"]
             video_url = (post.get("media") or {}).get("reddit_video", {}).get("fallback_url")
             return [video_url] if video_url else []
+
+        # Multi-image gallery
         if post.get("is_gallery") and post.get("media_metadata"):
             return self._gallery_urls(post)
+
+        # Some single-image posts have media_metadata without is_gallery
+        if post.get("media_metadata") and not post.get("is_video"):
+            urls = self._gallery_urls(post)
+            if urls:
+                return urls
+
         post_url = post.get("url", "")
-        # Direct image link
-        if re.search(r'\.(jpg|jpeg|png|gif|webp)(\?|$)', post_url, re.IGNORECASE):
-            return [post_url]
-        # External video host linked from the post (YouTube, Streamable, etc.) —
-        # yt-dlp will resolve it. post_hint marks these as "rich:video"/"hosted:video".
         hint = post.get("post_hint", "")
+
+        # Direct image link — covers i.redd.it/xxx.jpg, imgur, etc.
+        # Also matches URLs with query params: i.redd.it/xxx.jpg?auto=webp&s=…
+        if re.search(r'\.(jpg|jpeg|png|gif|webp|avif)(\?|$)', post_url, re.IGNORECASE):
+            return [post_url]
+
+        # Reddit image post where the URL has no recognisable extension (newer CDN
+        # formats). Fall back to the full-resolution preview source URL.
+        if hint == "image":
+            preview = self._preview_url(post)
+            if preview:
+                return [preview]
+            if post_url:
+                return [post_url]
+
+        # External video host linked from the post (YouTube, Streamable, etc.)
         if hint in ("rich:video", "hosted:video") and post_url:
             return [post_url]
+
         return []
+
+    def _preview_url(self, post: dict) -> str | None:
+        """Return the full-resolution preview image URL, HTML-unescaped."""
+        try:
+            source = post["preview"]["images"][0]["source"]
+            return html.unescape(source["url"])
+        except (KeyError, IndexError, TypeError):
+            return None
 
     def _gallery_urls(self, post: dict) -> list[str]:
         metadata = post.get("media_metadata", {})
