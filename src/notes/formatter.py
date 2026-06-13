@@ -234,11 +234,7 @@ def _render_comment_at_depth(c: dict, depth: int) -> str:
     """Render one comment at a given blockquote depth (1 = >, 2 = >>, …)."""
     prefix = "> " * depth
     author = c.get("author", "[deleted]")
-    op_label = (
-        ' <span style="background-color:#0079d3;color:#ffffff;font-weight:bold;'
-        'padding:0 5px;border-radius:3px;">OP</span>'
-        if c.get("is_op") else ""
-    )
+    op_label = ' <span class="saves-op-badge">OP</span>' if c.get("is_op") else ""
     permalink = c.get("permalink", "")
     author_str = f"[u/{author}]({permalink})" if permalink else f"u/{author}"
     header = f"{prefix}**{author_str}**{op_label} ({c.get('score', 0)} ↑)"
