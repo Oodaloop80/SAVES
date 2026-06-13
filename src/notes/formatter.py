@@ -297,8 +297,8 @@ def _body_quote(content: ExtractedContent) -> str:
     header = f"> **{content.platform} — {content.author or 'Unknown'}**"
     if m.get("score"):
         header += f" — {m['score']:,} upvotes"
-    quoted = "\n".join(f"> {l}" for l in content.body_text[:4000].splitlines())
-    return f"> [!quote]- Original Post\n{header}\n>\n{quoted}\n"
+    quoted = "\n".join(f"> {l}" for l in content.body_text[:20000].splitlines())
+    return f"> [!quote] Original Post\n{header}\n>\n{quoted}\n"
 
 
 def _render_comment_at_depth(c: dict, depth: int) -> str:
