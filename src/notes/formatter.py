@@ -152,7 +152,7 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
     else:
         lines.append("tags: []")
 
-    lines += ["type: save", "---"]
+    lines += ["type: SAVE.app", "---"]
     return "\n".join(lines)
 
 
