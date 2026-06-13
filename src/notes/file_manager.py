@@ -8,11 +8,50 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
-def _safe_filename(filename: str, max_len: int = 80) -> str:
-    """Strip filesystem-illegal chars; preserve case and spaces for readable filenames."""
+# Cross-platform path budget. The vault is written on the NAS (Linux) but syncs
+# to Windows, macOS, Android and iOS, each of which prepends its own vault root
+# to the *relative* note path. The binding real-world limits are:
+#   - single name component: 255 BYTES (ext4/F2FS on Linux & Android)
+#   - full path: 260 CHARS (legacy Windows MAX_PATH) — the tightest constraint
+# We byte-cap the filename for the component limit, and budget the relative path
+# (folder/…/name.md) so a typical device vault prefix still fits under 260.
+_MAX_FILENAME_BYTES = 200      # < 255-byte component limit, leaves headroom
+_MAX_RELATIVE_PATH = 200       # chars; leaves ~60 for each device's vault prefix vs Win 260
+_TRAILING_PUNCT = " ,;:-–—([{._"
+
+
+def _truncate_to_bytes(s: str, max_bytes: int) -> str:
+    """Truncate to at most max_bytes of UTF-8 without splitting a multi-byte char."""
+    encoded = s.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return s
+    return encoded[:max_bytes].decode("utf-8", "ignore")
+
+
+def _safe_filename(filename: str, max_chars: int = 150) -> str:
+    """Strip filesystem-illegal chars; preserve case and spaces for readable filenames.
+
+    Truncation is OS-aware: cap at max_chars on a word boundary, then enforce the
+    255-byte single-component limit (Linux/Android) via a byte cap, then strip any
+    trailing separator punctuation so the name never ends mid-word or on a stray
+    comma/dash/open-paren.
+    """
     s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename)
     s = re.sub(r'\s+', ' ', s).strip()
-    return s[:max_len] or "untitled"
+
+    if len(s) > max_chars:
+        cut = s[:max_chars]
+        if " " in cut:
+            cut = cut[:cut.rfind(" ")]
+        s = cut
+
+    if len(s.encode("utf-8")) > _MAX_FILENAME_BYTES:
+        s = _truncate_to_bytes(s, _MAX_FILENAME_BYTES)
+        if " " in s:
+            s = s[:s.rfind(" ")]
+
+    s = s.rstrip(_TRAILING_PUNCT)
+    return s or "untitled"
 
 
 def write_note(vault_root: str, folder_path: str, filename: str, content: str) -> str:
@@ -23,7 +62,15 @@ def write_note(vault_root: str, folder_path: str, filename: str, content: str) -
     folder_abs = os.path.join(vault_root, folder_path)
     os.makedirs(folder_abs, exist_ok=True)
 
-    safe_name = _safe_filename(filename)
+    # Budget the relative path (folder/…/name.md) so the synced note stays under
+    # Windows' 260-char path limit on every device. Reserve room for ".md" and a
+    # possible "-NN" conflict suffix. Folders are fixed (Claude/preferences), so
+    # the filename is what we shrink.
+    rel_prefix = len(folder_path.replace("\\", "/")) + 1  # "<folder>/"
+    name_budget = _MAX_RELATIVE_PATH - rel_prefix - len("-99") - len(".md")
+    name_budget = max(16, min(150, name_budget))
+
+    safe_name = _safe_filename(filename, max_chars=name_budget)
     dest = os.path.join(folder_abs, safe_name + ".md")
 
     # Conflict resolution — never overwrite
