@@ -98,7 +98,9 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
     lines = ["---", f'title: "{title}"']
 
     post_title = (content.title or "").replace('"', "'")
-    if post_title:
+    # Suppress post_title when it equals the source URL (happens when yt-dlp/extractor
+    # couldn't get a real title and fell back to using the URL as the title).
+    if post_title and post_title != content.url and post_title != content.url.replace('"', "'"):
         lines.append(f'post_title: "{post_title}"')
 
     lines += [

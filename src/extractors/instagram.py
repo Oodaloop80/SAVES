@@ -35,12 +35,21 @@ class InstagramExtractor(BaseExtractor):
             # Reels fallback: yt-dlp
             media_urls = [url]
 
+        caption = metadata.get("caption", "")
+        first_comment = metadata.get("first_owner_comment") or ""
+        # Merge owner's first comment into body_text when it exists and isn't just
+        # a repeat of the caption (some tools duplicate the caption as a comment).
+        if first_comment and first_comment.strip() != caption.strip():
+            body_text = (caption + "\n\n---\n\n" + first_comment).strip() if caption else first_comment
+        else:
+            body_text = caption
+
         return ExtractedContent(
             url=url,
             platform="instagram",
-            title=metadata.get("caption", "")[:80] or url,
+            title=caption[:80] or url,
             author=metadata.get("owner_username"),
-            body_text=metadata.get("caption", ""),
+            body_text=body_text,
             metadata={
                 "like_count": metadata.get("likes"),
                 "shortcode": metadata.get("shortcode"),
@@ -53,11 +62,14 @@ class InstagramExtractor(BaseExtractor):
 
     def _instaloader_metadata(self, url: str) -> dict:
         # instaloader doesn't have a clean JSON-output mode for single posts,
-        # so we use yt-dlp --write-info-json for basic metadata
+        # so we use yt-dlp --write-info-json for basic metadata.
+        # --write-comments fetches the comment list so we can capture the poster's
+        # own first comment (many accounts post article text or extra details there).
         import tempfile, json
         with tempfile.TemporaryDirectory() as tmpdir:
             cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
-            cmd = ["yt-dlp", "--write-info-json", "--skip-download", "--no-warnings",
+            cmd = ["yt-dlp", "--write-info-json", "--write-comments",
+                   "--skip-download", "--no-warnings",
                    "-o", os.path.join(tmpdir, "%(id)s.%(ext)s")]
             if os.path.exists(cookies_path):
                 cmd += ["--cookies", cookies_path]
@@ -76,15 +88,44 @@ class InstagramExtractor(BaseExtractor):
                     or info.get("channel_id")
                     or info.get("channel")
                 )
+                clean_handle = handle.lstrip("@") if handle else None
+                first_owner_comment = self._first_owner_comment(info, clean_handle)
                 return {
                     "caption": info.get("description", ""),
                     "owner_username": info.get("uploader") or info.get("channel"),
-                    "owner_handle": handle.lstrip("@") if handle else None,
+                    "owner_handle": clean_handle,
                     "likes": info.get("like_count"),
                     "shortcode": info.get("id"),
                     "date": info.get("upload_date"),
+                    "first_owner_comment": first_owner_comment,
                 }
         return {}
+
+    def _first_owner_comment(self, info: dict, owner_handle: str | None) -> str | None:
+        """Return the text of the poster's own first comment, if present.
+
+        Instagram accounts often post extra context (article text, ingredient lists,
+        event details) as the very first comment on their own post. We capture it and
+        append it to body_text so Claude and the note templates see the full content.
+        """
+        comments = info.get("comments") or []
+        if not comments or not owner_handle:
+            return None
+        # yt-dlp comment fields: author, author_id, text, timestamp, id
+        # author_id typically starts with "@" for Instagram
+        owner_lower = owner_handle.lower()
+        # Sort by timestamp ascending to find the chronologically first comment
+        sorted_comments = sorted(
+            comments,
+            key=lambda c: c.get("timestamp") or 0,
+        )
+        for c in sorted_comments:
+            commenter = (c.get("author_id") or c.get("author") or "").lstrip("@").lower()
+            if commenter == owner_lower:
+                text = (c.get("text") or "").strip()
+                if text:
+                    return text
+        return None
 
     def _gallery_dl_urls(self, url: str) -> list[str]:
         cookies_path = os.path.join(self.cookies_dir, "instagram.txt")

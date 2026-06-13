@@ -91,6 +91,23 @@ Other domains, same broad→specific stacking principle:
   SAVES/PARENTING/NEWBORN/SLEEP
 Each level must add new information — never repeat the level above it.
 
+## Geographic Overrides (always take precedence over generic category rules)
+
+**Charlotte, NC metro area** (Charlotte, Concord, Gastonia, Huntersville, Mooresville,
+Kannapolis, Mint Hill, Matthews, Monroe, Belmont, Davidson — all within ~40 miles of
+Charlotte, NC):
+- Use `THINGS TO DO` as the root, NOT `TRAVEL`.
+- Sub-categories: Restaurants, Bars, Events, Entertainment, Outdoors, Shopping, Nightlife.
+- Example paths:
+    SAVES/THINGS TO DO/Restaurants/Mexican
+    SAVES/THINGS TO DO/Bars
+    SAVES/THINGS TO DO/Events
+    SAVES/THINGS TO DO/Entertainment
+- A news article about a restaurant opening in South End → `SAVES/THINGS TO DO/Restaurants`
+- A post about a concert at PNC Music Pavilion → `SAVES/THINGS TO DO/Events`
+- Only use `TRAVEL` for Charlotte content if the user is explicitly traveling TO Charlotte
+  from another city (i.e. the content is visitor/tourist-centric tips for someone flying in).
+
 If the user message includes an "Existing vault folders" list, treat it as the source of
 truth for what already exists: reuse an exact existing path when the content fits, and
 only invent a new path (still following the stacking conventions above) when none fits.
