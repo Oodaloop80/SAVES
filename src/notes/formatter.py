@@ -22,6 +22,18 @@ def _format_posted(value) -> str:
         return s
 
 
+def _url_safe_handle(value) -> str:
+    """Return a clean @handle for a profile URL, or '' if the value isn't a usable
+    handle. Display names (with spaces) and placeholders are rejected so we never
+    emit a broken URL like https://instagram.com/Rest In Pizza."""
+    if not value:
+        return ""
+    h = str(value).strip().lstrip("@")
+    if not h or h.lower() == "unknown" or any(c.isspace() for c in h):
+        return ""
+    return h
+
+
 def _format_duration(seconds) -> str:
     try:
         s = int(seconds)
@@ -121,8 +133,8 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
         if posted:
             lines.append(f"posted: {posted}")
     elif content.platform == "instagram":
-        handle = author.lstrip("@")
-        if handle and handle != "unknown":
+        handle = _url_safe_handle(m.get("author_handle") or author)
+        if handle:
             lines.append(f'author_url: "https://instagram.com/{handle}"')
         raw_date = m.get("upload_date") or m.get("created_utc")
         if raw_date:
@@ -130,8 +142,8 @@ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) ->
             if posted:
                 lines.append(f"posted: {posted}")
     elif content.platform == "tiktok":
-        handle = author.lstrip("@")
-        if handle and handle != "unknown":
+        handle = _url_safe_handle(m.get("author_handle") or author)
+        if handle:
             lines.append(f'author_url: "https://tiktok.com/@{handle}"')
         raw_date = m.get("upload_date") or m.get("created_utc")
         if raw_date:
@@ -232,6 +244,12 @@ def _author_link(content: ExtractedContent) -> str:
         return f"[{a}](https://reddit.com/u/{handle})"
     if content.platform == "youtube" and m.get("channel_id"):
         return f"[{a}](https://youtube.com/channel/{m['channel_id']})"
+    if content.platform == "instagram":
+        handle = _url_safe_handle(m.get("author_handle") or a)
+        return f"[{a}](https://instagram.com/{handle})" if handle else a
+    if content.platform == "tiktok":
+        handle = _url_safe_handle(m.get("author_handle") or a)
+        return f"[{a}](https://tiktok.com/@{handle})" if handle else a
     return a
 
 

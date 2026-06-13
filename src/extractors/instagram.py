@@ -45,6 +45,8 @@ class InstagramExtractor(BaseExtractor):
                 "like_count": metadata.get("likes"),
                 "shortcode": metadata.get("shortcode"),
                 "post_date": metadata.get("date"),
+                "upload_date": metadata.get("date"),
+                "author_handle": metadata.get("owner_handle"),
             },
             media_urls=media_urls,
         )
@@ -65,9 +67,19 @@ class InstagramExtractor(BaseExtractor):
             if info_files:
                 with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
                     info = json.load(f)
+                # yt-dlp: `uploader` is the display name ("Rest In Pizza");
+                # `uploader_id`/`channel_id` is the @handle used in the profile
+                # URL ("brewtal_pizza"). Keep both — display name for `author`,
+                # handle for building the author_url.
+                handle = (
+                    info.get("uploader_id")
+                    or info.get("channel_id")
+                    or info.get("channel")
+                )
                 return {
                     "caption": info.get("description", ""),
                     "owner_username": info.get("uploader") or info.get("channel"),
+                    "owner_handle": handle.lstrip("@") if handle else None,
                     "likes": info.get("like_count"),
                     "shortcode": info.get("id"),
                     "date": info.get("upload_date"),
