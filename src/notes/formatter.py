@@ -29,7 +29,7 @@ def _url_safe_handle(value) -> str:
     if not value:
         return ""
     h = str(value).strip().lstrip("@")
-    if not h or h.lower() == "unknown" or any(c.isspace() for c in h):
+    if not h or h.lower() == "unknown" or any(c.isspace() for c in h) or h.isdigit():
         return ""
     return h
 
@@ -496,7 +496,7 @@ def _render_instagram_reel(ai_result, content, media_paths, transcript, collapse
     ]
     if caption:
         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
+        parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
         "---",
@@ -514,7 +514,7 @@ def _render_instagram_post(ai_result, content, media_paths, transcript, collapse
     ]
     if caption:
         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
+        parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
         "---",
@@ -533,7 +533,7 @@ def _render_tiktok_video(ai_result, content, media_paths, transcript, collapse):
     ]
     if caption:
         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
+        parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
         "---",
@@ -552,7 +552,7 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
     ]
     if caption:
         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
+        parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
         "---",
