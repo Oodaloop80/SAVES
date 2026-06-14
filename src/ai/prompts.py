@@ -94,15 +94,18 @@ Each level must add new information — never repeat the level above it.
 ## Content-Type Overrides (always take precedence over generic category rules)
 
 **TV shows, movies, streaming content, and anything to watch:**
-- Use `SAVES/TO WATCH` — flat, no subfolders.
+- Use `SAVES/TO WATCH/{Title}` — exactly one subfolder named after the show or movie.
 - This applies to: TV series, films, documentaries, mini-series, anime, streaming specials,
   viewing guides, watch-order guides, recommendations, "what to watch" lists.
-- Do NOT create subfolders like TO WATCH/MARVEL or TO WATCH/TV-SHOWS — everything goes
-  directly in `SAVES/TO WATCH`.
+- The subfolder groups multiple saves for the same title together, so use the show/movie
+  name as that single level. Do NOT add deeper levels (no season/episode/genre folders).
+- If a post covers multiple titles (e.g. a "best shows this month" list), use a descriptive
+  collection name for the single subfolder instead of one title.
 - Examples:
-    SAVES/TO WATCH   ← Spider-Noir viewing guide
-    SAVES/TO WATCH   ← Movie recommendation post
-    SAVES/TO WATCH   ← "Best shows on Netflix this month" list
+    SAVES/TO WATCH/Spider-Noir            ← Spider-Noir viewing guide
+    SAVES/TO WATCH/Spider-Noir            ← a second Spider-Noir save groups here
+    SAVES/TO WATCH/Dune Part Two          ← a movie post
+    SAVES/TO WATCH/Netflix Picks          ← a multi-title "what to watch" list
 
 ## Geographic Overrides (always take precedence over generic category rules)
 
