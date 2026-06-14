@@ -64,6 +64,11 @@ def format_note(
     note_type = ai_result.get("note_type", "web_generic")
     parts = [_frontmatter(ai_result, content, saved_date)]
 
+    # Blank spacer line so that when the note opens in Live Preview, the cursor
+    # lands on this empty line instead of inside the first embed/code block — which
+    # would otherwise show raw "```EmbedRelativeTo ..." markup until you click away.
+    parts.append("")
+
     if include_warnings:
         if fact_check_result and fact_check_result.get("disputed_claims"):
             parts.append(_fact_check_callout(fact_check_result))
