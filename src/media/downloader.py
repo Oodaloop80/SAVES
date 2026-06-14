@@ -64,12 +64,58 @@ def _download_one(
 
     if is_video:
         return _yt_dlp_download(url, save_dir, video_quality, max_size_mb, cookies_path)
-    elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"):
-        return _direct_download(url, save_dir)
+    elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif"):
+        return _maybe_convert_heic(_direct_download(url, save_dir))
     else:
         # Try yt-dlp first, fall back to direct
         result = _yt_dlp_download(url, save_dir, video_quality, max_size_mb, cookies_path)
-        return result or _direct_download(url, save_dir)
+        return result or _maybe_convert_heic(_direct_download(url, save_dir))
+
+
+def _maybe_convert_heic(path: str | None) -> str | None:
+    """Convert HEIC/HEIF images to JPG so Obsidian can render them.
+
+    Obsidian (and most note viewers) can't display HEIC, so the embed degrades to
+    a bare link. We transcode to JPG and return the new path; the original .heic is
+    left in place (no deletes by project policy). On any failure we return the
+    original path — a broken embed is no worse than before."""
+    if not path:
+        return path
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".heic", ".heif"):
+        return path
+
+    jpg_path = os.path.splitext(path)[0] + ".jpg"
+
+    # Preferred: ffmpeg (already a project dependency for muxing/transcoding).
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", path, jpg_path],
+            capture_output=True, timeout=60,
+        )
+        if result.returncode == 0 and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 0:
+            logger.info("Converted HEIC to JPG via ffmpeg: %s", os.path.basename(jpg_path))
+            return jpg_path
+        logger.debug("ffmpeg HEIC->JPG failed (rc=%s): %s",
+                     result.returncode, (result.stderr or b"")[:200])
+    except Exception as e:
+        logger.debug("ffmpeg HEIC->JPG raised: %s", e)
+
+    # Fallback: pillow-heif if installed.
+    try:
+        import pillow_heif  # type: ignore
+        from PIL import Image  # type: ignore
+        pillow_heif.register_heif_opener()
+        Image.open(path).convert("RGB").save(jpg_path, "JPEG", quality=90)
+        if os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 0:
+            logger.info("Converted HEIC to JPG via pillow-heif: %s", os.path.basename(jpg_path))
+            return jpg_path
+    except Exception as e:
+        logger.debug("pillow-heif HEIC->JPG failed: %s", e)
+
+    logger.warning("Could not convert HEIC to JPG (need ffmpeg with HEIC support or "
+                   "pillow-heif) — embedding original .heic: %s", path)
+    return path
 
 
 def _yt_dlp_download(
