@@ -89,15 +89,20 @@ def format_note(
 # Shared components
 # ─────────────────────────────────────────────────────────
 
+def _sanitize_yaml_str(value: str) -> str:
+    """Collapse newlines/tabs to a space so YAML double-quoted strings stay on one line."""
+    return re.sub(r'[\r\n\t]+', ' ', value).strip()
+
+
 def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
     tags = ai_result.get("tags") or []
-    title = ai_result.get("title", "").replace('"', "'")
+    title = _sanitize_yaml_str(ai_result.get("title", "")).replace('"', "'")
     author = content.author or "unknown"
     m = content.metadata or {}
 
     lines = ["---", f'title: "{title}"']
 
-    post_title = (content.title or "").replace('"', "'")
+    post_title = _sanitize_yaml_str(content.title or "").replace('"', "'")
     # Suppress post_title when it equals the source URL (happens when yt-dlp/extractor
     # couldn't get a real title and fell back to using the URL as the title).
     if post_title and post_title != content.url and post_title != content.url.replace('"', "'"):

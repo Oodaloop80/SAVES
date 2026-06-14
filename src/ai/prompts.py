@@ -91,6 +91,19 @@ Other domains, same broad→specific stacking principle:
   SAVES/PARENTING/NEWBORN/SLEEP
 Each level must add new information — never repeat the level above it.
 
+## Content-Type Overrides (always take precedence over generic category rules)
+
+**TV shows, movies, streaming content, and anything to watch:**
+- Use `SAVES/TO WATCH` — flat, no subfolders.
+- This applies to: TV series, films, documentaries, mini-series, anime, streaming specials,
+  viewing guides, watch-order guides, recommendations, "what to watch" lists.
+- Do NOT create subfolders like TO WATCH/MARVEL or TO WATCH/TV-SHOWS — everything goes
+  directly in `SAVES/TO WATCH`.
+- Examples:
+    SAVES/TO WATCH   ← Spider-Noir viewing guide
+    SAVES/TO WATCH   ← Movie recommendation post
+    SAVES/TO WATCH   ← "Best shows on Netflix this month" list
+
 ## Geographic Overrides (always take precedence over generic category rules)
 
 **Charlotte, NC metro area** (Charlotte, Concord, Gastonia, Huntersville, Mooresville,
