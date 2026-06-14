@@ -39,6 +39,17 @@ class InstagramExtractor(BaseExtractor):
             logger.info("Instagram: yt-dlp returned no metadata — falling back to gallery-dl")
             metadata = self._gallery_dl_metadata(url)
 
+        # yt-dlp often reports the numeric account ID as the handle instead of the
+        # @username. When the handle is numeric/missing, borrow the real handle from
+        # gallery-dl so the note can build a working author_url.
+        handle = metadata.get("owner_handle")
+        if not handle or str(handle).isdigit():
+            gdl = self._gallery_dl_metadata(url)
+            gdl_handle = gdl.get("owner_handle")
+            if gdl_handle and not str(gdl_handle).isdigit():
+                metadata["owner_handle"] = gdl_handle
+                logger.info("Instagram: replaced numeric handle with gallery-dl handle %r", gdl_handle)
+
         # If we still have no comments from yt-dlp, try instaloader (needs session)
         if not metadata.get("first_owner_comment"):
             fc = self._instaloader_first_owner_comment(url, metadata.get("owner_handle"))
