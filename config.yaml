@@ -38,7 +38,7 @@ transcription:
 
 vision:
   enabled: true              # Send images/video frames to Claude for visual text extraction
-  max_images: 10             # Max images per analysis request (cost control)
+  max_images: 20             # Instagram carousels cap at 20 slides; cover the full post
   max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
 
