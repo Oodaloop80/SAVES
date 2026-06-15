@@ -147,10 +147,34 @@ def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -
     client = _make_client()
     user_prompt = build_fact_check_prompt(content, ai_result)
     raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config)
+    parsed = _loads_lenient(raw)
+    if parsed is not None:
+        return parsed
+    logger.warning("Fact-check returned non-JSON; could not parse result")
+    return None
+
+
+def _loads_lenient(raw: str):
+    """Parse JSON that may be wrapped in ```json fences or surrounded by prose."""
+    if not raw:
+        return None
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return None
+        pass
+    text = raw.strip()
+    # Strip markdown code fences
+    if text.startswith("```"):
+        text = text.split("```", 2)[1] if text.count("```") >= 2 else text
+        text = text.lstrip("json").lstrip()
+    # Fall back to the first {...} object in the text
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def _safe_filename(text: str) -> str:

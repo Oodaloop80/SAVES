@@ -425,16 +425,31 @@ def _fact_check_callout(fc: dict) -> str:
 
 
 def _fact_check_note_section(fc: dict) -> str:
-    """Inline fact-check section written into every note that triggered a check."""
+    """Inline fact-check section written into every note that triggered a check.
+
+    Always renders *something* when a fact-check ran (fc is a non-empty dict), so the
+    note gives positive confirmation the check happened — even when no claims were
+    disputed. Otherwise a checked-but-clean post looks identical to one never checked."""
     if not fc:
         return ""
+    disputed = fc.get("disputed_claims") or []
+    verified = fc.get("verified_claims") or []
+    sources = fc.get("sources") or []
+
     if fc.get("opinion_only"):
-        return "> [!info]- Fact Check\n> This content is opinion/analysis — no specific factual claims were verified.\n"
-    disputed = fc.get("disputed_claims", [])
-    verified = fc.get("verified_claims", [])
-    if not disputed and not verified:
-        return ""
-    lines = ["> [!warning]- Fact Check"]
+        lines = [
+            "> [!info]- Fact Check",
+            "> This content is opinion/analysis — no specific factual claims were verified.",
+        ]
+        if verified:
+            lines.append("> **Claims noted:**")
+            for v in verified:
+                lines.append(f"> - {v}")
+        return "\n".join(lines) + "\n"
+
+    # Disputed claims get a warning callout; everything else an info callout.
+    callout = "[!warning]-" if disputed else "[!info]-"
+    lines = [f"> {callout} Fact Check"]
     if disputed:
         lines.append("> **Disputed Claims:**")
         for claim in disputed:
@@ -446,6 +461,12 @@ def _fact_check_note_section(fc: dict) -> str:
         lines.append("> **Verified Claims:**")
         for v in verified:
             lines.append(f"> - {v}")
+    if not disputed and not verified:
+        lines.append("> No specific factual claims were flagged as disputed.")
+    if sources:
+        lines.append("> **Sources:**")
+        for s in sources:
+            lines.append(f"> - {s}")
     return "\n".join(lines) + "\n"
 
 
