@@ -86,6 +86,27 @@ def format_note(
         if embeds:
             body = embeds + "\n" + body
 
+    # Inject supplemental sections (image text + fact-check) before the --- metadata separator.
+    image_text = (ai_result.get("image_text") or "").strip()
+    fc_inline = fact_check_result or (
+        ai_result.get("_fact_check")
+        if isinstance(ai_result.get("_fact_check"), dict) else None
+    )
+    inserts = []
+    if image_text:
+        inserts.append(_image_text_section(image_text))
+    if fc_inline:
+        sec = _fact_check_note_section(fc_inline)
+        if sec:
+            inserts.append(sec)
+    if inserts:
+        sep = "\n---\n"
+        if sep in body:
+            pre, post = body.split(sep, 1)
+            body = pre + "\n" + "\n".join(inserts) + sep + post
+        else:
+            body = body + "\n" + "\n".join(inserts)
+
     parts.append(body)
     return "\n".join(parts)
 
@@ -401,6 +422,39 @@ def _fact_check_callout(fc: dict) -> str:
         if claim.get("source"):
             lines.append(f">   **Source:** {claim['source']}")
     return "\n".join(lines) + "\n"
+
+
+def _fact_check_note_section(fc: dict) -> str:
+    """Inline fact-check section written into every note that triggered a check."""
+    if not fc:
+        return ""
+    if fc.get("opinion_only"):
+        return "> [!info]- Fact Check\n> This content is opinion/analysis — no specific factual claims were verified.\n"
+    disputed = fc.get("disputed_claims", [])
+    verified = fc.get("verified_claims", [])
+    if not disputed and not verified:
+        return ""
+    lines = ["> [!warning]- Fact Check"]
+    if disputed:
+        lines.append("> **Disputed Claims:**")
+        for claim in disputed:
+            lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
+            lines.append(f">   **Reality:** {claim.get('reality', '')}")
+            if claim.get("source"):
+                lines.append(f">   **Source:** {claim['source']}")
+    if verified:
+        lines.append("> **Verified Claims:**")
+        for v in verified:
+            lines.append(f"> - {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _image_text_section(image_text: str) -> str:
+    """Text extracted from carousel slides where the image content IS the text."""
+    if not image_text or not image_text.strip():
+        return ""
+    quoted = "\n".join(f"> {l}" for l in image_text.strip().splitlines())
+    return f"> [!quote] Text from Images\n{quoted}\n"
 
 
 def _location_callout(lc: dict) -> str:

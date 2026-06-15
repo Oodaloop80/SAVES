@@ -16,8 +16,16 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
   "summary": "2-3 sentence overview of why this content is useful.",
   "key_takeaways": ["bullet 1", "bullet 2"],
   "note_type": "<see Note Types below>",
-  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...]
+  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...],
+  "image_text": null
 }
+
+`image_text` is only relevant when vision images are provided. If any image is a slide or
+graphic where the PRIMARY content is TEXT rendered as an image (carousel info-graphics,
+text screenshots, quote cards, recipe steps written as slides — anything where you would
+read the image rather than look at it), extract the COMPLETE text from those slides and
+return it as a single string. Separate each slide's text with a blank line. Return null
+when the images are photographs, artwork, or contain only short decorative captions.
 
 ## Note Types (pick EXACTLY one — determines the note template)
 - youtube_video    → YouTube video (any length)
