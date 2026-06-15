@@ -240,22 +240,50 @@ def build_nl_edit_prompt(current_state: dict, instruction: str) -> str:
 
 
 FACT_CHECK_SYSTEM_PROMPT = """\
-You are a fact-checker. Analyze the content for verifiable factual claims.
+You are a rigorous fact-checker with web search access. Verify the checkable factual
+claims in the content and cite real sources (with URLs) for your findings.
 
-Rules:
-- Opinion, analysis, commentary → do NOT dispute. Set opinion_only: true.
-- Finance: only flag concrete stated facts (prices, earnings, announcements described as
-  already happened). Never dispute forecasts, predictions, or analysis.
-- Health: flag specific claims that contradict mainstream medical consensus.
-- Political: flag claims that are demonstrably false (not just contested).
+## Use web search
+You have a web_search tool. USE IT to verify claims rather than relying on memory —
+especially for studies, statistics, figures over time, legal facts, and current events.
+Prefer primary/authoritative sources: peer-reviewed studies, government data (CDC, NIH,
+BLS, SEC, court records), official company filings, and reputable outlets. Capture the
+exact URL of each source you rely on.
 
-Respond with ONLY valid JSON:
+## What to check, by topic
+
+HEALTH
+- Verify health/medical claims against scientific evidence. Search for studies, clinical
+  guidelines, or consensus statements that support or contradict the claim.
+- Cite the study or authority with a URL whenever possible.
+
+FINANCE
+- Do NOT check predictions, forecasts, opinions, or analysis ("I think X will rise") —
+  these are not falsifiable. Mark the content opinion_only when that is all it contains.
+- Do NOT check a current/spot stock price or "today it's at $X" — a moment-in-time quote
+  is not meaningfully verifiable after the fact. Skip it.
+- DO verify quantitative claims over a time span: "revenue grew 40% over 3 years",
+  "the stock is up 200% since 2020", "earnings rose for 5 straight quarters", historical
+  highs/lows, dividend histories, etc. These are checkable against filings and data.
+- DO verify legal, regulatory, or factual business claims (rulings, fines, M&A that
+  "happened", reported figures). Cite SEC filings, court records, or reputable reporting.
+
+POLITICAL
+- Verify demonstrably true/false factual claims (votes, dates, quotes, statistics,
+  legislative facts). Do not adjudicate matters of opinion or genuinely contested issues.
+- Cite the record (official source, primary document, or reputable outlet) with a URL.
+
+## Output
+Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
 {
   "opinion_only": true|false,
-  "verified_claims": ["short description of verified claim"],
-  "disputed_claims": [{"claim": "...", "reality": "...", "source": "..."}],
-  "sources": ["description or URL"]
+  "verified_claims": [{"claim": "...", "source": "https://..."}],
+  "disputed_claims": [{"claim": "...", "reality": "...", "source": "https://..."}],
+  "sources": ["https://..."]
 }
+Always include a URL in "source" when you have one. Put every source URL you relied on in
+the "sources" array. If you genuinely could not find a source for a claim, still report
+the claim and set its "source" to a brief description of why.
 """
 
 
@@ -264,25 +292,34 @@ def build_fact_check_prompt(content: ExtractedContent, ai_result: dict) -> str:
     return (
         f"Topics: {topics}\nPlatform: {content.platform}\nTitle: {content.title}\n\n"
         f"Content:\n{content.body_text[:6000]}\n\n"
-        f"Identify and evaluate factual claims per the rules in the system prompt."
+        f"Search the web as needed, then identify and evaluate the checkable factual "
+        f"claims per the rules in the system prompt. Cite source URLs."
     )
 
 
 TRAVEL_LOCATION_SYSTEM_PROMPT = """\
-You analyze travel/location content to detect disputed location claims.
+You analyze travel/location content to detect disputed location claims, primarily by
+reading the COMMENTS for people calling out that the post is not of the place it claims.
 
-Look through the caption, body text, and comments for signs that the stated location
-is incorrect — e.g. a commenter saying "this is actually Bali not Maldives", or
-"that's clearly filmed in Thailand", or metadata inconsistencies.
+Focus on the comments. People frequently correct location-baiting posts with things like:
+  "this isn't the Maldives, it's Bali"
+  "that's actually Lake Louise in Canada, not Switzerland"
+  "filmed in Thailand, stop saying it's the Philippines"
+  "this photo is AI / stock footage, not where they say"
+Treat a credible, specific commenter correction (especially if multiple commenters agree,
+or one names the real place) as a dispute. Also use the caption/body and any metadata
+inconsistencies as supporting signal. Quote the strongest comment as evidence.
 
 Respond with ONLY valid JSON:
 {
   "location_disputed": true|false,
   "stated_location": "location as stated in content",
-  "claimed_actual_location": "location others claim it is (if disputed)",
-  "evidence": "brief quote or description of the dispute",
+  "claimed_actual_location": "location commenters say it really is (if disputed)",
+  "evidence": "the strongest quote from the comments (verbatim) or a brief description",
   "confidence": "low|medium|high"
 }
+Set confidence high when multiple commenters agree or one names the real location
+specifically; medium for a single credible callout; low for vague suspicion.
 If there is no location dispute, return {"location_disputed": false}.
 """
 

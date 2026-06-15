@@ -420,8 +420,27 @@ def _fact_check_callout(fc: dict) -> str:
         lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
         lines.append(f">   **Reality:** {claim.get('reality', '')}")
         if claim.get("source"):
-            lines.append(f">   **Source:** {claim['source']}")
+            lines.append(f">   **Source:** {_source_link(claim['source'])}")
     return "\n".join(lines) + "\n"
+
+
+def _source_link(value) -> str:
+    """Render a source as a clickable markdown link when it's a URL, else plain text."""
+    s = str(value).strip()
+    if s.startswith("http://") or s.startswith("https://"):
+        try:
+            domain = urllib.parse.urlparse(s).netloc or s
+        except Exception:
+            domain = s
+        return f"[{domain}]({s})"
+    return s
+
+
+def _claim_with_source(claim) -> tuple[str, str]:
+    """Normalize a claim entry (string or {claim, source}) → (text, rendered_source)."""
+    if isinstance(claim, dict):
+        return claim.get("claim", ""), (_source_link(claim["source"]) if claim.get("source") else "")
+    return str(claim), ""
 
 
 def _fact_check_note_section(fc: dict) -> str:
@@ -429,7 +448,8 @@ def _fact_check_note_section(fc: dict) -> str:
 
     Always renders *something* when a fact-check ran (fc is a non-empty dict), so the
     note gives positive confirmation the check happened — even when no claims were
-    disputed. Otherwise a checked-but-clean post looks identical to one never checked."""
+    disputed. Otherwise a checked-but-clean post looks identical to one never checked.
+    Source URLs are rendered as clickable links."""
     if not fc:
         return ""
     disputed = fc.get("disputed_claims") or []
@@ -444,7 +464,8 @@ def _fact_check_note_section(fc: dict) -> str:
         if verified:
             lines.append("> **Claims noted:**")
             for v in verified:
-                lines.append(f"> - {v}")
+                text, src = _claim_with_source(v)
+                lines.append(f"> - {text}" + (f" — {src}" if src else ""))
         return "\n".join(lines) + "\n"
 
     # Disputed claims get a warning callout; everything else an info callout.
@@ -453,20 +474,24 @@ def _fact_check_note_section(fc: dict) -> str:
     if disputed:
         lines.append("> **Disputed Claims:**")
         for claim in disputed:
-            lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
-            lines.append(f">   **Reality:** {claim.get('reality', '')}")
-            if claim.get("source"):
-                lines.append(f">   **Source:** {claim['source']}")
+            text, src = _claim_with_source(claim)
+            reality = claim.get("reality", "") if isinstance(claim, dict) else ""
+            lines.append(f"> - **Claimed:** {text}")
+            if reality:
+                lines.append(f">   **Reality:** {reality}")
+            if src:
+                lines.append(f">   **Source:** {src}")
     if verified:
         lines.append("> **Verified Claims:**")
         for v in verified:
-            lines.append(f"> - {v}")
+            text, src = _claim_with_source(v)
+            lines.append(f"> - {text}" + (f" — {src}" if src else ""))
     if not disputed and not verified:
         lines.append("> No specific factual claims were flagged as disputed.")
     if sources:
         lines.append("> **Sources:**")
         for s in sources:
-            lines.append(f"> - {s}")
+            lines.append(f"> - {_source_link(s)}")
     return "\n".join(lines) + "\n"
 
 

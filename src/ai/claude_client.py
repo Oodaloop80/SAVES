@@ -146,12 +146,81 @@ async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -
 def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
     client = _make_client()
     user_prompt = build_fact_check_prompt(content, ai_result)
-    raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config)
+    fc_cfg = config.get("fact_checking", {})
+
+    if fc_cfg.get("web_search", True):
+        try:
+            raw, harvested = _factcheck_with_web_search(client, user_prompt, config)
+        except Exception as e:
+            logger.warning("Web-search fact-check failed (%s); falling back to no-search", e)
+            raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
+    else:
+        raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
+
     parsed = _loads_lenient(raw)
-    if parsed is not None:
-        return parsed
-    logger.warning("Fact-check returned non-JSON; could not parse result")
-    return None
+    if parsed is None:
+        logger.warning("Fact-check returned non-JSON; could not parse result")
+        return None
+
+    # Ensure any URLs Claude actually visited are present in the sources list, even if
+    # it forgot to copy them into the JSON.
+    if harvested:
+        existing = set(parsed.get("sources") or [])
+        merged = list(parsed.get("sources") or [])
+        for url in harvested:
+            if url not in existing:
+                merged.append(url)
+                existing.add(url)
+        parsed["sources"] = merged
+    return parsed
+
+
+def _factcheck_with_web_search(
+    client: anthropic.Anthropic, user_prompt: str, config: dict
+) -> tuple[str, list[str]]:
+    """Run the fact-check with the server-side web_search tool enabled.
+
+    Claude issues searches on Anthropic's infrastructure; we run the request, follow any
+    `pause_turn` continuations, accumulate the text it produces, and harvest the URLs of
+    every search result it saw so they can back-fill the sources list. Returns
+    (concatenated_text, harvested_urls)."""
+    ai_cfg = config.get("ai", {})
+    fc_cfg = config.get("fact_checking", {})
+    model = ai_cfg.get("model", "claude-opus-4-8")
+    max_tokens = fc_cfg.get("max_tokens", ai_cfg.get("max_tokens", 6000))
+    max_searches = fc_cfg.get("max_searches", 5)
+
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
+    messages: list = [{"role": "user", "content": user_prompt}]
+    text_parts: list[str] = []
+    harvested: list[str] = []
+    seen_urls: set[str] = set()
+
+    # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
+    for _ in range(6):
+        msg = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=FACT_CHECK_SYSTEM_PROMPT,
+            tools=tools,
+            messages=messages,
+        )
+        for block in msg.content:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                text_parts.append(block.text)
+            elif btype == "web_search_tool_result":
+                for result in (getattr(block, "content", None) or []):
+                    url = getattr(result, "url", None)
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        harvested.append(url)
+        if msg.stop_reason == "pause_turn":
+            messages.append({"role": "assistant", "content": msg.content})
+            continue
+        break
+
+    return "\n".join(text_parts), harvested
 
 
 def _loads_lenient(raw: str):
