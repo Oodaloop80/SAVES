@@ -38,7 +38,7 @@ transcription:
 
 vision:
   enabled: true              # Send images/video frames to Claude for visual text extraction
-  max_images: 5              # Max images per analysis request (cost control)
+  max_images: 10             # Max images per analysis request (cost control)
   max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
 
@@ -98,6 +98,7 @@ preferences:
 
 fact_checking:
   enabled: true
+  model: "claude-haiku-4-5"  # Cheaper model for fact-checking; falls back to ai.model if omitted
   topics:
     - health
     - political

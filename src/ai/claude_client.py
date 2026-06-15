@@ -159,6 +159,12 @@ def _fact_check_sync(
     client = _make_client()
     fc_cfg = config.get("fact_checking", {})
     jurisdiction = fc_cfg.get("jurisdiction")
+
+    # Allow a cheaper model for fact-checking (e.g. claude-haiku-4-5) while
+    # the main analysis uses a more capable model. Override ai.model locally.
+    fc_model = fc_cfg.get("model")
+    if fc_model:
+        config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
     user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
 
     # Attach the post's media so Claude can judge authenticity / out-of-context use.

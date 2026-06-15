@@ -393,8 +393,12 @@ def build_fact_check_prompt(
         "— do not stop after one or two, and do not let the marketing framing (DM funnels, "
         "'comment X', newsletter pitches) crowd out the actual claims. If a study is named "
         "(title/authors/journal/year), look it up and compare the post's characterization "
-        "to what the study ACTUALLY found. Any attached images are the post's media — also "
-        "assess them for authenticity/context. Search the web as needed and cite source URLs."
+        "to what the study ACTUALLY found. If images or video frames are attached, do TWO "
+        "things with them: (a) assess for authenticity and context (AI-generated, stock "
+        "footage, miscaptioning, deepfakes), AND (b) READ and cross-check any graphs, "
+        "charts, tables, or data visualizations against the stated claims — report what the "
+        "visualization actually shows and whether it supports the post's assertions. "
+        "Search the web as needed and cite source URLs."
     )
     return "\n\n".join(parts)
 
