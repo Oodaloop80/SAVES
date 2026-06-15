@@ -24,7 +24,10 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
 graphic where the PRIMARY content is TEXT rendered as an image (carousel info-graphics,
 text screenshots, quote cards, recipe steps written as slides — anything where you would
 read the image rather than look at it), extract the COMPLETE text from those slides and
-return it as a single string. Separate each slide's text with a blank line. Return null
+return it as a single string. Separate each slide's text with a blank line. Transcribe
+VERBATIM and IN FULL — do not summarize, paraphrase, abbreviate, or stop early, even when
+the combined text runs to many hundreds of words across a long carousel. Reproduce study
+titles, author lists, dates, dosages, and numbers exactly as written. Return null
 when the images are photographs, artwork, or contain only short decorative captions.
 
 ## Note Types (pick EXACTLY one — determines the note template)
@@ -251,7 +254,15 @@ and current events. Prefer primary/authoritative sources: peer-reviewed studies,
 government data (CDC, NIH, FDA, BLS, SEC, FINRA, IRS, NC Dept. of Revenue, court records),
 official company filings, and reputable outlets. Capture the exact URL of each source.
 
-## Cross-cutting checks (apply to ALL content — report these as `flags`)
+## Be exhaustive — verify the actual claims FIRST
+Systematically enumerate EVERY substantive factual claim in the content — in BOTH the
+caption/body AND the image-slide text — and assess each one. Do not cherry-pick one or
+two. The substantive claims (a named study, a statistic, a dosage, a specific health or
+finance assertion) are the PRIORITY. Meta-observations about marketing — DM funnels,
+"comment X to get the link", newsletter pitches, undisclosed affiliate ties — are
+secondary `flags`; they are NEVER a substitute for checking the claims themselves. A
+fact-check that only flags the funnel while ignoring the post's health/finance claims has
+FAILED its core job. Spend your searches on the claims, not the marketing.
 - MEDIA AUTHENTICITY: If images/frames are attached or described, judge whether the media
   looks AI-generated, a deepfake, stock/generic footage, or a real photo/video that is
   MISCAPTIONED (different event, place, or date than claimed). Commenters often call this
@@ -281,8 +292,14 @@ HEALTH
     (c) NOT FOUND: no plausible matching study exists for the claim — flag as warning
         with "No identifiable study found for this claim; may be fabricated, confused,
         or misremembered."
-  When a study IS explicitly cited, verify it exists and actually says what's claimed.
-  Flag misattributed, cherry-picked, or fabricated citations.
+  When a study IS explicitly named or cited (title, authors, journal, or year given),
+  look it up and compare the post's CHARACTERIZATION against the study's actual findings
+  and limitations — not just whether it exists. Absolute language ("completely stops",
+  "cures", "proven", "eliminates") attached to a single small or crossover trial is almost
+  always an overstatement: flag the gap between what the post claims and what the study
+  supports (effect size, statistical significance, sample size, population, dosage). If the
+  post's OWN text admits a result was "not statistically significant" or a "trend", say so
+  plainly. Also flag misattributed, cherry-picked, or fabricated citations.
 - REGULATORY STATUS: Note if a treatment/product is not FDA-approved, is banned, or is
   under recall. Check credentials when someone claims medical authority ("Dr.").
 - Flag correlation-presented-as-causation overreach.
@@ -348,7 +365,18 @@ def build_fact_check_prompt(
         parts.append(
             f"User's tax/legal jurisdiction (use for any tax or legal claim): {jurisdiction}"
         )
-    parts.append(f"Content:\n{content.body_text[:6000]}")
+    parts.append(f"Caption / body text (often just a hook):\n{content.body_text[:6000]}")
+
+    # The substantive claims (study names, statistics, dosages) frequently live in the
+    # carousel image slides, not the caption. This OCR text is the richest claim source.
+    image_text = (ai_result.get("image_text") or "").strip()
+    if image_text:
+        parts.append(
+            "TEXT FROM THE POST'S IMAGE SLIDES — this is usually where the REAL claims live "
+            "(study titles, statistics, dosages, assertions), while the caption above is "
+            "just bait. Treat this as PRIMARY claim content and verify it thoroughly:\n"
+            + image_text[:8000]
+        )
 
     if content.top_comments:
         comment_lines = "\n".join(
@@ -361,9 +389,12 @@ def build_fact_check_prompt(
         )
 
     parts.append(
-        "Any attached images are the post's media — assess them for authenticity/context. "
-        "Search the web as needed, then evaluate the checkable claims and apply the "
-        "cross-cutting checks per the system prompt. Cite source URLs."
+        "Verify EVERY substantive claim in BOTH the caption and the image-slide text above "
+        "— do not stop after one or two, and do not let the marketing framing (DM funnels, "
+        "'comment X', newsletter pitches) crowd out the actual claims. If a study is named "
+        "(title/authors/journal/year), look it up and compare the post's characterization "
+        "to what the study ACTUALLY found. Any attached images are the post's media — also "
+        "assess them for authenticity/context. Search the web as needed and cite source URLs."
     )
     return "\n\n".join(parts)
 
