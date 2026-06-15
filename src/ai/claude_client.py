@@ -8,6 +8,7 @@ from src.ai.prompts import (
     SYSTEM_PROMPT, build_user_prompt,
     NL_EDIT_SYSTEM_PROMPT, build_nl_edit_prompt,
     FACT_CHECK_SYSTEM_PROMPT, build_fact_check_prompt,
+    IMAGE_OCR_SYSTEM_PROMPT, build_image_ocr_prompt,
 )
 from src.extractors.base import ExtractedContent
 
@@ -76,35 +77,64 @@ def _analyze_sync(
     existing_folders: list[str] | None = None,
 ) -> dict:
     client = _make_client()
-    user_text = build_user_prompt(content, transcript, preferences_hint, existing_folders)
 
-    if image_blocks:
-        n = len(image_blocks)
-        vision_note = (
-            f"\n\nI am also providing {n} image(s)/video frame(s) from this content. "
-            f"Please read and incorporate any visible text, on-screen captions, titles, "
-            f"labels, or other relevant visual information in your analysis."
+    # Two-stage option: a cheap vision model (vision.ocr_model) reads the image slides
+    # into text, then the main ai.model does the full analysis on text only — no images.
+    # This keeps the costly vision tokens on the cheap model while reasoning/routing stays
+    # on the capable model. If ocr_model is unset, fall back to a single combined call.
+    ocr_model = config.get("vision", {}).get("ocr_model")
+    ocr_text: str | None = None
+    if image_blocks and ocr_model:
+        try:
+            ocr_text = _ocr_images_sync(client, content, image_blocks, config, ocr_model)
+        except Exception as e:
+            logger.warning("Image OCR stage failed (%s); falling back to combined call", e)
+            ocr_text = None
+
+    if image_blocks and ocr_text is not None:
+        # Stage 2: text-only analysis on the main model, OCR text injected.
+        user_text = build_user_prompt(
+            content, transcript, preferences_hint, existing_folders, image_text=ocr_text
         )
-        user_content: str | list = image_blocks + [{"type": "text", "text": user_text + vision_note}]
+        user_content: str | list = user_text
+        image_blocks_for_analysis: list[dict] | None = None
     else:
-        user_content = user_text
+        user_text = build_user_prompt(content, transcript, preferences_hint, existing_folders)
+        if image_blocks:
+            n = len(image_blocks)
+            vision_note = (
+                f"\n\nI am also providing {n} image(s)/video frame(s) from this content. "
+                f"Please read and incorporate any visible text, on-screen captions, titles, "
+                f"labels, or other relevant visual information in your analysis."
+            )
+            user_content = image_blocks + [{"type": "text", "text": user_text + vision_note}]
+        else:
+            user_content = user_text
+        image_blocks_for_analysis = image_blocks
+
+    def _finalize(result: dict) -> dict:
+        # When OCR ran on a separate model, the analysis model never saw the images, so
+        # ensure the slide text is preserved on the result regardless of what it returned.
+        if ocr_text and not (result.get("image_text") or "").strip():
+            result["image_text"] = ocr_text
+        return result
 
     raw = _call(client, SYSTEM_PROMPT, user_content, config)
     try:
-        return json.loads(raw)
+        return _finalize(json.loads(raw))
     except json.JSONDecodeError:
         logger.warning("Claude returned invalid JSON; retrying")
         retry_text = user_text + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown fences."
-        if image_blocks:
-            retry_content: str | list = image_blocks + [{"type": "text", "text": retry_text}]
+        if image_blocks_for_analysis:
+            retry_content: str | list = image_blocks_for_analysis + [{"type": "text", "text": retry_text}]
         else:
             retry_content = retry_text
         raw2 = _call(client, SYSTEM_PROMPT, retry_content, config)
         try:
-            return json.loads(raw2)
+            return _finalize(json.loads(raw2))
         except json.JSONDecodeError:
             logger.error("Claude returned invalid JSON on retry; using fallback")
-            return {
+            return _finalize({
                 "folder_path": "SAVES/_UNSORTED",
                 "filename": _safe_filename(content.title or content.url),
                 "title": content.title or content.url,
@@ -113,7 +143,26 @@ def _analyze_sync(
                 "key_takeaways": [],
                 "note_type": "web_generic",
                 "topics": [],
-            }
+            })
+
+
+def _ocr_images_sync(
+    client: anthropic.Anthropic,
+    content: ExtractedContent,
+    image_blocks: list[dict],
+    config: dict,
+    ocr_model: str,
+) -> str:
+    """Stage 1 of two-stage analysis: a cheap vision model transcribes the image slides
+    to plain text. Returns the transcribed text (may be empty if nothing to read)."""
+    ocr_prompt = build_image_ocr_prompt(content)
+    user_content = image_blocks + [{"type": "text", "text": ocr_prompt}]
+    # Generous token budget — long carousels can produce a lot of text.
+    ocr_cfg = {
+        **config,
+        "ai": {**config.get("ai", {}), "model": ocr_model, "max_tokens": 8192},
+    }
+    return _call(client, IMAGE_OCR_SYSTEM_PROMPT, user_content, ocr_cfg).strip()
 
 
 async def nl_edit(current_state: dict, instruction: str, config: dict) -> dict:

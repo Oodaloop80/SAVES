@@ -37,10 +37,11 @@ transcription:
   max_duration_minutes: 30
 
 vision:
-  enabled: true              # Send images/video frames to Claude for visual text extraction
-  max_images: 20             # Instagram carousels cap at 20 slides; cover the full post
-  max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
-  skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
+  enabled: true                   # Send images/video frames to Claude for visual text extraction
+  max_images: 20                  # Instagram carousels cap at 20 slides; cover the full post
+  ocr_model: "claude-haiku-4-5"   # <-- SET THIS (was haiku, or absent)
+  max_video_frames: 4             # Frames to extract per video (evenly spaced, 10-80% of duration)
+  skip_platforms: []              # Platforms to exclude (youtube always skipped automatically)
 
 ai:
   model: "claude-opus-4-8"
@@ -98,18 +99,18 @@ preferences:
 
 fact_checking:
   enabled: true
-  model: "claude-haiku-4-5"  # Cheaper model for fact-checking; falls back to ai.model if omitted
+  model: "claude-sonnet-4-6"  # Cheaper model for fact-checking; falls back to ai.model if omitted
   topics:
     - health
     - political
     - finance
-  web_search: true        # Let Claude search the web for verifiable evidence + source URLs
-  web_search_topics:      # Only these topics get web search; others rely on content + comments
+  web_search: true            # Let Claude search the web for verifiable evidence + source URLs
+  web_search_topics:          # Only these topics get web search; others rely on content + comments
     - health
     - finance
-  max_searches: 5         # Cap web searches per fact-check (cost control)
-  max_tokens: 6000        # Fact-check responses include reasoning + cited sources
-  include_images: true    # Send the post's media to the fact-check for authenticity/deepfake checks
+  max_searches: 5             # Cap web searches per fact-check (cost control)
+  max_tokens: 6000            # Fact-check responses include reasoning + cited sources
+  include_images: true        # Send the post's media to the fact-check for authenticity/deepfake checks
   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
 
 travel_verification:

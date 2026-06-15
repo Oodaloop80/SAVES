@@ -152,11 +152,38 @@ These four topics trigger secondary analysis passes.
 """
 
 
+IMAGE_OCR_SYSTEM_PROMPT = """\
+You transcribe text from images. The images are slides from a social-media carousel or
+post (info-graphics, quote cards, study screenshots, recipe steps, charts with labels).
+
+Read EVERY image in order and output the COMPLETE text rendered in them. Transcribe
+VERBATIM and IN FULL — do not summarize, paraphrase, abbreviate, or stop early, even when
+the combined text runs to many hundreds of words across a long carousel. Reproduce study
+titles, author lists, journals, dates, dosages, statistics, and numbers exactly as
+written. For charts/graphs/tables, also transcribe axis labels, legends, data values, and
+captions, then add a one-line plain description of what the visual shows.
+
+Separate each slide's text with a blank line. Output ONLY the transcribed text — no
+preamble, no commentary, no markdown fences. If an image is purely a photograph, artwork,
+or has only short decorative text, output a short bracketed note like
+"[Slide 3: photograph of a person holding a supplement bottle, no substantive text]".
+"""
+
+
+def build_image_ocr_prompt(content: ExtractedContent) -> str:
+    return (
+        f"These are the image slides from a {content.platform} post"
+        + (f" titled '{content.title}'." if content.title else ".")
+        + " Transcribe all text from every slide in full, as instructed."
+    )
+
+
 def build_user_prompt(
     content: ExtractedContent,
     transcript: str | None,
     preferences_hint: str | None = None,
     existing_folders: list[str] | None = None,
+    image_text: str | None = None,
 ) -> str:
     parts = [
         f"Platform: {content.platform}",
@@ -204,6 +231,13 @@ def build_user_prompt(
 
     if transcript:
         parts.append(f"Transcript:\n{transcript[:12000]}")
+
+    if image_text:
+        parts.append(
+            "Text transcribed from the post's image slides (OCR — this is often where the "
+            "real content lives; use it for the summary, tags, topics, and note_type, and "
+            f"copy it verbatim into the image_text field of your JSON):\n{image_text[:12000]}"
+        )
 
     if content.top_comments:
         comment_lines = [
