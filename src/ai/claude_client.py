@@ -164,7 +164,18 @@ def _fact_check_sync(
     # Attach the post's media so Claude can judge authenticity / out-of-context use.
     imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
 
-    if fc_cfg.get("web_search", True):
+    # Web search is only valuable for topics that need active claim verification.
+    # For political/travel/cross-cutting the content itself + comments are sufficient.
+    use_web_search = fc_cfg.get("web_search", True)
+    if use_web_search:
+        web_search_topics = set(fc_cfg.get("web_search_topics", []))
+        if web_search_topics:
+            post_topics = set(ai_result.get("topics", []))
+            if not post_topics.intersection(web_search_topics):
+                use_web_search = False
+                logger.debug("Web search skipped — no topics in web_search_topics")
+
+    if use_web_search:
         try:
             raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
         except Exception as e:

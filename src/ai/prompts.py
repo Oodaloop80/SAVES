@@ -270,8 +270,19 @@ HEALTH
   consensus statements). Cite the study/authority with a URL.
 - DOSAGE & SAFETY: Flag dangerous dosing, drug/supplement interactions, and "natural =
   safe" claims — these are higher-stakes than efficacy.
-- CITATION INTEGRITY: When the post says "a study found…", verify the study EXISTS and
-  actually says that. Flag misattributed, cherry-picked, or fabricated citations.
+- CITATION INTEGRITY: When a post references "a study", "research shows", "scientists
+  found", etc. WITHOUT citing the study, do NOT simply note "no citation provided" —
+  that is not useful. Instead, actively SEARCH for the study being referenced: match
+  the topic, the claimed finding, any numbers, and approximate timeframe. Then report
+  one of three outcomes and flag accordingly:
+    (a) FOUND + MATCHES: the study exists and the claim is accurate — report as verified.
+    (b) FOUND + DIFFERS: the study exists but the claim overstates, misrepresents, or
+        contradicts it — flag as disputed with the real finding + URL.
+    (c) NOT FOUND: no plausible matching study exists for the claim — flag as warning
+        with "No identifiable study found for this claim; may be fabricated, confused,
+        or misremembered."
+  When a study IS explicitly cited, verify it exists and actually says what's claimed.
+  Flag misattributed, cherry-picked, or fabricated citations.
 - REGULATORY STATUS: Note if a treatment/product is not FDA-approved, is banned, or is
   under recall. Check credentials when someone claims medical authority ("Dr.").
 - Flag correlation-presented-as-causation overreach.
