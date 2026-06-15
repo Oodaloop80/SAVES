@@ -131,7 +131,12 @@ def _nl_edit_sync(current_state: dict, instruction: str, config: dict) -> dict:
         return {"action": "cancel"}
 
 
-async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
+async def fact_check(
+    content: ExtractedContent,
+    ai_result: dict,
+    config: dict,
+    image_blocks: list[dict] | None = None,
+) -> dict | None:
     fc_cfg = config.get("fact_checking", {})
     if not fc_cfg.get("enabled", True):
         return None
@@ -140,22 +145,35 @@ async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -
     if not any(t in checkable for t in topics):
         return None
     import asyncio
-    return await asyncio.to_thread(_fact_check_sync, content, ai_result, config)
+    return await asyncio.to_thread(
+        _fact_check_sync, content, ai_result, config, image_blocks
+    )
 
 
-def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
+def _fact_check_sync(
+    content: ExtractedContent,
+    ai_result: dict,
+    config: dict,
+    image_blocks: list[dict] | None = None,
+) -> dict | None:
     client = _make_client()
-    user_prompt = build_fact_check_prompt(content, ai_result)
     fc_cfg = config.get("fact_checking", {})
+    jurisdiction = fc_cfg.get("jurisdiction")
+    user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
+
+    # Attach the post's media so Claude can judge authenticity / out-of-context use.
+    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
 
     if fc_cfg.get("web_search", True):
         try:
-            raw, harvested = _factcheck_with_web_search(client, user_prompt, config)
+            raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
         except Exception as e:
             logger.warning("Web-search fact-check failed (%s); falling back to no-search", e)
-            raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
+            raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, _with_images(user_prompt, imgs), config)
+            harvested = []
     else:
-        raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
+        raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, _with_images(user_prompt, imgs), config)
+        harvested = []
 
     parsed = _loads_lenient(raw)
     if parsed is None:
@@ -175,15 +193,26 @@ def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -
     return parsed
 
 
+def _with_images(user_prompt: str, image_blocks: list[dict] | None):
+    """Build a message-content value: images first, then the text prompt (or bare text)."""
+    if image_blocks:
+        return image_blocks + [{"type": "text", "text": user_prompt}]
+    return user_prompt
+
+
 def _factcheck_with_web_search(
-    client: anthropic.Anthropic, user_prompt: str, config: dict
+    client: anthropic.Anthropic,
+    user_prompt: str,
+    config: dict,
+    image_blocks: list[dict] | None = None,
 ) -> tuple[str, list[str]]:
     """Run the fact-check with the server-side web_search tool enabled.
 
     Claude issues searches on Anthropic's infrastructure; we run the request, follow any
     `pause_turn` continuations, accumulate the text it produces, and harvest the URLs of
-    every search result it saw so they can back-fill the sources list. Returns
-    (concatenated_text, harvested_urls)."""
+    every search result it saw so they can back-fill the sources list. Any image_blocks are
+    attached so Claude can assess media authenticity. Returns (concatenated_text,
+    harvested_urls)."""
     ai_cfg = config.get("ai", {})
     fc_cfg = config.get("fact_checking", {})
     model = ai_cfg.get("model", "claude-opus-4-8")
@@ -191,7 +220,7 @@ def _factcheck_with_web_search(
     max_searches = fc_cfg.get("max_searches", 5)
 
     tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
-    messages: list = [{"role": "user", "content": user_prompt}]
+    messages: list = [{"role": "user", "content": _with_images(user_prompt, image_blocks)}]
     text_parts: list[str] = []
     harvested: list[str] = []
     seen_urls: set[str] = set()

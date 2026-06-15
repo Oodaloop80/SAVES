@@ -143,7 +143,9 @@ async def _process_one(
     fc_result = None
     lc_result = None
     try:
-        fc_task = asyncio.create_task(fact_check(content, ai_result, config))
+        fc_task = asyncio.create_task(
+            fact_check(content, ai_result, config, image_blocks=image_blocks or None)
+        )
         lc_task = asyncio.create_task(check_travel_location(content, ai_result, config))
         fc_result, lc_result = await asyncio.gather(fc_task, lc_task, return_exceptions=True)
         if isinstance(fc_result, Exception):

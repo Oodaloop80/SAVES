@@ -70,9 +70,14 @@ def format_note(
     parts.append("")
 
     if include_warnings:
-        if fact_check_result and fact_check_result.get("disputed_claims"):
+        if fact_check_result and (
+            fact_check_result.get("disputed_claims")
+            or any(f.get("severity") == "warning" for f in (fact_check_result.get("flags") or []) if isinstance(f, dict))
+        ):
             parts.append(_fact_check_callout(fact_check_result))
-        if location_check_result and location_check_result.get("location_disputed"):
+        if location_check_result and (
+            location_check_result.get("location_disputed") or location_check_result.get("advisories")
+        ):
             parts.append(_location_callout(location_check_result))
 
     renderer = _RENDERERS.get(note_type, _render_web_generic)
@@ -86,11 +91,15 @@ def format_note(
         if embeds:
             body = embeds + "\n" + body
 
-    # Inject supplemental sections (image text + fact-check) before the --- metadata separator.
+    # Inject supplemental sections (image text + fact-check + location) before the --- separator.
     image_text = (ai_result.get("image_text") or "").strip()
     fc_inline = fact_check_result or (
         ai_result.get("_fact_check")
         if isinstance(ai_result.get("_fact_check"), dict) else None
+    )
+    lc_inline = location_check_result or (
+        ai_result.get("_location_check")
+        if isinstance(ai_result.get("_location_check"), dict) else None
     )
     inserts = []
     if image_text:
@@ -99,6 +108,8 @@ def format_note(
         sec = _fact_check_note_section(fc_inline)
         if sec:
             inserts.append(sec)
+    if lc_inline and (lc_inline.get("location_disputed") or lc_inline.get("advisories")):
+        inserts.append(_location_callout(lc_inline))
     if inserts:
         sep = "\n---\n"
         if sep in body:
@@ -421,6 +432,11 @@ def _fact_check_callout(fc: dict) -> str:
         lines.append(f">   **Reality:** {claim.get('reality', '')}")
         if claim.get("source"):
             lines.append(f">   **Source:** {_source_link(claim['source'])}")
+    for fl in fc.get("flags", []):
+        if isinstance(fl, dict) and fl.get("severity") == "warning":
+            lines.append(f"> - **{_humanize_label(fl.get('type', 'flag'))}:** {fl.get('detail', '')}")
+            if fl.get("source"):
+                lines.append(f">   **Source:** {_source_link(fl['source'])}")
     return "\n".join(lines) + "\n"
 
 
@@ -443,34 +459,34 @@ def _claim_with_source(claim) -> tuple[str, str]:
     return str(claim), ""
 
 
+def _humanize_label(value) -> str:
+    """media_authenticity → Media Authenticity."""
+    return str(value).replace("_", " ").replace("-", " ").strip().title() or "Flag"
+
+
 def _fact_check_note_section(fc: dict) -> str:
     """Inline fact-check section written into every note that triggered a check.
 
     Always renders *something* when a fact-check ran (fc is a non-empty dict), so the
     note gives positive confirmation the check happened — even when no claims were
-    disputed. Otherwise a checked-but-clean post looks identical to one never checked.
-    Source URLs are rendered as clickable links."""
+    disputed. Source URLs render as clickable links. `flags` carry the cross-cutting
+    findings (media authenticity, recycled content, source credibility, conflict of
+    interest, tax validity, scam signals, etc.)."""
     if not fc:
         return ""
     disputed = fc.get("disputed_claims") or []
     verified = fc.get("verified_claims") or []
+    flags = fc.get("flags") or []
     sources = fc.get("sources") or []
 
-    if fc.get("opinion_only"):
-        lines = [
-            "> [!info]- Fact Check",
-            "> This content is opinion/analysis — no specific factual claims were verified.",
-        ]
-        if verified:
-            lines.append("> **Claims noted:**")
-            for v in verified:
-                text, src = _claim_with_source(v)
-                lines.append(f"> - {text}" + (f" — {src}" if src else ""))
-        return "\n".join(lines) + "\n"
-
-    # Disputed claims get a warning callout; everything else an info callout.
-    callout = "[!warning]-" if disputed else "[!info]-"
+    warning_flags = [f for f in flags if (f.get("severity") if isinstance(f, dict) else "") == "warning"]
+    has_warning = bool(disputed) or bool(warning_flags)
+    callout = "[!warning]-" if has_warning else "[!info]-"
     lines = [f"> {callout} Fact Check"]
+
+    if fc.get("opinion_only") and not disputed and not verified:
+        lines.append("> This content is opinion/analysis — no specific factual claims were verified.")
+
     if disputed:
         lines.append("> **Disputed Claims:**")
         for claim in disputed:
@@ -481,13 +497,29 @@ def _fact_check_note_section(fc: dict) -> str:
                 lines.append(f">   **Reality:** {reality}")
             if src:
                 lines.append(f">   **Source:** {src}")
+
     if verified:
         lines.append("> **Verified Claims:**")
         for v in verified:
             text, src = _claim_with_source(v)
             lines.append(f"> - {text}" + (f" — {src}" if src else ""))
-    if not disputed and not verified:
+
+    if flags:
+        lines.append("> **Flags:**")
+        for fl in flags:
+            if not isinstance(fl, dict):
+                lines.append(f"> - {fl}")
+                continue
+            label = _humanize_label(fl.get("type") or fl.get("label") or "flag")
+            mark = "⚠️ " if fl.get("severity") == "warning" else ""
+            detail = fl.get("detail", "")
+            lines.append(f"> - {mark}**{label}:** {detail}")
+            if fl.get("source"):
+                lines.append(f">   **Source:** {_source_link(fl['source'])}")
+
+    if not disputed and not verified and not flags:
         lines.append("> No specific factual claims were flagged as disputed.")
+
     if sources:
         lines.append("> **Sources:**")
         for s in sources:
@@ -504,17 +536,22 @@ def _image_text_section(image_text: str) -> str:
 
 
 def _location_callout(lc: dict) -> str:
-    stated = lc.get("stated_location", "unknown")
-    actual = lc.get("claimed_actual_location", "unknown")
-    evidence = lc.get("evidence", "")
-    confidence = lc.get("confidence", "")
-    lines = [
-        "> [!warning] Location Dispute Flagged",
-        f"> - **Stated:** {stated}",
-        f"> - **Claimed actual:** {actual} ({confidence} confidence)",
-    ]
-    if evidence:
-        lines.append(f"> - **Evidence:** {evidence}")
+    disputed = lc.get("location_disputed")
+    title = "Location Dispute Flagged" if disputed else "Travel Advisory"
+    lines = [f"> [!warning] {title}"]
+    if disputed:
+        stated = lc.get("stated_location", "unknown")
+        actual = lc.get("claimed_actual_location", "unknown")
+        confidence = lc.get("confidence", "")
+        lines.append(f"> - **Stated:** {stated}")
+        lines.append(f"> - **Claimed actual:** {actual} ({confidence} confidence)")
+        if lc.get("evidence"):
+            lines.append(f"> - **Evidence:** {lc['evidence']}")
+    for adv in lc.get("advisories", []) or []:
+        if isinstance(adv, dict):
+            lines.append(f"> - **{_humanize_label(adv.get('type', 'advisory'))}:** {adv.get('detail', '')}")
+        else:
+            lines.append(f"> - {adv}")
     return "\n".join(lines) + "\n"
 
 

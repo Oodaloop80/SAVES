@@ -59,6 +59,21 @@ async def send_approval_request(
                 value="\n".join(dispute_lines)[:512],
                 inline=False,
             )
+        # Cross-cutting flags (media authenticity, conflict of interest, scam, tax, etc.)
+        warn_flags = [
+            f for f in (fc.get("flags") or [])
+            if isinstance(f, dict) and f.get("severity") == "warning"
+        ]
+        if warn_flags:
+            flag_lines = [
+                f"• **{f.get('type', 'flag').replace('_', ' ').title()}:** {f.get('detail', '')[:80]}"
+                for f in warn_flags[:4]
+            ]
+            embed.add_field(
+                name=f"⚠️ Flags ({len(warn_flags)})",
+                value="\n".join(flag_lines)[:512],
+                inline=False,
+            )
 
     # Location check flags
     lc = ai.get("_location_check")
@@ -71,6 +86,17 @@ async def send_approval_request(
             value=f"Stated: **{stated}** → Claimed actual: **{actual}**\n{lc.get('evidence', '')[:200]}",
             inline=False,
         )
+    if lc and lc.get("advisories"):
+        adv_lines = [
+            f"• **{a.get('type', 'advisory').replace('_', ' ').title()}:** {a.get('detail', '')[:80]}"
+            for a in lc["advisories"][:4] if isinstance(a, dict)
+        ]
+        if adv_lines:
+            embed.add_field(
+                name="⚠️ Travel Advisories",
+                value="\n".join(adv_lines)[:512],
+                inline=False,
+            )
 
     embed.set_footer(text=f"ID: {pending.id[:8]} | {pending.url[:80]}")
 

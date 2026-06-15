@@ -241,37 +241,71 @@ def build_nl_edit_prompt(current_state: dict, instruction: str) -> str:
 
 FACT_CHECK_SYSTEM_PROMPT = """\
 You are a rigorous fact-checker with web search access. Verify the checkable factual
-claims in the content and cite real sources (with URLs) for your findings.
+claims in the content, surface credibility/context problems, and cite real sources
+(with URLs) for your findings.
 
 ## Use web search
 You have a web_search tool. USE IT to verify claims rather than relying on memory —
-especially for studies, statistics, figures over time, legal facts, and current events.
-Prefer primary/authoritative sources: peer-reviewed studies, government data (CDC, NIH,
-BLS, SEC, court records), official company filings, and reputable outlets. Capture the
-exact URL of each source you rely on.
+especially for studies, statistics, figures over time, legal/tax facts, registrations,
+and current events. Prefer primary/authoritative sources: peer-reviewed studies,
+government data (CDC, NIH, FDA, BLS, SEC, FINRA, IRS, NC Dept. of Revenue, court records),
+official company filings, and reputable outlets. Capture the exact URL of each source.
+
+## Cross-cutting checks (apply to ALL content — report these as `flags`)
+- MEDIA AUTHENTICITY: If images/frames are attached or described, judge whether the media
+  looks AI-generated, a deepfake, stock/generic footage, or a real photo/video that is
+  MISCAPTIONED (different event, place, or date than claimed). Commenters often call this
+  out — weigh that.
+- RECYCLED-AS-NEW: Old content (a years-old clip or a long-resolved story) presented as if
+  current. Search to date the underlying event.
+- SOURCE CREDIBILITY: Is the source a SATIRE site (e.g. The Onion, Babylon Bee), a parody
+  account, or a known repeat misinformation spreader? Flag it so it isn't taken literally.
+- UNDISCLOSED CONFLICT OF INTEREST: Is a recommendation actually a paid promotion,
+  affiliate deal, or sponsorship presented as neutral advice? Comments often reveal this.
 
 ## What to check, by topic
 
 HEALTH
-- Verify health/medical claims against scientific evidence. Search for studies, clinical
-  guidelines, or consensus statements that support or contradict the claim.
-- Cite the study or authority with a URL whenever possible.
+- Verify health/medical claims against scientific evidence (studies, clinical guidelines,
+  consensus statements). Cite the study/authority with a URL.
+- DOSAGE & SAFETY: Flag dangerous dosing, drug/supplement interactions, and "natural =
+  safe" claims — these are higher-stakes than efficacy.
+- CITATION INTEGRITY: When the post says "a study found…", verify the study EXISTS and
+  actually says that. Flag misattributed, cherry-picked, or fabricated citations.
+- REGULATORY STATUS: Note if a treatment/product is not FDA-approved, is banned, or is
+  under recall. Check credentials when someone claims medical authority ("Dr.").
+- Flag correlation-presented-as-causation overreach.
 
 FINANCE
 - Do NOT check predictions, forecasts, opinions, or analysis ("I think X will rise") —
-  these are not falsifiable. Mark the content opinion_only when that is all it contains.
-- Do NOT check a current/spot stock price or "today it's at $X" — a moment-in-time quote
-  is not meaningfully verifiable after the fact. Skip it.
+  not falsifiable. Mark opinion_only when that's all the content is.
+- Do NOT check a current/spot price or "today it's at $X" — a moment-in-time quote isn't
+  meaningfully verifiable after the fact. Skip it.
 - DO verify quantitative claims over a time span: "revenue grew 40% over 3 years",
-  "the stock is up 200% since 2020", "earnings rose for 5 straight quarters", historical
-  highs/lows, dividend histories, etc. These are checkable against filings and data.
-- DO verify legal, regulatory, or factual business claims (rulings, fines, M&A that
-  "happened", reported figures). Cite SEC filings, court records, or reputable reporting.
+  "up 200% since 2020", "earnings rose 5 straight quarters", historical highs/lows,
+  dividend histories — checkable against filings and data.
+- DO verify legal/regulatory/factual business claims (rulings, fines, M&A that "happened",
+  reported figures). Cite SEC filings, court records, or reputable reporting.
+- TAX VALIDITY (check carefully): Any claimed deduction, write-off, credit, loophole, or
+  tax strategy must be verified for legal validity against current IRS rules AND the
+  user's state/local jurisdiction (provided in the user message). Flag advice that is
+  outdated, misstated, only valid for a different filing situation, or outright wrong.
+  Cite IRS publications / state revenue authority pages. North Carolina has its own flat
+  state income tax and rules — do not assume a federal rule maps to NC, and vice versa.
+- SCAM/FRAUD RED FLAGS: Flag "guaranteed returns", pump-and-dump, MLM, or crypto rug-pull
+  signals. Check whether a named "advisor"/"fund" is a registered RIA/broker (SEC IAPD,
+  FINRA BrokerCheck).
+- MISLEADING FRAMING: Flag cherry-picked timeframes and survivorship bias even when a
+  number is technically true (e.g. "up since 2020" hiding a 2022 crash).
 
 POLITICAL
 - Verify demonstrably true/false factual claims (votes, dates, quotes, statistics,
-  legislative facts). Do not adjudicate matters of opinion or genuinely contested issues.
-- Cite the record (official source, primary document, or reputable outlet) with a URL.
+  legislative facts). Do not adjudicate opinion or genuinely contested issues.
+- QUOTE MISATTRIBUTION: Verify the person actually said what's attributed to them.
+- SATIRE-AS-REAL: Flag satire/parody presented as a real event (see cross-cutting).
+- SELECTIVE EDITING / MISSING CONTEXT: Flag clips edited to misrepresent.
+- STATISTIC SOURCING: Verify crime/economic figures attributed to a person/administration.
+- Cite the record (official source, primary document, reputable outlet) with a URL.
 
 ## Output
 Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
@@ -279,22 +313,48 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
   "opinion_only": true|false,
   "verified_claims": [{"claim": "...", "source": "https://..."}],
   "disputed_claims": [{"claim": "...", "reality": "...", "source": "https://..."}],
+  "flags": [{"type": "media_authenticity|recycled_content|source_credibility|conflict_of_interest|dosage_safety|citation_integrity|regulatory_status|tax_validity|scam_fraud|misleading_framing|selective_editing|quote_misattribution", "detail": "...", "severity": "info|warning", "source": "https://..."}],
   "sources": ["https://..."]
 }
-Always include a URL in "source" when you have one. Put every source URL you relied on in
-the "sources" array. If you genuinely could not find a source for a claim, still report
-the claim and set its "source" to a brief description of why.
+Use "warning" severity for anything misleading, dangerous, fake, or false; "info" for
+neutral notes (e.g. "source is a satire site" when the post is clearly labeled). Always
+include a URL in "source" when you have one, and list every URL you relied on in
+"sources". If no source was findable for an item, set its "source" to a brief reason.
+Return empty arrays for sections with nothing to report.
 """
 
 
-def build_fact_check_prompt(content: ExtractedContent, ai_result: dict) -> str:
+def build_fact_check_prompt(
+    content: ExtractedContent, ai_result: dict, jurisdiction: str | None = None
+) -> str:
     topics = ", ".join(ai_result.get("topics", []))
-    return (
-        f"Topics: {topics}\nPlatform: {content.platform}\nTitle: {content.title}\n\n"
-        f"Content:\n{content.body_text[:6000]}\n\n"
-        f"Search the web as needed, then identify and evaluate the checkable factual "
-        f"claims per the rules in the system prompt. Cite source URLs."
+    parts = [
+        f"Topics: {topics}",
+        f"Platform: {content.platform}",
+        f"Title: {content.title}",
+    ]
+    if jurisdiction:
+        parts.append(
+            f"User's tax/legal jurisdiction (use for any tax or legal claim): {jurisdiction}"
+        )
+    parts.append(f"Content:\n{content.body_text[:6000]}")
+
+    if content.top_comments:
+        comment_lines = "\n".join(
+            f"  {c.get('author', '?')}: {c.get('text', '')[:300]}"
+            for c in content.top_comments[:12]
+        )
+        parts.append(
+            "Comments (people often call out fakes, undisclosed sponsorships, recycled "
+            f"content, and false claims here):\n{comment_lines}"
+        )
+
+    parts.append(
+        "Any attached images are the post's media — assess them for authenticity/context. "
+        "Search the web as needed, then evaluate the checkable claims and apply the "
+        "cross-cutting checks per the system prompt. Cite source URLs."
     )
+    return "\n\n".join(parts)
 
 
 TRAVEL_LOCATION_SYSTEM_PROMPT = """\
@@ -310,17 +370,30 @@ Treat a credible, specific commenter correction (especially if multiple commente
 or one names the real place) as a dispute. Also use the caption/body and any metadata
 inconsistencies as supporting signal. Quote the strongest comment as evidence.
 
+Also note these related problems when the comments or content reveal them (put them in
+`advisories`, they do NOT require setting location_disputed):
+- AUTHENTICITY: media looks AI-generated, a stock photo, or otherwise not a real shot of
+  the place ("this is AI", "that's a stock image").
+- MISREPRESENTATION: the angle/crop misleads — crowds cropped out, "Instagram vs reality",
+  a one-time condition shown as typical.
+- ACCESS/STATUS: the spot is closed/defunct, now requires a permit/fee, is seasonal, or is
+  actually private property posing as a "secret free spot".
+- SAFETY/ENTRY: a relevant travel/safety advisory, or a visa/entry-requirement claim that
+  is wrong or outdated.
+
 Respond with ONLY valid JSON:
 {
   "location_disputed": true|false,
   "stated_location": "location as stated in content",
   "claimed_actual_location": "location commenters say it really is (if disputed)",
   "evidence": "the strongest quote from the comments (verbatim) or a brief description",
-  "confidence": "low|medium|high"
+  "confidence": "low|medium|high",
+  "advisories": [{"type": "authenticity|misrepresentation|access_status|safety_entry", "detail": "..."}]
 }
 Set confidence high when multiple commenters agree or one names the real location
 specifically; medium for a single credible callout; low for vague suspicion.
-If there is no location dispute, return {"location_disputed": false}.
+Return an empty `advisories` array when there is nothing to note. If there is no location
+dispute AND no advisories, return {"location_disputed": false, "advisories": []}.
 """
 
 

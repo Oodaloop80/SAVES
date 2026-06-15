@@ -37,16 +37,18 @@ def _location_check_sync(content, ai_result: dict, config: dict) -> dict | None:
 
     try:
         user_prompt = build_travel_location_prompt(content)
+        # NB: do NOT pass `temperature` — opus-4-8 rejects it (400), which previously
+        # made every travel check fail silently and return None.
         msg = client.messages.create(
             model=ai_cfg.get("model", "claude-opus-4-8"),
-            max_tokens=512,
-            temperature=0,
+            max_tokens=1024,
             system=TRAVEL_LOCATION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
         raw = msg.content[0].text
         result = json.loads(raw)
-        if result.get("location_disputed"):
+        # Surface the result when there's a location dispute OR any advisory worth showing.
+        if result.get("location_disputed") or result.get("advisories"):
             return result
         return None
     except Exception as e:
