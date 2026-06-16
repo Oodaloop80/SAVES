@@ -1,0 +1,87 @@
+From 1e60867280f2db1c663231bba8f87602faf6cfc8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 21:18:42 +0000
+Subject: [PATCH] Scope web search to health/finance only; strengthen uncited
+ study detection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Add web_search_topics config (health, finance) — political, travel, and
+  cross-cutting checks now run without web search (content + comments suffice,
+  and cost drops ~60-70% for those topics)
+- claude_client: skip web search when post topics don't overlap web_search_topics
+- prompts: rewrite CITATION INTEGRITY instruction — when a post says 'a study
+  found X' without citing it, Claude must now actively search for the study and
+  return one of three graded outcomes (found+matches / found+differs / not found),
+  rather than just noting the absence of a citation
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+
+diff --git a/config.yaml b/config.yaml
+index f6dc6e3..196ed95 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -103,6 +103,9 @@ fact_checking:
+     - political
+     - finance
+   web_search: true        # Let Claude search the web for verifiable evidence + source URLs
++  web_search_topics:      # Only these topics get web search; others rely on content + comments
++    - health
++    - finance
+   max_searches: 5         # Cap web searches per fact-check (cost control)
+   max_tokens: 6000        # Fact-check responses include reasoning + cited sources
+   include_images: true    # Send the post's media to the fact-check for authenticity/deepfake checks
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index 939fcda..c0a9067 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -164,7 +164,18 @@ def _fact_check_sync(
+     # Attach the post's media so Claude can judge authenticity / out-of-context use.
+     imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
+ 
+-    if fc_cfg.get("web_search", True):
++    # Web search is only valuable for topics that need active claim verification.
++    # For political/travel/cross-cutting the content itself + comments are sufficient.
++    use_web_search = fc_cfg.get("web_search", True)
++    if use_web_search:
++        web_search_topics = set(fc_cfg.get("web_search_topics", []))
++        if web_search_topics:
++            post_topics = set(ai_result.get("topics", []))
++            if not post_topics.intersection(web_search_topics):
++                use_web_search = False
++                logger.debug("Web search skipped — no topics in web_search_topics")
++
++    if use_web_search:
+         try:
+             raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
+         except Exception as e:
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 396d1df..ab6c3ca 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -270,8 +270,19 @@ HEALTH
+   consensus statements). Cite the study/authority with a URL.
+ - DOSAGE & SAFETY: Flag dangerous dosing, drug/supplement interactions, and "natural =
+   safe" claims — these are higher-stakes than efficacy.
+-- CITATION INTEGRITY: When the post says "a study found…", verify the study EXISTS and
+-  actually says that. Flag misattributed, cherry-picked, or fabricated citations.
++- CITATION INTEGRITY: When a post references "a study", "research shows", "scientists
++  found", etc. WITHOUT citing the study, do NOT simply note "no citation provided" —
++  that is not useful. Instead, actively SEARCH for the study being referenced: match
++  the topic, the claimed finding, any numbers, and approximate timeframe. Then report
++  one of three outcomes and flag accordingly:
++    (a) FOUND + MATCHES: the study exists and the claim is accurate — report as verified.
++    (b) FOUND + DIFFERS: the study exists but the claim overstates, misrepresents, or
++        contradicts it — flag as disputed with the real finding + URL.
++    (c) NOT FOUND: no plausible matching study exists for the claim — flag as warning
++        with "No identifiable study found for this claim; may be fabricated, confused,
++        or misremembered."
++  When a study IS explicitly cited, verify it exists and actually says what's claimed.
++  Flag misattributed, cherry-picked, or fabricated citations.
+ - REGULATORY STATUS: Note if a treatment/product is not FDA-approved, is banned, or is
+   under recall. Check credentials when someone claims medical authority ("Dr.").
+ - Flag correlation-presented-as-causation overreach.
+-- 
+2.43.0
+

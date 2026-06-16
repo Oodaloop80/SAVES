@@ -1,0 +1,77 @@
+From 7a869a47ab1f7be8ffed34ff12eca081e3cf29b3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 14 Jun 2026 00:36:36 +0000
+Subject: [PATCH] fix: sanitize newlines in YAML frontmatter; add TO WATCH
+ folder rule
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- formatter.py: _sanitize_yaml_str() collapses \r\n\t to spaces in title and
+  post_title before writing YAML. A multi-line caption used as a title (e.g.
+  "Swipe through...\n\nSince the series") produced invalid YAML that Obsidian
+  rendered as an all-red broken properties block.
+
+- prompts.py: add Content-Type Overrides section — TV shows, movies, streaming,
+  viewing guides, watch lists all go to SAVES/TO WATCH (flat, no subfolders).
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/ai/prompts.py      | 13 +++++++++++++
+ src/notes/formatter.py |  9 +++++++--
+ 2 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index b556cb5..191a2d7 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -91,6 +91,19 @@ Other domains, same broad→specific stacking principle:
+   SAVES/PARENTING/NEWBORN/SLEEP
+ Each level must add new information — never repeat the level above it.
+ 
++## Content-Type Overrides (always take precedence over generic category rules)
++
++**TV shows, movies, streaming content, and anything to watch:**
++- Use `SAVES/TO WATCH` — flat, no subfolders.
++- This applies to: TV series, films, documentaries, mini-series, anime, streaming specials,
++  viewing guides, watch-order guides, recommendations, "what to watch" lists.
++- Do NOT create subfolders like TO WATCH/MARVEL or TO WATCH/TV-SHOWS — everything goes
++  directly in `SAVES/TO WATCH`.
++- Examples:
++    SAVES/TO WATCH   ← Spider-Noir viewing guide
++    SAVES/TO WATCH   ← Movie recommendation post
++    SAVES/TO WATCH   ← "Best shows on Netflix this month" list
++
+ ## Geographic Overrides (always take precedence over generic category rules)
+ 
+ **Charlotte, NC metro area** (Charlotte, Concord, Gastonia, Huntersville, Mooresville,
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index 30727f5..112d693 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -89,15 +89,20 @@ def format_note(
+ # Shared components
+ # ─────────────────────────────────────────────────────────
+ 
++def _sanitize_yaml_str(value: str) -> str:
++    """Collapse newlines/tabs to a space so YAML double-quoted strings stay on one line."""
++    return re.sub(r'[\r\n\t]+', ' ', value).strip()
++
++
+ def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
+     tags = ai_result.get("tags") or []
+-    title = ai_result.get("title", "").replace('"', "'")
++    title = _sanitize_yaml_str(ai_result.get("title", "")).replace('"', "'")
+     author = content.author or "unknown"
+     m = content.metadata or {}
+ 
+     lines = ["---", f'title: "{title}"']
+ 
+-    post_title = (content.title or "").replace('"', "'")
++    post_title = _sanitize_yaml_str(content.title or "").replace('"', "'")
+     # Suppress post_title when it equals the source URL (happens when yt-dlp/extractor
+     # couldn't get a real title and fell back to using the URL as the title).
+     if post_title and post_title != content.url and post_title != content.url.replace('"', "'"):
+-- 
+2.43.0
+

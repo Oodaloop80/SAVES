@@ -1,0 +1,22 @@
+From 5faf0c2d2c043a5c004c0d164cd56f0de4b8049a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 22:01:45 +0000
+Subject: [PATCH] Switch main analysis model to claude-haiku-4-5
+
+
+diff --git a/config.yaml b/config.yaml
+index 8d0924f..1f06ce8 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -43,7 +43,7 @@ vision:
+   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
+ 
+ ai:
+-  model: "claude-opus-4-8"
++  model: "claude-haiku-4-5"
+   max_tokens: 8192          # room for full multi-slide image_text OCR + all JSON fields
+   temperature: 0.3
+   max_content_chars: 20000
+-- 
+2.43.0
+

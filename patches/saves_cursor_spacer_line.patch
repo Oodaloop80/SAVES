@@ -1,0 +1,36 @@
+From 41f5f1549046f905f12dfab1091df1631f45d3e7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 14 Jun 2026 01:05:24 +0000
+Subject: [PATCH] fix: blank first body line so cursor doesn't open inside the
+ media embed
+
+In Obsidian Live Preview the cursor lands on the first body line when a note
+opens. When that line was the ```EmbedRelativeTo fence, the block showed raw
+markup until you clicked elsewhere. Adding an empty spacer line between the
+frontmatter and the first body block gives the cursor a harmless place to rest,
+so the embed renders immediately on open.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/notes/formatter.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index 112d693..b14c240 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -64,6 +64,11 @@ def format_note(
+     note_type = ai_result.get("note_type", "web_generic")
+     parts = [_frontmatter(ai_result, content, saved_date)]
+ 
++    # Blank spacer line so that when the note opens in Live Preview, the cursor
++    # lands on this empty line instead of inside the first embed/code block — which
++    # would otherwise show raw "```EmbedRelativeTo ..." markup until you click away.
++    parts.append("")
++
+     if include_warnings:
+         if fact_check_result and fact_check_result.get("disputed_claims"):
+             parts.append(_fact_check_callout(fact_check_result))
+-- 
+2.43.0
+

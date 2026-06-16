@@ -1,0 +1,103 @@
+From c478a7e7f5b3ec32f82ef7b3e009ab4cc0d16f70 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 14 Jun 2026 00:11:26 +0000
+Subject: [PATCH] fix: convert Instagram HEIC images to JPG so Obsidian can
+ embed them
+
+Instagram sometimes serves photos as HEIC, which Obsidian can't render, so the
+EmbedRelativeTo block degrades to a bare link. _maybe_convert_heic() transcodes
+.heic/.heif to .jpg after download (ffmpeg first, pillow-heif fallback) and the
+note embeds the .jpg. The signed CDN URL (oh= HMAC) prevents simply requesting
+a .jpg variant, so conversion must happen post-download. Original .heic is left
+in place per the no-delete policy; any conversion failure falls back to the
+original path.
+
+- downloader.py: recognize .heic/.heif as images; run conversion on the image
+  and yt-dlp-fallback branches.
+- requirements.txt: add pillow-heif as a guaranteed fallback decoder for ffmpeg
+  builds without HEIC support.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ requirements.txt        |  1 +
+ src/media/downloader.py | 52 ++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 50 insertions(+), 3 deletions(-)
+
+diff --git a/requirements.txt b/requirements.txt
+index 69fa928..24738c7 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -11,3 +11,4 @@ python-dotenv>=1.0.0
+ aiofiles>=23.0.0
+ requests>=2.31.0
+ flask>=3.0.0
++pillow-heif>=0.16.0
+diff --git a/src/media/downloader.py b/src/media/downloader.py
+index 73a7768..d2bbf1a 100644
+--- a/src/media/downloader.py
++++ b/src/media/downloader.py
+@@ -64,12 +64,58 @@ def _download_one(
+ 
+     if is_video:
+         return _yt_dlp_download(url, save_dir, video_quality, max_size_mb, cookies_path)
+-    elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"):
+-        return _direct_download(url, save_dir)
++    elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif"):
++        return _maybe_convert_heic(_direct_download(url, save_dir))
+     else:
+         # Try yt-dlp first, fall back to direct
+         result = _yt_dlp_download(url, save_dir, video_quality, max_size_mb, cookies_path)
+-        return result or _direct_download(url, save_dir)
++        return result or _maybe_convert_heic(_direct_download(url, save_dir))
++
++
++def _maybe_convert_heic(path: str | None) -> str | None:
++    """Convert HEIC/HEIF images to JPG so Obsidian can render them.
++
++    Obsidian (and most note viewers) can't display HEIC, so the embed degrades to
++    a bare link. We transcode to JPG and return the new path; the original .heic is
++    left in place (no deletes by project policy). On any failure we return the
++    original path — a broken embed is no worse than before."""
++    if not path:
++        return path
++    ext = os.path.splitext(path)[1].lower()
++    if ext not in (".heic", ".heif"):
++        return path
++
++    jpg_path = os.path.splitext(path)[0] + ".jpg"
++
++    # Preferred: ffmpeg (already a project dependency for muxing/transcoding).
++    try:
++        result = subprocess.run(
++            ["ffmpeg", "-y", "-i", path, jpg_path],
++            capture_output=True, timeout=60,
++        )
++        if result.returncode == 0 and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 0:
++            logger.info("Converted HEIC to JPG via ffmpeg: %s", os.path.basename(jpg_path))
++            return jpg_path
++        logger.debug("ffmpeg HEIC->JPG failed (rc=%s): %s",
++                     result.returncode, (result.stderr or b"")[:200])
++    except Exception as e:
++        logger.debug("ffmpeg HEIC->JPG raised: %s", e)
++
++    # Fallback: pillow-heif if installed.
++    try:
++        import pillow_heif  # type: ignore
++        from PIL import Image  # type: ignore
++        pillow_heif.register_heif_opener()
++        Image.open(path).convert("RGB").save(jpg_path, "JPEG", quality=90)
++        if os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 0:
++            logger.info("Converted HEIC to JPG via pillow-heif: %s", os.path.basename(jpg_path))
++            return jpg_path
++    except Exception as e:
++        logger.debug("pillow-heif HEIC->JPG failed: %s", e)
++
++    logger.warning("Could not convert HEIC to JPG (need ffmpeg with HEIC support or "
++                   "pillow-heif) — embedding original .heic: %s", path)
++    return path
+ 
+ 
+ def _yt_dlp_download(
+-- 
+2.43.0
+

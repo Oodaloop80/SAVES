@@ -1,0 +1,132 @@
+From 8eae64b3a75175677f0a0079553e6f8dffc4ab94 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 13 Jun 2026 23:26:33 +0000
+Subject: [PATCH] fix: parse gallery-dl -j as a single JSON document, not
+ line-by-line
+
+gallery-dl -j emits one pretty-printed JSON array spanning many lines, not one
+JSON object per line. The previous line-by-line parse matched nothing and
+returned {}, which is why author regressed to "unknown" and caption stayed empty.
+
+- Parse the entire stdout with json.loads().
+- _first_gallery_dl_kwdict(): walk the message tuples and return the first kwdict
+  that actually carries post fields (username/description), preferring it over an
+  empty directory header.
+- Use post_shortcode (gallery-dl's field name) before falling back to URL parsing.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/extractors/instagram.py | 86 ++++++++++++++++++++++---------------
+ 1 file changed, 52 insertions(+), 34 deletions(-)
+
+diff --git a/src/extractors/instagram.py b/src/extractors/instagram.py
+index 6c27bb1..5a1bfc2 100644
+--- a/src/extractors/instagram.py
++++ b/src/extractors/instagram.py
+@@ -110,9 +110,9 @@ class InstagramExtractor(BaseExtractor):
+     def _gallery_dl_metadata(self, url: str) -> dict:
+         """Extract post metadata via gallery-dl -j (works for public posts without cookies).
+ 
+-        gallery-dl -j emits one JSON line per media item:
+-          [type_int, "media_url", {metadata dict}]
+-        We take the first item's metadata dict.
++        gallery-dl -j emits a single pretty-printed JSON array. Each element is a
++        message tuple: [3, "media_url", {kwdict}] for media, or [2, {kwdict}] for a
++        directory. The post metadata (username, description, etc.) lives in the kwdict.
+         """
+         import json
+         cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
+@@ -122,41 +122,59 @@ class InstagramExtractor(BaseExtractor):
+         cmd.append(url)
+         try:
+             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+-            for line in result.stdout.splitlines():
+-                line = line.strip()
+-                if not line.startswith("["):
+-                    continue
+-                try:
+-                    item = json.loads(line)
+-                except ValueError:
+-                    continue
+-                if not isinstance(item, list) or len(item) < 3 or not isinstance(item[2], dict):
+-                    continue
+-                meta = item[2]
+-                # gallery-dl Instagram fields: username=@handle, fullname=display name,
+-                # description=caption, date=datetime-like string, shortcode, likes
+-                handle = (meta.get("username") or "").lstrip("@")
+-                caption = meta.get("description") or meta.get("title") or ""
+-                # date arrives as "YYYY-MM-DD HH:MM:SS" or a datetime object serialized
+-                raw_date = str(meta.get("date") or "")
+-                date_str = raw_date[:10].replace("-", "")  # → YYYYMMDD or ""
+-                logger.info(
+-                    "Instagram: gallery-dl metadata — author=%s, caption=%d chars",
+-                    handle or "(none)", len(caption),
+-                )
+-                return {
+-                    "caption": caption,
+-                    "owner_username": meta.get("fullname") or meta.get("username") or "",
+-                    "owner_handle": handle or None,
+-                    "likes": meta.get("likes"),
+-                    "shortcode": meta.get("shortcode") or self._shortcode_from_url(url),
+-                    "date": date_str,
+-                    "first_owner_comment": None,
+-                }
++            try:
++                data = json.loads(result.stdout)
++            except ValueError:
++                logger.debug("Instagram: gallery-dl -j produced no parseable JSON")
++                return {}
++            # Find the first message tuple that carries a kwdict with post fields.
++            meta = self._first_gallery_dl_kwdict(data)
++            if not meta:
++                return {}
++            # gallery-dl Instagram fields: username=@handle, fullname=display name,
++            # description=caption, date="YYYY-MM-DD HH:MM:SS", post_shortcode, likes
++            handle = str(meta.get("username") or "").lstrip("@")
++            caption = meta.get("description") or meta.get("title") or ""
++            raw_date = str(meta.get("date") or "")
++            date_str = raw_date[:10].replace("-", "")  # → YYYYMMDD or ""
++            logger.info(
++                "Instagram: gallery-dl metadata — author=%s, caption=%d chars",
++                handle or "(none)", len(caption),
++            )
++            return {
++                "caption": caption,
++                "owner_username": meta.get("fullname") or meta.get("username") or "",
++                "owner_handle": handle or None,
++                "likes": meta.get("likes"),
++                "shortcode": (meta.get("post_shortcode") or meta.get("shortcode")
++                              or self._shortcode_from_url(url)),
++                "date": date_str,
++                "first_owner_comment": None,
++            }
+         except Exception as e:
+             logger.debug("Instagram: gallery-dl metadata fallback failed: %s", e)
+         return {}
+ 
++    @staticmethod
++    def _first_gallery_dl_kwdict(data) -> dict | None:
++        """Pull the first kwdict (metadata dict) out of gallery-dl -j output.
++
++        Prefer a dict that actually has post fields (username/description) so we don't
++        grab an empty directory header."""
++        if not isinstance(data, list):
++            return None
++        fallback = None
++        for entry in data:
++            if not isinstance(entry, list):
++                continue
++            for part in entry:
++                if isinstance(part, dict):
++                    if part.get("username") or part.get("description"):
++                        return part
++                    if fallback is None:
++                        fallback = part
++        return fallback
++
+     @staticmethod
+     def _owner_id_set(info: dict, clean_handle: str | None) -> set:
+         """All lowercased identifiers that could mark a comment as the poster's own."""
+-- 
+2.43.0
+

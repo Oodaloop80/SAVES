@@ -1,0 +1,191 @@
+From 0a5a0713b44ec9cb04e2473b1148404a42bd6ec6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 13 Jun 2026 22:53:00 +0000
+Subject: [PATCH] fix: add gallery-dl metadata fallback for Instagram posts
+ without cookies
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+yt-dlp requires Instagram cookies for metadata; without them it returns nothing
+(author=None, body=0 chars). gallery-dl was already working for image URLs on
+the same posts, so use it as a metadata source too.
+
+Extraction priority order:
+1. yt-dlp (best — has comment support, needs cookies)
+2. gallery-dl -j (works on public posts without auth, no comments)
+3. instaloader (comment-only fallback, needs session file)
+
+_ytdlp_metadata: renamed from _instaloader_metadata, returns {} cleanly when
+  yt-dlp produces no info.json so the fallback chain triggers.
+_gallery_dl_metadata: new — runs gallery-dl -j, parses first item's metadata
+  dict for caption (description), handle (username), display name (fullname),
+  date, shortcode, likes.
+_instaloader_first_owner_comment: accepts optional owner_handle param so the
+  gallery-dl path can pass the handle it already discovered.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/extractors/instagram.py | 118 +++++++++++++++++++++++++-----------
+ 1 file changed, 81 insertions(+), 37 deletions(-)
+
+diff --git a/src/extractors/instagram.py b/src/extractors/instagram.py
+index 8ec7a5d..6c27bb1 100644
+--- a/src/extractors/instagram.py
++++ b/src/extractors/instagram.py
+@@ -30,13 +30,24 @@ class InstagramExtractor(BaseExtractor):
+         delay = self.delay + random.uniform(-1.0, 1.0)
+         time.sleep(max(delay, 1.0))
+ 
+-        # Try instaloader for metadata
+-        metadata = self._instaloader_metadata(url)
++        # yt-dlp for metadata (caption, author, comments)
++        metadata = self._ytdlp_metadata(url)
++
++        # If yt-dlp returned nothing (no cookies, rate-limited, etc.), fall back to
++        # gallery-dl which works for public posts without authentication.
++        if not metadata:
++            logger.info("Instagram: yt-dlp returned no metadata — falling back to gallery-dl")
++            metadata = self._gallery_dl_metadata(url)
++
++        # If we still have no comments from yt-dlp, try instaloader (needs session)
++        if not metadata.get("first_owner_comment"):
++            fc = self._instaloader_first_owner_comment(url, metadata.get("owner_handle"))
++            if fc:
++                metadata["first_owner_comment"] = fc
+ 
+         # Media via gallery-dl
+         media_urls = self._gallery_dl_urls(url)
+         if not media_urls:
+-            # Reels fallback: yt-dlp
+             media_urls = [url]
+ 
+         caption = metadata.get("caption", "")
+@@ -64,11 +75,9 @@ class InstagramExtractor(BaseExtractor):
+             media_urls=media_urls,
+         )
+ 
+-    def _instaloader_metadata(self, url: str) -> dict:
+-        # instaloader doesn't have a clean JSON-output mode for single posts,
+-        # so we use yt-dlp --write-info-json for basic metadata.
+-        # --write-comments fetches the comment list so we can capture the poster's
+-        # own first comment (many accounts post article text or extra details there).
++    def _ytdlp_metadata(self, url: str) -> dict:
++        """Extract post metadata via yt-dlp. Requires cookies for most Instagram posts.
++        Returns {} when yt-dlp can't access the post (no cookies, rate-limited, etc.)."""
+         import tempfile, json
+         with tempfile.TemporaryDirectory() as tmpdir:
+             cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
+@@ -80,37 +89,72 @@ class InstagramExtractor(BaseExtractor):
+             cmd.append(url)
+             subprocess.run(cmd, capture_output=True, timeout=60)
+             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
+-            if info_files:
+-                with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
+-                    info = json.load(f)
+-                # yt-dlp: `uploader` is the display name ("Rest In Pizza");
+-                # `uploader_id`/`channel_id` is the @handle used in the profile
+-                # URL ("brewtal_pizza"). Keep both — display name for `author`,
+-                # handle for building the author_url.
+-                handle = (
+-                    info.get("uploader_id")
+-                    or info.get("channel_id")
+-                    or info.get("channel")
++            if not info_files:
++                return {}
++            with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
++                info = json.load(f)
++            # `uploader` is the display name; `uploader_id`/`channel_id` is the handle.
++            handle = (info.get("uploader_id") or info.get("channel_id") or info.get("channel"))
++            clean_handle = handle.lstrip("@") if handle else None
++            owner_ids = self._owner_id_set(info, clean_handle)
++            return {
++                "caption": info.get("description", ""),
++                "owner_username": info.get("uploader") or info.get("channel"),
++                "owner_handle": clean_handle,
++                "likes": info.get("like_count"),
++                "shortcode": info.get("id"),
++                "date": info.get("upload_date"),
++                "first_owner_comment": self._first_owner_comment(info, owner_ids),
++            }
++
++    def _gallery_dl_metadata(self, url: str) -> dict:
++        """Extract post metadata via gallery-dl -j (works for public posts without cookies).
++
++        gallery-dl -j emits one JSON line per media item:
++          [type_int, "media_url", {metadata dict}]
++        We take the first item's metadata dict.
++        """
++        import json
++        cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
++        cmd = ["gallery-dl", "-j"]
++        if os.path.exists(cookies_path):
++            cmd += ["--cookies", cookies_path]
++        cmd.append(url)
++        try:
++            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
++            for line in result.stdout.splitlines():
++                line = line.strip()
++                if not line.startswith("["):
++                    continue
++                try:
++                    item = json.loads(line)
++                except ValueError:
++                    continue
++                if not isinstance(item, list) or len(item) < 3 or not isinstance(item[2], dict):
++                    continue
++                meta = item[2]
++                # gallery-dl Instagram fields: username=@handle, fullname=display name,
++                # description=caption, date=datetime-like string, shortcode, likes
++                handle = (meta.get("username") or "").lstrip("@")
++                caption = meta.get("description") or meta.get("title") or ""
++                # date arrives as "YYYY-MM-DD HH:MM:SS" or a datetime object serialized
++                raw_date = str(meta.get("date") or "")
++                date_str = raw_date[:10].replace("-", "")  # → YYYYMMDD or ""
++                logger.info(
++                    "Instagram: gallery-dl metadata — author=%s, caption=%d chars",
++                    handle or "(none)", len(caption),
+                 )
+-                clean_handle = handle.lstrip("@") if handle else None
+-                # Identifiers that could mark a comment as the poster's own — collect
+-                # every field yt-dlp might populate, since the comment's `author` is a
+-                # username while `author_id` is numeric, and the post fields vary.
+-                owner_ids = self._owner_id_set(info, clean_handle)
+-                first_owner_comment = self._first_owner_comment(info, owner_ids)
+-                # yt-dlp's Instagram comment support is unreliable — if it returned
+-                # nothing, fall back to instaloader (purpose-built, uses the session).
+-                if not first_owner_comment:
+-                    first_owner_comment = self._instaloader_first_owner_comment(url)
+                 return {
+-                    "caption": info.get("description", ""),
+-                    "owner_username": info.get("uploader") or info.get("channel"),
+-                    "owner_handle": clean_handle,
+-                    "likes": info.get("like_count"),
+-                    "shortcode": info.get("id"),
+-                    "date": info.get("upload_date"),
+-                    "first_owner_comment": first_owner_comment,
++                    "caption": caption,
++                    "owner_username": meta.get("fullname") or meta.get("username") or "",
++                    "owner_handle": handle or None,
++                    "likes": meta.get("likes"),
++                    "shortcode": meta.get("shortcode") or self._shortcode_from_url(url),
++                    "date": date_str,
++                    "first_owner_comment": None,
+                 }
++        except Exception as e:
++            logger.debug("Instagram: gallery-dl metadata fallback failed: %s", e)
+         return {}
+ 
+     @staticmethod
+@@ -160,7 +204,7 @@ class InstagramExtractor(BaseExtractor):
+         m = re.search(r"/(?:p|reel|tv)/([^/?#]+)", url)
+         return m.group(1) if m else None
+ 
+-    def _instaloader_first_owner_comment(self, url: str) -> str | None:
++    def _instaloader_first_owner_comment(self, url: str, owner_handle: str | None = None) -> str | None:
+         """Fallback: use instaloader to fetch the owner's first comment.
+ 
+         Requires a logged-in instaloader session (mounted at
+-- 
+2.43.0
+

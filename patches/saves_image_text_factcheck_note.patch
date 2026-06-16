@@ -1,0 +1,124 @@
+From 045d89921ddb923bbac6ce1c432bc9dbf366ccc9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 19:20:45 +0000
+Subject: [PATCH] Add image text extraction and inline fact-check sections to
+ notes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When Claude receives vision images where slides contain text (info-graphics, quote
+cards, carousel posts), it now extracts that text into a new `image_text` field and
+the formatter renders it as a "Text from Images" quote callout below the Summary.
+
+Fact-check results are now always written into the note body (collapsed "Fact Check"
+callout) whenever a fact-check was triggered — not only via the Discord ⚠️ button.
+Opinion-only content shows an [!info]- note instead of a warning.
+
+Both sections are injected before the --- metadata separator so they appear
+between the content and the metadata, regardless of note_type.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/ai/prompts.py      | 10 +++++++-
+ src/notes/formatter.py | 54 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 63 insertions(+), 1 deletion(-)
+
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 1da3338..137b015 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -16,9 +16,17 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
+   "summary": "2-3 sentence overview of why this content is useful.",
+   "key_takeaways": ["bullet 1", "bullet 2"],
+   "note_type": "<see Note Types below>",
+-  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...]
++  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...],
++  "image_text": null
+ }
+ 
++`image_text` is only relevant when vision images are provided. If any image is a slide or
++graphic where the PRIMARY content is TEXT rendered as an image (carousel info-graphics,
++text screenshots, quote cards, recipe steps written as slides — anything where you would
++read the image rather than look at it), extract the COMPLETE text from those slides and
++return it as a single string. Separate each slide's text with a blank line. Return null
++when the images are photographs, artwork, or contain only short decorative captions.
++
+ ## Note Types (pick EXACTLY one — determines the note template)
+ - youtube_video    → YouTube video (any length)
+ - reddit_text      → Reddit text/link post with no media
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index b14c240..b45fd83 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -86,6 +86,27 @@ def format_note(
+         if embeds:
+             body = embeds + "\n" + body
+ 
++    # Inject supplemental sections (image text + fact-check) before the --- metadata separator.
++    image_text = (ai_result.get("image_text") or "").strip()
++    fc_inline = fact_check_result or (
++        ai_result.get("_fact_check")
++        if isinstance(ai_result.get("_fact_check"), dict) else None
++    )
++    inserts = []
++    if image_text:
++        inserts.append(_image_text_section(image_text))
++    if fc_inline:
++        sec = _fact_check_note_section(fc_inline)
++        if sec:
++            inserts.append(sec)
++    if inserts:
++        sep = "\n---\n"
++        if sep in body:
++            pre, post = body.split(sep, 1)
++            body = pre + "\n" + "\n".join(inserts) + sep + post
++        else:
++            body = body + "\n" + "\n".join(inserts)
++
+     parts.append(body)
+     return "\n".join(parts)
+ 
+@@ -403,6 +424,39 @@ def _fact_check_callout(fc: dict) -> str:
+     return "\n".join(lines) + "\n"
+ 
+ 
++def _fact_check_note_section(fc: dict) -> str:
++    """Inline fact-check section written into every note that triggered a check."""
++    if not fc:
++        return ""
++    if fc.get("opinion_only"):
++        return "> [!info]- Fact Check\n> This content is opinion/analysis — no specific factual claims were verified.\n"
++    disputed = fc.get("disputed_claims", [])
++    verified = fc.get("verified_claims", [])
++    if not disputed and not verified:
++        return ""
++    lines = ["> [!warning]- Fact Check"]
++    if disputed:
++        lines.append("> **Disputed Claims:**")
++        for claim in disputed:
++            lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
++            lines.append(f">   **Reality:** {claim.get('reality', '')}")
++            if claim.get("source"):
++                lines.append(f">   **Source:** {claim['source']}")
++    if verified:
++        lines.append("> **Verified Claims:**")
++        for v in verified:
++            lines.append(f"> - {v}")
++    return "\n".join(lines) + "\n"
++
++
++def _image_text_section(image_text: str) -> str:
++    """Text extracted from carousel slides where the image content IS the text."""
++    if not image_text or not image_text.strip():
++        return ""
++    quoted = "\n".join(f"> {l}" for l in image_text.strip().splitlines())
++    return f"> [!quote] Text from Images\n{quoted}\n"
++
++
+ def _location_callout(lc: dict) -> str:
+     stated = lc.get("stated_location", "unknown")
+     actual = lc.get("claimed_actual_location", "unknown")
+-- 
+2.43.0
+

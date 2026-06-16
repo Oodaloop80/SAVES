@@ -286,7 +286,26 @@ def _factcheck_with_web_search(
     max_searches = fc_cfg.get("max_searches", 5)
 
     tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
-    messages: list = [{"role": "user", "content": _with_images(user_prompt, image_blocks)}]
+
+    # Prompt caching: the system prompt + the post's images + the (static) user prompt
+    # are identical on every pause_turn continuation. Without caching, each loop iteration
+    # re-bills all of it at full price — and the images alone are ~1.7K tokens each. We mark
+    # the system prompt and the tail of the first user message as cache breakpoints so every
+    # continuation reads that prefix from cache (~90% cheaper) instead of re-billing it.
+    system_param = [
+        {"type": "text", "text": FACT_CHECK_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+    ]
+    first_content = _with_images(user_prompt, image_blocks)
+    if isinstance(first_content, list):
+        # Copy blocks so we never mutate the shared image_blocks list, then put the cache
+        # breakpoint on the final block (caches system + all images + prompt text).
+        first_content = [dict(b) for b in first_content]
+        first_content[-1] = {**first_content[-1], "cache_control": {"type": "ephemeral"}}
+    else:
+        first_content = [
+            {"type": "text", "text": first_content, "cache_control": {"type": "ephemeral"}}
+        ]
+    messages: list = [{"role": "user", "content": first_content}]
     text_parts: list[str] = []
     harvested: list[str] = []
     seen_urls: set[str] = set()
@@ -296,7 +315,7 @@ def _factcheck_with_web_search(
         msg = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=FACT_CHECK_SYSTEM_PROMPT,
+            system=system_param,
             tools=tools,
             messages=messages,
         )

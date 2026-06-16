@@ -1,0 +1,22 @@
+From 920aa2656d34be309ef0adb0bf2bdc04086b4480 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 22:00:37 +0000
+Subject: [PATCH] Raise vision.max_images to 20 (Instagram carousel max)
+
+
+diff --git a/config.yaml b/config.yaml
+index 8d2f6c2..8d0924f 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -38,7 +38,7 @@ transcription:
+ 
+ vision:
+   enabled: true              # Send images/video frames to Claude for visual text extraction
+-  max_images: 10             # Max images per analysis request (cost control)
++  max_images: 20             # Instagram carousels cap at 20 slides; cover the full post
+   max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
+   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
+ 
+-- 
+2.43.0
+

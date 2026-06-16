@@ -1,0 +1,873 @@
+From 0b92a7d83b2b4ee16979e9d5fed8c50c72365d35 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 22:14:18 +0000
+Subject: [PATCH] Two-stage analysis: Haiku OCRs image slides, Opus analyzes
+ text-only
+
+- config.yaml: add vision.ocr_model: claude-haiku-4-5
+- claude_client.py: _ocr_images_sync runs Haiku on image blocks; _analyze_sync
+  feeds OCR text to Opus text-only (no images sent to Opus). Falls back to
+  combined call if OCR fails. image_text back-filled from OCR stage.
+- prompts.py: IMAGE_OCR_SYSTEM_PROMPT + build_image_ocr_prompt; build_user_prompt
+  accepts image_text kwarg and injects it as a labeled section.
+
+diff --git a/config.yaml b/config.yaml
+index 3a6634a..74722d3 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -1,7 +1,7 @@
+ paths:
+   vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
+   saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
+-  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES/00 - FILE.md"
++  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"
+   media_root: "/volume1/NAS/MEDIA/SAVES"
+   cookies_dir: "cookies"
+   logs_dir: "logs"
+@@ -38,22 +38,21 @@ transcription:
+ 
+ vision:
+   enabled: true              # Send images/video frames to Claude for visual text extraction
+-  max_images: 5              # Max images per analysis request (cost control)
++  max_images: 20             # Instagram carousels cap at 20 slides; cover the full post
++  ocr_model: "claude-haiku-4-5"  # Cheap model reads image slides (OCR); main analysis stays on ai.model. Unset = single call on ai.model.
+   max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
+   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
+ 
+ ai:
+   model: "claude-opus-4-8"
+-  max_tokens: 4096
++  max_tokens: 8192          # room for full multi-slide image_text OCR + all JSON fields
+   temperature: 0.3
+   max_content_chars: 20000
+ 
+ platforms:
+   reddit:
+-    use_praw: true
+     top_comments_count: 5
+     include_op_top_level_comments: true
+-    praw_delay: 0
+     delay_seconds: 1.0
+   instagram:
+     delay_seconds: 4.0
+@@ -68,10 +67,6 @@ platforms:
+     delay_seconds: 7.0
+     cookie_expiry_days: 30
+     cookie_warning_days_ahead: 7
+-  reddit_cookies:
+-    delay_seconds: 1.0
+-    cookie_expiry_days: 30
+-    cookie_warning_days_ahead: 7
+   youtube:
+     download_video: false
+     download_subtitles: true
+@@ -104,10 +99,19 @@ preferences:
+ 
+ fact_checking:
+   enabled: true
++  model: "claude-haiku-4-5"  # Cheaper model for fact-checking; falls back to ai.model if omitted
+   topics:
+     - health
+     - political
+     - finance
++  web_search: true        # Let Claude search the web for verifiable evidence + source URLs
++  web_search_topics:      # Only these topics get web search; others rely on content + comments
++    - health
++    - finance
++  max_searches: 5         # Cap web searches per fact-check (cost control)
++  max_tokens: 6000        # Fact-check responses include reasoning + cited sources
++  include_images: true    # Send the post's media to the fact-check for authenticity/deepfake checks
++  jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
+ 
+ travel_verification:
+   enabled: true
+@@ -115,7 +119,4 @@ travel_verification:
+ credentials:
+   keys:
+     - ANTHROPIC_API_KEY
+-    - DISCORD_BOT_TOKEN
+-    - REDDIT_CLIENT_ID
+-    - REDDIT_CLIENT_SECRET
+-    - REDDIT_USER_AGENT
++    - DISCORD_BOT_TOKEN
+\ No newline at end of file
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index faca094..8884276 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -8,6 +8,7 @@ from src.ai.prompts import (
+     SYSTEM_PROMPT, build_user_prompt,
+     NL_EDIT_SYSTEM_PROMPT, build_nl_edit_prompt,
+     FACT_CHECK_SYSTEM_PROMPT, build_fact_check_prompt,
++    IMAGE_OCR_SYSTEM_PROMPT, build_image_ocr_prompt,
+ )
+ from src.extractors.base import ExtractedContent
+ 
+@@ -24,15 +25,31 @@ def _call(
+     user: str | list,
+     config: dict,
+ ) -> str:
+-    """Call the Claude API. `user` may be a plain string or a list of content blocks."""
++    """Call the Claude API. `user` may be a plain string or a list of content blocks.
++
++    Newer models (e.g. claude-opus-4-8) reject the `temperature` parameter. We send it
++    when configured, but transparently retry without it if the API reports it deprecated.
++    """
+     ai_cfg = config.get("ai", {})
+-    msg = client.messages.create(
+-        model=ai_cfg.get("model", "claude-opus-4-8"),
+-        max_tokens=ai_cfg.get("max_tokens", 4096),
+-        temperature=ai_cfg.get("temperature", 0.3),
+-        system=system,
+-        messages=[{"role": "user", "content": user}],
+-    )
++    params = {
++        "model": ai_cfg.get("model", "claude-opus-4-8"),
++        "max_tokens": ai_cfg.get("max_tokens", 4096),
++        "system": system,
++        "messages": [{"role": "user", "content": user}],
++    }
++    temperature = ai_cfg.get("temperature")
++    if temperature is not None:
++        params["temperature"] = temperature
++
++    try:
++        msg = client.messages.create(**params)
++    except anthropic.BadRequestError as e:
++        if "temperature" in str(e) and "temperature" in params:
++            logger.info("Model rejects `temperature`; retrying without it")
++            params.pop("temperature", None)
++            msg = client.messages.create(**params)
++        else:
++            raise
+     return msg.content[0].text
+ 
+ 
+@@ -42,10 +59,12 @@ async def analyze_content(
+     config: dict,
+     preferences_hint: str | None = None,
+     image_blocks: list[dict] | None = None,
++    existing_folders: list[str] | None = None,
+ ) -> dict:
+     import asyncio
+     return await asyncio.to_thread(
+-        _analyze_sync, content, transcript, config, preferences_hint, image_blocks
++        _analyze_sync, content, transcript, config, preferences_hint,
++        image_blocks, existing_folders,
+     )
+ 
+ 
+@@ -55,37 +74,67 @@ def _analyze_sync(
+     config: dict,
+     preferences_hint: str | None = None,
+     image_blocks: list[dict] | None = None,
++    existing_folders: list[str] | None = None,
+ ) -> dict:
+     client = _make_client()
+-    user_text = build_user_prompt(content, transcript, preferences_hint)
+ 
+-    if image_blocks:
+-        n = len(image_blocks)
+-        vision_note = (
+-            f"\n\nI am also providing {n} image(s)/video frame(s) from this content. "
+-            f"Please read and incorporate any visible text, on-screen captions, titles, "
+-            f"labels, or other relevant visual information in your analysis."
++    # Two-stage option: a cheap vision model (vision.ocr_model) reads the image slides
++    # into text, then the main ai.model does the full analysis on text only — no images.
++    # This keeps the costly vision tokens on the cheap model while reasoning/routing stays
++    # on the capable model. If ocr_model is unset, fall back to a single combined call.
++    ocr_model = config.get("vision", {}).get("ocr_model")
++    ocr_text: str | None = None
++    if image_blocks and ocr_model:
++        try:
++            ocr_text = _ocr_images_sync(client, content, image_blocks, config, ocr_model)
++        except Exception as e:
++            logger.warning("Image OCR stage failed (%s); falling back to combined call", e)
++            ocr_text = None
++
++    if image_blocks and ocr_text is not None:
++        # Stage 2: text-only analysis on the main model, OCR text injected.
++        user_text = build_user_prompt(
++            content, transcript, preferences_hint, existing_folders, image_text=ocr_text
+         )
+-        user_content: str | list = image_blocks + [{"type": "text", "text": user_text + vision_note}]
++        user_content: str | list = user_text
++        image_blocks_for_analysis: list[dict] | None = None
+     else:
+-        user_content = user_text
++        user_text = build_user_prompt(content, transcript, preferences_hint, existing_folders)
++        if image_blocks:
++            n = len(image_blocks)
++            vision_note = (
++                f"\n\nI am also providing {n} image(s)/video frame(s) from this content. "
++                f"Please read and incorporate any visible text, on-screen captions, titles, "
++                f"labels, or other relevant visual information in your analysis."
++            )
++            user_content = image_blocks + [{"type": "text", "text": user_text + vision_note}]
++        else:
++            user_content = user_text
++        image_blocks_for_analysis = image_blocks
++
++    def _finalize(result: dict) -> dict:
++        # When OCR ran on a separate model, the analysis model never saw the images, so
++        # ensure the slide text is preserved on the result regardless of what it returned.
++        if ocr_text and not (result.get("image_text") or "").strip():
++            result["image_text"] = ocr_text
++        return result
+ 
+     raw = _call(client, SYSTEM_PROMPT, user_content, config)
+     try:
+-        return json.loads(raw)
++        return _finalize(json.loads(raw))
+     except json.JSONDecodeError:
+         logger.warning("Claude returned invalid JSON; retrying")
+         retry_text = user_text + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown fences."
+-        if image_blocks:
+-            retry_content: str | list = image_blocks + [{"type": "text", "text": retry_text}]
++        if image_blocks_for_analysis:
++            retry_content: str | list = image_blocks_for_analysis + [{"type": "text", "text": retry_text}]
+         else:
+             retry_content = retry_text
+         raw2 = _call(client, SYSTEM_PROMPT, retry_content, config)
+         try:
+-            return json.loads(raw2)
++            return _finalize(json.loads(raw2))
+         except json.JSONDecodeError:
+             logger.error("Claude returned invalid JSON on retry; using fallback")
+-            return {
++            return _finalize({
+                 "folder_path": "SAVES/_UNSORTED",
+                 "filename": _safe_filename(content.title or content.url),
+                 "title": content.title or content.url,
+@@ -94,7 +143,26 @@ def _analyze_sync(
+                 "key_takeaways": [],
+                 "note_type": "web_generic",
+                 "topics": [],
+-            }
++            })
++
++
++def _ocr_images_sync(
++    client: anthropic.Anthropic,
++    content: ExtractedContent,
++    image_blocks: list[dict],
++    config: dict,
++    ocr_model: str,
++) -> str:
++    """Stage 1 of two-stage analysis: a cheap vision model transcribes the image slides
++    to plain text. Returns the transcribed text (may be empty if nothing to read)."""
++    ocr_prompt = build_image_ocr_prompt(content)
++    user_content = image_blocks + [{"type": "text", "text": ocr_prompt}]
++    # Generous token budget — long carousels can produce a lot of text.
++    ocr_cfg = {
++        **config,
++        "ai": {**config.get("ai", {}), "model": ocr_model, "max_tokens": 8192},
++    }
++    return _call(client, IMAGE_OCR_SYSTEM_PROMPT, user_content, ocr_cfg).strip()
+ 
+ 
+ async def nl_edit(current_state: dict, instruction: str, config: dict) -> dict:
+@@ -112,7 +180,12 @@ def _nl_edit_sync(current_state: dict, instruction: str, config: dict) -> dict:
+         return {"action": "cancel"}
+ 
+ 
+-async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
++async def fact_check(
++    content: ExtractedContent,
++    ai_result: dict,
++    config: dict,
++    image_blocks: list[dict] | None = None,
++) -> dict | None:
+     fc_cfg = config.get("fact_checking", {})
+     if not fc_cfg.get("enabled", True):
+         return None
+@@ -121,17 +194,151 @@ async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -
+     if not any(t in checkable for t in topics):
+         return None
+     import asyncio
+-    return await asyncio.to_thread(_fact_check_sync, content, ai_result, config)
++    return await asyncio.to_thread(
++        _fact_check_sync, content, ai_result, config, image_blocks
++    )
+ 
+ 
+-def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
++def _fact_check_sync(
++    content: ExtractedContent,
++    ai_result: dict,
++    config: dict,
++    image_blocks: list[dict] | None = None,
++) -> dict | None:
+     client = _make_client()
+-    user_prompt = build_fact_check_prompt(content, ai_result)
+-    raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config)
++    fc_cfg = config.get("fact_checking", {})
++    jurisdiction = fc_cfg.get("jurisdiction")
++
++    # Allow a cheaper model for fact-checking (e.g. claude-haiku-4-5) while
++    # the main analysis uses a more capable model. Override ai.model locally.
++    fc_model = fc_cfg.get("model")
++    if fc_model:
++        config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
++    user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
++
++    # Attach the post's media so Claude can judge authenticity / out-of-context use.
++    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
++
++    # Web search is only valuable for topics that need active claim verification.
++    # For political/travel/cross-cutting the content itself + comments are sufficient.
++    use_web_search = fc_cfg.get("web_search", True)
++    if use_web_search:
++        web_search_topics = set(fc_cfg.get("web_search_topics", []))
++        if web_search_topics:
++            post_topics = set(ai_result.get("topics", []))
++            if not post_topics.intersection(web_search_topics):
++                use_web_search = False
++                logger.debug("Web search skipped — no topics in web_search_topics")
++
++    if use_web_search:
++        try:
++            raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
++        except Exception as e:
++            logger.warning("Web-search fact-check failed (%s); falling back to no-search", e)
++            raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, _with_images(user_prompt, imgs), config)
++            harvested = []
++    else:
++        raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, _with_images(user_prompt, imgs), config)
++        harvested = []
++
++    parsed = _loads_lenient(raw)
++    if parsed is None:
++        logger.warning("Fact-check returned non-JSON; could not parse result")
++        return None
++
++    # Ensure any URLs Claude actually visited are present in the sources list, even if
++    # it forgot to copy them into the JSON.
++    if harvested:
++        existing = set(parsed.get("sources") or [])
++        merged = list(parsed.get("sources") or [])
++        for url in harvested:
++            if url not in existing:
++                merged.append(url)
++                existing.add(url)
++        parsed["sources"] = merged
++    return parsed
++
++
++def _with_images(user_prompt: str, image_blocks: list[dict] | None):
++    """Build a message-content value: images first, then the text prompt (or bare text)."""
++    if image_blocks:
++        return image_blocks + [{"type": "text", "text": user_prompt}]
++    return user_prompt
++
++
++def _factcheck_with_web_search(
++    client: anthropic.Anthropic,
++    user_prompt: str,
++    config: dict,
++    image_blocks: list[dict] | None = None,
++) -> tuple[str, list[str]]:
++    """Run the fact-check with the server-side web_search tool enabled.
++
++    Claude issues searches on Anthropic's infrastructure; we run the request, follow any
++    `pause_turn` continuations, accumulate the text it produces, and harvest the URLs of
++    every search result it saw so they can back-fill the sources list. Any image_blocks are
++    attached so Claude can assess media authenticity. Returns (concatenated_text,
++    harvested_urls)."""
++    ai_cfg = config.get("ai", {})
++    fc_cfg = config.get("fact_checking", {})
++    model = ai_cfg.get("model", "claude-opus-4-8")
++    max_tokens = fc_cfg.get("max_tokens", ai_cfg.get("max_tokens", 6000))
++    max_searches = fc_cfg.get("max_searches", 5)
++
++    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
++    messages: list = [{"role": "user", "content": _with_images(user_prompt, image_blocks)}]
++    text_parts: list[str] = []
++    harvested: list[str] = []
++    seen_urls: set[str] = set()
++
++    # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
++    for _ in range(6):
++        msg = client.messages.create(
++            model=model,
++            max_tokens=max_tokens,
++            system=FACT_CHECK_SYSTEM_PROMPT,
++            tools=tools,
++            messages=messages,
++        )
++        for block in msg.content:
++            btype = getattr(block, "type", None)
++            if btype == "text":
++                text_parts.append(block.text)
++            elif btype == "web_search_tool_result":
++                for result in (getattr(block, "content", None) or []):
++                    url = getattr(result, "url", None)
++                    if url and url not in seen_urls:
++                        seen_urls.add(url)
++                        harvested.append(url)
++        if msg.stop_reason == "pause_turn":
++            messages.append({"role": "assistant", "content": msg.content})
++            continue
++        break
++
++    return "\n".join(text_parts), harvested
++
++
++def _loads_lenient(raw: str):
++    """Parse JSON that may be wrapped in ```json fences or surrounded by prose."""
++    if not raw:
++        return None
+     try:
+         return json.loads(raw)
+     except json.JSONDecodeError:
+-        return None
++        pass
++    text = raw.strip()
++    # Strip markdown code fences
++    if text.startswith("```"):
++        text = text.split("```", 2)[1] if text.count("```") >= 2 else text
++        text = text.lstrip("json").lstrip()
++    # Fall back to the first {...} object in the text
++    start, end = text.find("{"), text.rfind("}")
++    if start != -1 and end != -1 and end > start:
++        try:
++            return json.loads(text[start:end + 1])
++        except json.JSONDecodeError:
++            return None
++    return None
+ 
+ 
+ def _safe_filename(text: str) -> str:
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 322d0fd..9b62082 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -16,9 +16,20 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
+   "summary": "2-3 sentence overview of why this content is useful.",
+   "key_takeaways": ["bullet 1", "bullet 2"],
+   "note_type": "<see Note Types below>",
+-  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...]
++  "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...],
++  "image_text": null
+ }
+ 
++`image_text` is only relevant when vision images are provided. If any image is a slide or
++graphic where the PRIMARY content is TEXT rendered as an image (carousel info-graphics,
++text screenshots, quote cards, recipe steps written as slides — anything where you would
++read the image rather than look at it), extract the COMPLETE text from those slides and
++return it as a single string. Separate each slide's text with a blank line. Transcribe
++VERBATIM and IN FULL — do not summarize, paraphrase, abbreviate, or stop early, even when
++the combined text runs to many hundreds of words across a long carousel. Reproduce study
++titles, author lists, dates, dosages, and numbers exactly as written. Return null
++when the images are photographs, artwork, or contain only short decorative captions.
++
+ ## Note Types (pick EXACTLY one — determines the note template)
+ - youtube_video    → YouTube video (any length)
+ - reddit_text      → Reddit text/link post with no media
+@@ -53,10 +64,80 @@ Generate 10-20 tags covering ALL applicable dimensions:
+ - Temporal: summer, holiday, make-ahead, seasonal when relevant
+ Use hyphens for multi-word tags. Prefer specific over generic.
+ 
++## Recipe / Cooking Tagging (REQUIRED when content is food, cooking, or a recipe)
++When the content is a recipe or cooking video, ALWAYS add tags across these dimensions:
++- Key ingredients: the main components (e.g. chicken, shrimp, cheddar, biscuits, garlic,
++  heavy-cream, puff-pastry). Tag the notable ones, not every pantry staple.
++- Cooking method: baking, frying, deep-frying, air-frying, grilling, smoking, roasting,
++  sauteing, braising, boiling, slow-cooking, sous-vide, no-cook — whichever apply.
++- Dish type: pot-pie, sandwich, pasta, soup, stew, casserole, salad, dessert, cake,
++  cookies, breakfast, dip, sauce, side-dish — be specific.
++- Cuisine when identifiable: italian, mexican, cajun, southern, thai, indian, etc.
++- Meal/occasion: breakfast, lunch, dinner, snack, holiday, weeknight, meal-prep.
++Pull ingredient and method tags from the YouTube description / transcript when present.
++
+ ## Folder Organization
+-Place notes under SAVES/ with CATEGORY/SUBCATEGORY.
+-Examples: SAVES/COOKING/BBQ, SAVES/FINANCE/CREDIT-CARDS, SAVES/TRAVEL/CARIBBEAN,
+-SAVES/TECH/AI, SAVES/HEALTH/FITNESS, SAVES/FOOD/RECIPES, SAVES/PARENTING/NEWBORN
++Place notes under SAVES/ using as many levels as needed — typically 4, going deeper
++when warranted. STACK each meaningful dimension as its own level instead of collapsing
++them. Order broad → specific: CATEGORY / SUBCATEGORY / METHOD-or-STYLE / SUBJECT.
++Always go at least 3 levels deep; prefer 4+ whenever both a method/style AND a specific
++subject are identifiable.
++
++For BBQ/cooking, that means stacking the cooking method AND the specific cut/dish:
++  SAVES/COOKING/BBQ/SMOKING/CHUCK-ROAST   ← a smoked chuck roast (method + cut)
++  SAVES/COOKING/BBQ/SMOKING/BRISKET       ← a smoked brisket
++  SAVES/COOKING/BBQ/GRILLING/RIBEYE       ← a grilled ribeye
++  SAVES/COOKING/RECIPES/POT-PIE           ← a pot pie (no distinct method level)
++  SAVES/COOKING/RECIPES/PASTA/CARBONARA
++Do NOT flatten to SAVES/COOKING/BBQ/CHUCK-ROAST when the cook is clearly a smoke —
++the method (SMOKING) is its own level above the cut (CHUCK-ROAST).
++
++Other domains, same broad→specific stacking principle:
++  SAVES/FINANCE/INVESTING/REAL-ESTATE/RENTALS
++  SAVES/FINANCE/CREDIT-CARDS/TRAVEL-REWARDS/AMEX
++  SAVES/TRAVEL/CARIBBEAN/DOMINICAN-REPUBLIC/PUNTA-CANA
++  SAVES/TRAVEL/EUROPE/ITALY/ROME
++  SAVES/TECH/AI/TOOLS/CODING
++  SAVES/HEALTH/FITNESS/RUNNING/TRAINING-PLANS
++  SAVES/PARENTING/NEWBORN/SLEEP
++Each level must add new information — never repeat the level above it.
++
++## Content-Type Overrides (always take precedence over generic category rules)
++
++**TV shows, movies, streaming content, and anything to watch:**
++- Use `SAVES/TO WATCH/{Title}` — exactly one subfolder named after the show or movie.
++- This applies to: TV series, films, documentaries, mini-series, anime, streaming specials,
++  viewing guides, watch-order guides, recommendations, "what to watch" lists.
++- The subfolder groups multiple saves for the same title together, so use the show/movie
++  name as that single level. Do NOT add deeper levels (no season/episode/genre folders).
++- If a post covers multiple titles (e.g. a "best shows this month" list), use a descriptive
++  collection name for the single subfolder instead of one title.
++- Examples:
++    SAVES/TO WATCH/Spider-Noir            ← Spider-Noir viewing guide
++    SAVES/TO WATCH/Spider-Noir            ← a second Spider-Noir save groups here
++    SAVES/TO WATCH/Dune Part Two          ← a movie post
++    SAVES/TO WATCH/Netflix Picks          ← a multi-title "what to watch" list
++
++## Geographic Overrides (always take precedence over generic category rules)
++
++**Charlotte, NC metro area** (Charlotte, Concord, Gastonia, Huntersville, Mooresville,
++Kannapolis, Mint Hill, Matthews, Monroe, Belmont, Davidson — all within ~40 miles of
++Charlotte, NC):
++- Use `THINGS TO DO` as the root, NOT `TRAVEL`.
++- Sub-categories: Restaurants, Bars, Events, Entertainment, Outdoors, Shopping, Nightlife.
++- Example paths:
++    SAVES/THINGS TO DO/Restaurants/Mexican
++    SAVES/THINGS TO DO/Bars
++    SAVES/THINGS TO DO/Events
++    SAVES/THINGS TO DO/Entertainment
++- A news article about a restaurant opening in South End → `SAVES/THINGS TO DO/Restaurants`
++- A post about a concert at PNC Music Pavilion → `SAVES/THINGS TO DO/Events`
++- Only use `TRAVEL` for Charlotte content if the user is explicitly traveling TO Charlotte
++  from another city (i.e. the content is visitor/tourist-centric tips for someone flying in).
++
++If the user message includes an "Existing vault folders" list, treat it as the source of
++truth for what already exists: reuse an exact existing path when the content fits, and
++only invent a new path (still following the stacking conventions above) when none fits.
+ 
+ ## key_takeaways
+ 3-6 concise actionable bullets. Omit if the content has no clear takeaways (e.g. reddit_video
+@@ -71,10 +152,38 @@ These four topics trigger secondary analysis passes.
+ """
+ 
+ 
++IMAGE_OCR_SYSTEM_PROMPT = """\
++You transcribe text from images. The images are slides from a social-media carousel or
++post (info-graphics, quote cards, study screenshots, recipe steps, charts with labels).
++
++Read EVERY image in order and output the COMPLETE text rendered in them. Transcribe
++VERBATIM and IN FULL — do not summarize, paraphrase, abbreviate, or stop early, even when
++the combined text runs to many hundreds of words across a long carousel. Reproduce study
++titles, author lists, journals, dates, dosages, statistics, and numbers exactly as
++written. For charts/graphs/tables, also transcribe axis labels, legends, data values, and
++captions, then add a one-line plain description of what the visual shows.
++
++Separate each slide's text with a blank line. Output ONLY the transcribed text — no
++preamble, no commentary, no markdown fences. If an image is purely a photograph, artwork,
++or has only short decorative text, output a short bracketed note like
++"[Slide 3: photograph of a person holding a supplement bottle, no substantive text]".
++"""
++
++
++def build_image_ocr_prompt(content: ExtractedContent) -> str:
++    return (
++        f"These are the image slides from a {content.platform} post"
++        + (f" titled '{content.title}'." if content.title else ".")
++        + " Transcribe all text from every slide in full, as instructed."
++    )
++
++
+ def build_user_prompt(
+     content: ExtractedContent,
+     transcript: str | None,
+     preferences_hint: str | None = None,
++    existing_folders: list[str] | None = None,
++    image_text: str | None = None,
+ ) -> str:
+     parts = [
+         f"Platform: {content.platform}",
+@@ -88,9 +197,22 @@ def build_user_prompt(
+     if preferences_hint:
+         parts.append(f"Preference hint: {preferences_hint}")
+ 
++    if existing_folders:
++        folder_list = "\n".join(f"  {f}" for f in existing_folders)
++        parts.append(
++            "Existing vault folders (these already exist in the vault). STRONGLY prefer "
++            "reusing one of these exact paths when this content reasonably fits it, so "
++            "related saves stay together. Match an existing path even if your instinct "
++            "was slightly different wording (e.g. reuse SAVES/COOKING/BBQ/SMOKING instead "
++            "of inventing SAVES/COOKING/BARBECUE/SMOKED). Only create a NEW path (following "
++            "the conventions) when nothing here is a good fit — do not force a poor match:\n"
++            + folder_list
++        )
++
+     meta_lines = []
++    skip_keys = ("possible_paywall", "embedded_article_url", "youtube_description")
+     for k, v in (content.metadata or {}).items():
+-        if v is not None and k not in ("possible_paywall", "embedded_article_url"):
++        if v is not None and k not in skip_keys:
+             meta_lines.append(f"  {k}: {v}")
+     if meta_lines:
+         parts.append("Metadata:\n" + "\n".join(meta_lines))
+@@ -98,9 +220,25 @@ def build_user_prompt(
+     if content.body_text:
+         parts.append(f"Content:\n{content.body_text[:8000]}")
+ 
++    # An embedded YouTube video's description often contains the full recipe,
++    # ingredient list, instructions, and source links — feed it to Claude.
++    yt_desc = (content.metadata or {}).get("youtube_description")
++    if yt_desc:
++        parts.append(
++            "Embedded YouTube video description (often the full recipe / ingredients / "
++            f"instructions / links):\n{yt_desc[:6000]}"
++        )
++
+     if transcript:
+         parts.append(f"Transcript:\n{transcript[:12000]}")
+ 
++    if image_text:
++        parts.append(
++            "Text transcribed from the post's image slides (OCR — this is often where the "
++            "real content lives; use it for the summary, tags, topics, and note_type, and "
++            f"copy it verbatim into the image_text field of your JSON):\n{image_text[:12000]}"
++        )
++
+     if content.top_comments:
+         comment_lines = [
+             f"  {c['author']} ({c['score']} pts): {c['text'][:500]}"
+@@ -139,50 +277,203 @@ def build_nl_edit_prompt(current_state: dict, instruction: str) -> str:
+ 
+ 
+ FACT_CHECK_SYSTEM_PROMPT = """\
+-You are a fact-checker. Analyze the content for verifiable factual claims.
+-
+-Rules:
+-- Opinion, analysis, commentary → do NOT dispute. Set opinion_only: true.
+-- Finance: only flag concrete stated facts (prices, earnings, announcements described as
+-  already happened). Never dispute forecasts, predictions, or analysis.
+-- Health: flag specific claims that contradict mainstream medical consensus.
+-- Political: flag claims that are demonstrably false (not just contested).
+-
+-Respond with ONLY valid JSON:
++You are a rigorous fact-checker with web search access. Verify the checkable factual
++claims in the content, surface credibility/context problems, and cite real sources
++(with URLs) for your findings.
++
++## Use web search
++You have a web_search tool. USE IT to verify claims rather than relying on memory —
++especially for studies, statistics, figures over time, legal/tax facts, registrations,
++and current events. Prefer primary/authoritative sources: peer-reviewed studies,
++government data (CDC, NIH, FDA, BLS, SEC, FINRA, IRS, NC Dept. of Revenue, court records),
++official company filings, and reputable outlets. Capture the exact URL of each source.
++
++## Be exhaustive — verify the actual claims FIRST
++Systematically enumerate EVERY substantive factual claim in the content — in BOTH the
++caption/body AND the image-slide text — and assess each one. Do not cherry-pick one or
++two. The substantive claims (a named study, a statistic, a dosage, a specific health or
++finance assertion) are the PRIORITY. Meta-observations about marketing — DM funnels,
++"comment X to get the link", newsletter pitches, undisclosed affiliate ties — are
++secondary `flags`; they are NEVER a substitute for checking the claims themselves. A
++fact-check that only flags the funnel while ignoring the post's health/finance claims has
++FAILED its core job. Spend your searches on the claims, not the marketing.
++- MEDIA AUTHENTICITY: If images/frames are attached or described, judge whether the media
++  looks AI-generated, a deepfake, stock/generic footage, or a real photo/video that is
++  MISCAPTIONED (different event, place, or date than claimed). Commenters often call this
++  out — weigh that.
++- RECYCLED-AS-NEW: Old content (a years-old clip or a long-resolved story) presented as if
++  current. Search to date the underlying event.
++- SOURCE CREDIBILITY: Is the source a SATIRE site (e.g. The Onion, Babylon Bee), a parody
++  account, or a known repeat misinformation spreader? Flag it so it isn't taken literally.
++- UNDISCLOSED CONFLICT OF INTEREST: Is a recommendation actually a paid promotion,
++  affiliate deal, or sponsorship presented as neutral advice? Comments often reveal this.
++
++## What to check, by topic
++
++HEALTH
++- Verify health/medical claims against scientific evidence (studies, clinical guidelines,
++  consensus statements). Cite the study/authority with a URL.
++- DOSAGE & SAFETY: Flag dangerous dosing, drug/supplement interactions, and "natural =
++  safe" claims — these are higher-stakes than efficacy.
++- CITATION INTEGRITY: When a post references "a study", "research shows", "scientists
++  found", etc. WITHOUT citing the study, do NOT simply note "no citation provided" —
++  that is not useful. Instead, actively SEARCH for the study being referenced: match
++  the topic, the claimed finding, any numbers, and approximate timeframe. Then report
++  one of three outcomes and flag accordingly:
++    (a) FOUND + MATCHES: the study exists and the claim is accurate — report as verified.
++    (b) FOUND + DIFFERS: the study exists but the claim overstates, misrepresents, or
++        contradicts it — flag as disputed with the real finding + URL.
++    (c) NOT FOUND: no plausible matching study exists for the claim — flag as warning
++        with "No identifiable study found for this claim; may be fabricated, confused,
++        or misremembered."
++  When a study IS explicitly named or cited (title, authors, journal, or year given),
++  look it up and compare the post's CHARACTERIZATION against the study's actual findings
++  and limitations — not just whether it exists. Absolute language ("completely stops",
++  "cures", "proven", "eliminates") attached to a single small or crossover trial is almost
++  always an overstatement: flag the gap between what the post claims and what the study
++  supports (effect size, statistical significance, sample size, population, dosage). If the
++  post's OWN text admits a result was "not statistically significant" or a "trend", say so
++  plainly. Also flag misattributed, cherry-picked, or fabricated citations.
++- REGULATORY STATUS: Note if a treatment/product is not FDA-approved, is banned, or is
++  under recall. Check credentials when someone claims medical authority ("Dr.").
++- Flag correlation-presented-as-causation overreach.
++
++FINANCE
++- Do NOT check predictions, forecasts, opinions, or analysis ("I think X will rise") —
++  not falsifiable. Mark opinion_only when that's all the content is.
++- Do NOT check a current/spot price or "today it's at $X" — a moment-in-time quote isn't
++  meaningfully verifiable after the fact. Skip it.
++- DO verify quantitative claims over a time span: "revenue grew 40% over 3 years",
++  "up 200% since 2020", "earnings rose 5 straight quarters", historical highs/lows,
++  dividend histories — checkable against filings and data.
++- DO verify legal/regulatory/factual business claims (rulings, fines, M&A that "happened",
++  reported figures). Cite SEC filings, court records, or reputable reporting.
++- TAX VALIDITY (check carefully): Any claimed deduction, write-off, credit, loophole, or
++  tax strategy must be verified for legal validity against current IRS rules AND the
++  user's state/local jurisdiction (provided in the user message). Flag advice that is
++  outdated, misstated, only valid for a different filing situation, or outright wrong.
++  Cite IRS publications / state revenue authority pages. North Carolina has its own flat
++  state income tax and rules — do not assume a federal rule maps to NC, and vice versa.
++- SCAM/FRAUD RED FLAGS: Flag "guaranteed returns", pump-and-dump, MLM, or crypto rug-pull
++  signals. Check whether a named "advisor"/"fund" is a registered RIA/broker (SEC IAPD,
++  FINRA BrokerCheck).
++- MISLEADING FRAMING: Flag cherry-picked timeframes and survivorship bias even when a
++  number is technically true (e.g. "up since 2020" hiding a 2022 crash).
++
++POLITICAL
++- Verify demonstrably true/false factual claims (votes, dates, quotes, statistics,
++  legislative facts). Do not adjudicate opinion or genuinely contested issues.
++- QUOTE MISATTRIBUTION: Verify the person actually said what's attributed to them.
++- SATIRE-AS-REAL: Flag satire/parody presented as a real event (see cross-cutting).
++- SELECTIVE EDITING / MISSING CONTEXT: Flag clips edited to misrepresent.
++- STATISTIC SOURCING: Verify crime/economic figures attributed to a person/administration.
++- Cite the record (official source, primary document, reputable outlet) with a URL.
++
++## Output
++Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
+ {
+   "opinion_only": true|false,
+-  "verified_claims": ["short description of verified claim"],
+-  "disputed_claims": [{"claim": "...", "reality": "...", "source": "..."}],
+-  "sources": ["description or URL"]
++  "verified_claims": [{"claim": "...", "source": "https://..."}],
++  "disputed_claims": [{"claim": "...", "reality": "...", "source": "https://..."}],
++  "flags": [{"type": "media_authenticity|recycled_content|source_credibility|conflict_of_interest|dosage_safety|citation_integrity|regulatory_status|tax_validity|scam_fraud|misleading_framing|selective_editing|quote_misattribution", "detail": "...", "severity": "info|warning", "source": "https://..."}],
++  "sources": ["https://..."]
+ }
++Use "warning" severity for anything misleading, dangerous, fake, or false; "info" for
++neutral notes (e.g. "source is a satire site" when the post is clearly labeled). Always
++include a URL in "source" when you have one, and list every URL you relied on in
++"sources". If no source was findable for an item, set its "source" to a brief reason.
++Return empty arrays for sections with nothing to report.
+ """
+ 
+ 
+-def build_fact_check_prompt(content: ExtractedContent, ai_result: dict) -> str:
++def build_fact_check_prompt(
++    content: ExtractedContent, ai_result: dict, jurisdiction: str | None = None
++) -> str:
+     topics = ", ".join(ai_result.get("topics", []))
+-    return (
+-        f"Topics: {topics}\nPlatform: {content.platform}\nTitle: {content.title}\n\n"
+-        f"Content:\n{content.body_text[:6000]}\n\n"
+-        f"Identify and evaluate factual claims per the rules in the system prompt."
++    parts = [
++        f"Topics: {topics}",
++        f"Platform: {content.platform}",
++        f"Title: {content.title}",
++    ]
++    if jurisdiction:
++        parts.append(
++            f"User's tax/legal jurisdiction (use for any tax or legal claim): {jurisdiction}"
++        )
++    parts.append(f"Caption / body text (often just a hook):\n{content.body_text[:6000]}")
++
++    # The substantive claims (study names, statistics, dosages) frequently live in the
++    # carousel image slides, not the caption. This OCR text is the richest claim source.
++    image_text = (ai_result.get("image_text") or "").strip()
++    if image_text:
++        parts.append(
++            "TEXT FROM THE POST'S IMAGE SLIDES — this is usually where the REAL claims live "
++            "(study titles, statistics, dosages, assertions), while the caption above is "
++            "just bait. Treat this as PRIMARY claim content and verify it thoroughly:\n"
++            + image_text[:8000]
++        )
++
++    if content.top_comments:
++        comment_lines = "\n".join(
++            f"  {c.get('author', '?')}: {c.get('text', '')[:300]}"
++            for c in content.top_comments[:12]
++        )
++        parts.append(
++            "Comments (people often call out fakes, undisclosed sponsorships, recycled "
++            f"content, and false claims here):\n{comment_lines}"
++        )
++
++    parts.append(
++        "Verify EVERY substantive claim in BOTH the caption and the image-slide text above "
++        "— do not stop after one or two, and do not let the marketing framing (DM funnels, "
++        "'comment X', newsletter pitches) crowd out the actual claims. If a study is named "
++        "(title/authors/journal/year), look it up and compare the post's characterization "
++        "to what the study ACTUALLY found. If images or video frames are attached, do TWO "
++        "things with them: (a) assess for authenticity and context (AI-generated, stock "
++        "footage, miscaptioning, deepfakes), AND (b) READ and cross-check any graphs, "
++        "charts, tables, or data visualizations against the stated claims — report what the "
++        "visualization actually shows and whether it supports the post's assertions. "
++        "Search the web as needed and cite source URLs."
+     )
++    return "\n\n".join(parts)
+ 
+ 
+ TRAVEL_LOCATION_SYSTEM_PROMPT = """\
+-You analyze travel/location content to detect disputed location claims.
+-
+-Look through the caption, body text, and comments for signs that the stated location
+-is incorrect — e.g. a commenter saying "this is actually Bali not Maldives", or
+-"that's clearly filmed in Thailand", or metadata inconsistencies.
++You analyze travel/location content to detect disputed location claims, primarily by
++reading the COMMENTS for people calling out that the post is not of the place it claims.
++
++Focus on the comments. People frequently correct location-baiting posts with things like:
++  "this isn't the Maldives, it's Bali"
++  "that's actually Lake Louise in Canada, not Switzerland"
++  "filmed in Thailand, stop saying it's the Philippines"
++  "this photo is AI / stock footage, not where they say"
++Treat a credible, specific commenter correction (especially if multiple commenters agree,
++or one names the real place) as a dispute. Also use the caption/body and any metadata
++inconsistencies as supporting signal. Quote the strongest comment as evidence.
++
++Also note these related problems when the comments or content reveal them (put them in
++`advisories`, they do NOT require setting location_disputed):
++- AUTHENTICITY: media looks AI-generated, a stock photo, or otherwise not a real shot of
++  the place ("this is AI", "that's a stock image").
++- MISREPRESENTATION: the angle/crop misleads — crowds cropped out, "Instagram vs reality",
++  a one-time condition shown as typical.
++- ACCESS/STATUS: the spot is closed/defunct, now requires a permit/fee, is seasonal, or is
++  actually private property posing as a "secret free spot".
++- SAFETY/ENTRY: a relevant travel/safety advisory, or a visa/entry-requirement claim that
++  is wrong or outdated.
+ 
+ Respond with ONLY valid JSON:
+ {
+   "location_disputed": true|false,
+   "stated_location": "location as stated in content",
+-  "claimed_actual_location": "location others claim it is (if disputed)",
+-  "evidence": "brief quote or description of the dispute",
+-  "confidence": "low|medium|high"
++  "claimed_actual_location": "location commenters say it really is (if disputed)",
++  "evidence": "the strongest quote from the comments (verbatim) or a brief description",
++  "confidence": "low|medium|high",
++  "advisories": [{"type": "authenticity|misrepresentation|access_status|safety_entry", "detail": "..."}]
+ }
+-If there is no location dispute, return {"location_disputed": false}.
++Set confidence high when multiple commenters agree or one names the real location
++specifically; medium for a single credible callout; low for vague suspicion.
++Return an empty `advisories` array when there is nothing to note. If there is no location
++dispute AND no advisories, return {"location_disputed": false, "advisories": []}.
+ """
+ 
+ 
+-- 
+2.43.0
+

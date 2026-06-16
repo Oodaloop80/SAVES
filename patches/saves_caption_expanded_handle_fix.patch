@@ -1,0 +1,71 @@
+From d144e7caaddf1d6121f64c45fe6d354905ca92ea Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 13 Jun 2026 23:55:46 +0000
+Subject: [PATCH] fix: expand Caption callout by default; reject numeric IG
+ handles in author_url
+
+- Caption callout: remove trailing '-' from all four social renderers
+  (instagram_reel, instagram_post, tiktok_video, facebook_video) so the
+  caption is expanded when the note opens, not collapsed.
+
+- _url_safe_handle(): add h.isdigit() guard so yt-dlp's numeric Instagram
+  user IDs (e.g. "1771810911") are rejected and don't produce broken
+  author_url values like https://instagram.com/1771810911.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/notes/formatter.py | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index e1b2679..30727f5 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -29,7 +29,7 @@ def _url_safe_handle(value) -> str:
+     if not value:
+         return ""
+     h = str(value).strip().lstrip("@")
+-    if not h or h.lower() == "unknown" or any(c.isspace() for c in h):
++    if not h or h.lower() == "unknown" or any(c.isspace() for c in h) or h.isdigit():
+         return ""
+     return h
+ 
+@@ -496,7 +496,7 @@ def _render_instagram_reel(ai_result, content, media_paths, transcript, collapse
+     ]
+     if caption:
+         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
++        parts.append(f"> [!quote] Caption\n{quoted}\n")
+     parts += [
+         _summary_section(ai_result),
+         "---",
+@@ -514,7 +514,7 @@ def _render_instagram_post(ai_result, content, media_paths, transcript, collapse
+     ]
+     if caption:
+         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
++        parts.append(f"> [!quote] Caption\n{quoted}\n")
+     parts += [
+         _summary_section(ai_result),
+         "---",
+@@ -533,7 +533,7 @@ def _render_tiktok_video(ai_result, content, media_paths, transcript, collapse):
+     ]
+     if caption:
+         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
++        parts.append(f"> [!quote] Caption\n{quoted}\n")
+     parts += [
+         _summary_section(ai_result),
+         "---",
+@@ -552,7 +552,7 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
+     ]
+     if caption:
+         quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+-        parts.append(f"> [!quote]- Caption\n{quoted}\n")
++        parts.append(f"> [!quote] Caption\n{quoted}\n")
+     parts += [
+         _summary_section(ai_result),
+         "---",
+-- 
+2.43.0
+

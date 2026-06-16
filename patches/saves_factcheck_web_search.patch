@@ -1,0 +1,339 @@
+From e5ffe1816494896a7fcba75e340651fc6c00753d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 19:48:44 +0000
+Subject: [PATCH] Fact-check with web search and cited source URLs
+
+Claude's server-side web_search tool (web_search_20260209, GA on opus-4-8) is now
+enabled for health/political/finance fact-checks, so verification is grounded in real
+sources instead of training memory. _factcheck_with_web_search() runs the request,
+follows pause_turn continuations through the server-side tool loop, and harvests the
+URLs of every search result so they back-fill the sources list even if Claude omits
+them from its JSON. Falls back to a no-search call if web search errors.
+
+Refined fact-check rules per topic:
+- Finance: skip predictions/opinions and moment-in-time spot prices; verify quantitative
+  claims over a time span (multi-year growth, historical highs, dividend history) and
+  legal/regulatory/reported-figure claims against filings and records.
+- Health: verify against studies/guidelines and cite them.
+- Political: verify demonstrably true/false factual claims against the record.
+All topics: cite source URLs.
+
+Travel location check now explicitly focuses on scanning comments for callouts that the
+post isn't of the place it claims ("this is actually Bali not Maldives"), with confidence
+keyed to how many commenters agree.
+
+Note rendering: source URLs render as clickable [domain](url) links; claim entries accept
+either a plain string or {claim, source} object. Sources/web_search controls added to
+config.yaml (web_search, max_searches, max_tokens under fact_checking).
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ config.yaml             |  3 ++
+ src/ai/claude_client.py | 79 ++++++++++++++++++++++++++++++++++++++---
+ src/ai/prompts.py       | 79 ++++++++++++++++++++++++++++++-----------
+ src/notes/formatter.py  | 43 +++++++++++++++++-----
+ 4 files changed, 169 insertions(+), 35 deletions(-)
+
+diff --git a/config.yaml b/config.yaml
+index 9309efd..9bf2b53 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -102,6 +102,9 @@ fact_checking:
+     - health
+     - political
+     - finance
++  web_search: true        # Let Claude search the web for verifiable evidence + source URLs
++  max_searches: 5         # Cap web searches per fact-check (cost control)
++  max_tokens: 6000        # Fact-check responses include reasoning + cited sources
+ 
+ travel_verification:
+   enabled: true
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index 7facc50..9c6ffd5 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -146,12 +146,81 @@ async def fact_check(content: ExtractedContent, ai_result: dict, config: dict) -
+ def _fact_check_sync(content: ExtractedContent, ai_result: dict, config: dict) -> dict | None:
+     client = _make_client()
+     user_prompt = build_fact_check_prompt(content, ai_result)
+-    raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config)
++    fc_cfg = config.get("fact_checking", {})
++
++    if fc_cfg.get("web_search", True):
++        try:
++            raw, harvested = _factcheck_with_web_search(client, user_prompt, config)
++        except Exception as e:
++            logger.warning("Web-search fact-check failed (%s); falling back to no-search", e)
++            raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
++    else:
++        raw, harvested = _call(client, FACT_CHECK_SYSTEM_PROMPT, user_prompt, config), []
++
+     parsed = _loads_lenient(raw)
+-    if parsed is not None:
+-        return parsed
+-    logger.warning("Fact-check returned non-JSON; could not parse result")
+-    return None
++    if parsed is None:
++        logger.warning("Fact-check returned non-JSON; could not parse result")
++        return None
++
++    # Ensure any URLs Claude actually visited are present in the sources list, even if
++    # it forgot to copy them into the JSON.
++    if harvested:
++        existing = set(parsed.get("sources") or [])
++        merged = list(parsed.get("sources") or [])
++        for url in harvested:
++            if url not in existing:
++                merged.append(url)
++                existing.add(url)
++        parsed["sources"] = merged
++    return parsed
++
++
++def _factcheck_with_web_search(
++    client: anthropic.Anthropic, user_prompt: str, config: dict
++) -> tuple[str, list[str]]:
++    """Run the fact-check with the server-side web_search tool enabled.
++
++    Claude issues searches on Anthropic's infrastructure; we run the request, follow any
++    `pause_turn` continuations, accumulate the text it produces, and harvest the URLs of
++    every search result it saw so they can back-fill the sources list. Returns
++    (concatenated_text, harvested_urls)."""
++    ai_cfg = config.get("ai", {})
++    fc_cfg = config.get("fact_checking", {})
++    model = ai_cfg.get("model", "claude-opus-4-8")
++    max_tokens = fc_cfg.get("max_tokens", ai_cfg.get("max_tokens", 6000))
++    max_searches = fc_cfg.get("max_searches", 5)
++
++    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
++    messages: list = [{"role": "user", "content": user_prompt}]
++    text_parts: list[str] = []
++    harvested: list[str] = []
++    seen_urls: set[str] = set()
++
++    # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
++    for _ in range(6):
++        msg = client.messages.create(
++            model=model,
++            max_tokens=max_tokens,
++            system=FACT_CHECK_SYSTEM_PROMPT,
++            tools=tools,
++            messages=messages,
++        )
++        for block in msg.content:
++            btype = getattr(block, "type", None)
++            if btype == "text":
++                text_parts.append(block.text)
++            elif btype == "web_search_tool_result":
++                for result in (getattr(block, "content", None) or []):
++                    url = getattr(result, "url", None)
++                    if url and url not in seen_urls:
++                        seen_urls.add(url)
++                        harvested.append(url)
++        if msg.stop_reason == "pause_turn":
++            messages.append({"role": "assistant", "content": msg.content})
++            continue
++        break
++
++    return "\n".join(text_parts), harvested
+ 
+ 
+ def _loads_lenient(raw: str):
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 137b015..6a18b1b 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -240,22 +240,50 @@ def build_nl_edit_prompt(current_state: dict, instruction: str) -> str:
+ 
+ 
+ FACT_CHECK_SYSTEM_PROMPT = """\
+-You are a fact-checker. Analyze the content for verifiable factual claims.
+-
+-Rules:
+-- Opinion, analysis, commentary → do NOT dispute. Set opinion_only: true.
+-- Finance: only flag concrete stated facts (prices, earnings, announcements described as
+-  already happened). Never dispute forecasts, predictions, or analysis.
+-- Health: flag specific claims that contradict mainstream medical consensus.
+-- Political: flag claims that are demonstrably false (not just contested).
+-
+-Respond with ONLY valid JSON:
++You are a rigorous fact-checker with web search access. Verify the checkable factual
++claims in the content and cite real sources (with URLs) for your findings.
++
++## Use web search
++You have a web_search tool. USE IT to verify claims rather than relying on memory —
++especially for studies, statistics, figures over time, legal facts, and current events.
++Prefer primary/authoritative sources: peer-reviewed studies, government data (CDC, NIH,
++BLS, SEC, court records), official company filings, and reputable outlets. Capture the
++exact URL of each source you rely on.
++
++## What to check, by topic
++
++HEALTH
++- Verify health/medical claims against scientific evidence. Search for studies, clinical
++  guidelines, or consensus statements that support or contradict the claim.
++- Cite the study or authority with a URL whenever possible.
++
++FINANCE
++- Do NOT check predictions, forecasts, opinions, or analysis ("I think X will rise") —
++  these are not falsifiable. Mark the content opinion_only when that is all it contains.
++- Do NOT check a current/spot stock price or "today it's at $X" — a moment-in-time quote
++  is not meaningfully verifiable after the fact. Skip it.
++- DO verify quantitative claims over a time span: "revenue grew 40% over 3 years",
++  "the stock is up 200% since 2020", "earnings rose for 5 straight quarters", historical
++  highs/lows, dividend histories, etc. These are checkable against filings and data.
++- DO verify legal, regulatory, or factual business claims (rulings, fines, M&A that
++  "happened", reported figures). Cite SEC filings, court records, or reputable reporting.
++
++POLITICAL
++- Verify demonstrably true/false factual claims (votes, dates, quotes, statistics,
++  legislative facts). Do not adjudicate matters of opinion or genuinely contested issues.
++- Cite the record (official source, primary document, or reputable outlet) with a URL.
++
++## Output
++Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
+ {
+   "opinion_only": true|false,
+-  "verified_claims": ["short description of verified claim"],
+-  "disputed_claims": [{"claim": "...", "reality": "...", "source": "..."}],
+-  "sources": ["description or URL"]
++  "verified_claims": [{"claim": "...", "source": "https://..."}],
++  "disputed_claims": [{"claim": "...", "reality": "...", "source": "https://..."}],
++  "sources": ["https://..."]
+ }
++Always include a URL in "source" when you have one. Put every source URL you relied on in
++the "sources" array. If you genuinely could not find a source for a claim, still report
++the claim and set its "source" to a brief description of why.
+ """
+ 
+ 
+@@ -264,25 +292,34 @@ def build_fact_check_prompt(content: ExtractedContent, ai_result: dict) -> str:
+     return (
+         f"Topics: {topics}\nPlatform: {content.platform}\nTitle: {content.title}\n\n"
+         f"Content:\n{content.body_text[:6000]}\n\n"
+-        f"Identify and evaluate factual claims per the rules in the system prompt."
++        f"Search the web as needed, then identify and evaluate the checkable factual "
++        f"claims per the rules in the system prompt. Cite source URLs."
+     )
+ 
+ 
+ TRAVEL_LOCATION_SYSTEM_PROMPT = """\
+-You analyze travel/location content to detect disputed location claims.
+-
+-Look through the caption, body text, and comments for signs that the stated location
+-is incorrect — e.g. a commenter saying "this is actually Bali not Maldives", or
+-"that's clearly filmed in Thailand", or metadata inconsistencies.
++You analyze travel/location content to detect disputed location claims, primarily by
++reading the COMMENTS for people calling out that the post is not of the place it claims.
++
++Focus on the comments. People frequently correct location-baiting posts with things like:
++  "this isn't the Maldives, it's Bali"
++  "that's actually Lake Louise in Canada, not Switzerland"
++  "filmed in Thailand, stop saying it's the Philippines"
++  "this photo is AI / stock footage, not where they say"
++Treat a credible, specific commenter correction (especially if multiple commenters agree,
++or one names the real place) as a dispute. Also use the caption/body and any metadata
++inconsistencies as supporting signal. Quote the strongest comment as evidence.
+ 
+ Respond with ONLY valid JSON:
+ {
+   "location_disputed": true|false,
+   "stated_location": "location as stated in content",
+-  "claimed_actual_location": "location others claim it is (if disputed)",
+-  "evidence": "brief quote or description of the dispute",
++  "claimed_actual_location": "location commenters say it really is (if disputed)",
++  "evidence": "the strongest quote from the comments (verbatim) or a brief description",
+   "confidence": "low|medium|high"
+ }
++Set confidence high when multiple commenters agree or one names the real location
++specifically; medium for a single credible callout; low for vague suspicion.
+ If there is no location dispute, return {"location_disputed": false}.
+ """
+ 
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index 13d065e..e908eab 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -420,16 +420,36 @@ def _fact_check_callout(fc: dict) -> str:
+         lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
+         lines.append(f">   **Reality:** {claim.get('reality', '')}")
+         if claim.get("source"):
+-            lines.append(f">   **Source:** {claim['source']}")
++            lines.append(f">   **Source:** {_source_link(claim['source'])}")
+     return "\n".join(lines) + "\n"
+ 
+ 
++def _source_link(value) -> str:
++    """Render a source as a clickable markdown link when it's a URL, else plain text."""
++    s = str(value).strip()
++    if s.startswith("http://") or s.startswith("https://"):
++        try:
++            domain = urllib.parse.urlparse(s).netloc or s
++        except Exception:
++            domain = s
++        return f"[{domain}]({s})"
++    return s
++
++
++def _claim_with_source(claim) -> tuple[str, str]:
++    """Normalize a claim entry (string or {claim, source}) → (text, rendered_source)."""
++    if isinstance(claim, dict):
++        return claim.get("claim", ""), (_source_link(claim["source"]) if claim.get("source") else "")
++    return str(claim), ""
++
++
+ def _fact_check_note_section(fc: dict) -> str:
+     """Inline fact-check section written into every note that triggered a check.
+ 
+     Always renders *something* when a fact-check ran (fc is a non-empty dict), so the
+     note gives positive confirmation the check happened — even when no claims were
+-    disputed. Otherwise a checked-but-clean post looks identical to one never checked."""
++    disputed. Otherwise a checked-but-clean post looks identical to one never checked.
++    Source URLs are rendered as clickable links."""
+     if not fc:
+         return ""
+     disputed = fc.get("disputed_claims") or []
+@@ -444,7 +464,8 @@ def _fact_check_note_section(fc: dict) -> str:
+         if verified:
+             lines.append("> **Claims noted:**")
+             for v in verified:
+-                lines.append(f"> - {v}")
++                text, src = _claim_with_source(v)
++                lines.append(f"> - {text}" + (f" — {src}" if src else ""))
+         return "\n".join(lines) + "\n"
+ 
+     # Disputed claims get a warning callout; everything else an info callout.
+@@ -453,20 +474,24 @@ def _fact_check_note_section(fc: dict) -> str:
+     if disputed:
+         lines.append("> **Disputed Claims:**")
+         for claim in disputed:
+-            lines.append(f"> - **Claimed:** {claim.get('claim', '')}")
+-            lines.append(f">   **Reality:** {claim.get('reality', '')}")
+-            if claim.get("source"):
+-                lines.append(f">   **Source:** {claim['source']}")
++            text, src = _claim_with_source(claim)
++            reality = claim.get("reality", "") if isinstance(claim, dict) else ""
++            lines.append(f"> - **Claimed:** {text}")
++            if reality:
++                lines.append(f">   **Reality:** {reality}")
++            if src:
++                lines.append(f">   **Source:** {src}")
+     if verified:
+         lines.append("> **Verified Claims:**")
+         for v in verified:
+-            lines.append(f"> - {v}")
++            text, src = _claim_with_source(v)
++            lines.append(f"> - {text}" + (f" — {src}" if src else ""))
+     if not disputed and not verified:
+         lines.append("> No specific factual claims were flagged as disputed.")
+     if sources:
+         lines.append("> **Sources:**")
+         for s in sources:
+-            lines.append(f"> - {s}")
++            lines.append(f"> - {_source_link(s)}")
+     return "\n".join(lines) + "\n"
+ 
+ 
+-- 
+2.43.0
+

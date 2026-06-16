@@ -235,8 +235,9 @@ def build_user_prompt(
     if image_text:
         parts.append(
             "Text transcribed from the post's image slides (OCR — this is often where the "
-            "real content lives; use it for the summary, tags, topics, and note_type, and "
-            f"copy it verbatim into the image_text field of your JSON):\n{image_text[:12000]}"
+            "real content lives). Use it to inform the summary, tags, topics, and note_type. "
+            "Do NOT echo it back: set \"image_text\" to null in your JSON — this transcript is "
+            f"already stored separately and will be attached automatically:\n{image_text[:12000]}"
         )
 
     if content.top_comments:

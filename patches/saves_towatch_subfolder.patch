@@ -1,0 +1,46 @@
+From 0a7cd8797c7b377fea5b1347319f0630e4384da4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 14 Jun 2026 00:41:32 +0000
+Subject: [PATCH] change: TO WATCH gets one subfolder per show/movie title
+
+Per request, watchable content groups under SAVES/TO WATCH/{Title} so multiple
+saves for the same show/movie land together. Still no deeper levels (no
+season/genre); multi-title lists use a descriptive collection name.
+
+https://claude.ai/code/session_01G3CevLYb6JPcyW363NyKGN
+---
+ src/ai/prompts.py | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 191a2d7..1da3338 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -94,15 +94,18 @@ Each level must add new information — never repeat the level above it.
+ ## Content-Type Overrides (always take precedence over generic category rules)
+ 
+ **TV shows, movies, streaming content, and anything to watch:**
+-- Use `SAVES/TO WATCH` — flat, no subfolders.
++- Use `SAVES/TO WATCH/{Title}` — exactly one subfolder named after the show or movie.
+ - This applies to: TV series, films, documentaries, mini-series, anime, streaming specials,
+   viewing guides, watch-order guides, recommendations, "what to watch" lists.
+-- Do NOT create subfolders like TO WATCH/MARVEL or TO WATCH/TV-SHOWS — everything goes
+-  directly in `SAVES/TO WATCH`.
++- The subfolder groups multiple saves for the same title together, so use the show/movie
++  name as that single level. Do NOT add deeper levels (no season/episode/genre folders).
++- If a post covers multiple titles (e.g. a "best shows this month" list), use a descriptive
++  collection name for the single subfolder instead of one title.
+ - Examples:
+-    SAVES/TO WATCH   ← Spider-Noir viewing guide
+-    SAVES/TO WATCH   ← Movie recommendation post
+-    SAVES/TO WATCH   ← "Best shows on Netflix this month" list
++    SAVES/TO WATCH/Spider-Noir            ← Spider-Noir viewing guide
++    SAVES/TO WATCH/Spider-Noir            ← a second Spider-Noir save groups here
++    SAVES/TO WATCH/Dune Part Two          ← a movie post
++    SAVES/TO WATCH/Netflix Picks          ← a multi-title "what to watch" list
+ 
+ ## Geographic Overrides (always take precedence over generic category rules)
+ 
+-- 
+2.43.0
+

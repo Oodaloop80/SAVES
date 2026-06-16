@@ -1,0 +1,80 @@
+From a5e3371d83ec9f1bfe4bff19e8f5f8977eed1be8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 15 Jun 2026 21:57:38 +0000
+Subject: [PATCH] Use Haiku for fact-checking; raise max_images to 10; read
+ graphs in fact-check
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- config.yaml: vision.max_images 5→10 so full carousels (7+ slides) are OCR'd
+  and all images reach the fact-checker
+- config.yaml: fact_checking.model: claude-haiku-4-5 — 80% cheaper than Opus
+  for fact-checks while main analysis stays on Opus; falls back to ai.model
+- claude_client.py: _fact_check_sync now overrides ai.model with
+  fact_checking.model when set, propagating to both _call() and
+  _factcheck_with_web_search()
+- prompts.py: closing instruction in build_fact_check_prompt now explicitly
+  asks Claude to (a) assess media authenticity AND (b) read/cross-check graphs,
+  charts, and data visualizations against the stated claims
+
+diff --git a/config.yaml b/config.yaml
+index 68531a8..8d2f6c2 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -38,7 +38,7 @@ transcription:
+ 
+ vision:
+   enabled: true              # Send images/video frames to Claude for visual text extraction
+-  max_images: 5              # Max images per analysis request (cost control)
++  max_images: 10             # Max images per analysis request (cost control)
+   max_video_frames: 4        # Frames to extract per video (evenly spaced, 10-80% of duration)
+   skip_platforms: []         # Platforms to exclude (youtube always skipped automatically)
+ 
+@@ -98,6 +98,7 @@ preferences:
+ 
+ fact_checking:
+   enabled: true
++  model: "claude-haiku-4-5"  # Cheaper model for fact-checking; falls back to ai.model if omitted
+   topics:
+     - health
+     - political
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index c0a9067..56e6fe5 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -159,6 +159,12 @@ def _fact_check_sync(
+     client = _make_client()
+     fc_cfg = config.get("fact_checking", {})
+     jurisdiction = fc_cfg.get("jurisdiction")
++
++    # Allow a cheaper model for fact-checking (e.g. claude-haiku-4-5) while
++    # the main analysis uses a more capable model. Override ai.model locally.
++    fc_model = fc_cfg.get("model")
++    if fc_model:
++        config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
+     user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
+ 
+     # Attach the post's media so Claude can judge authenticity / out-of-context use.
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 9d92644..d4194a4 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -393,8 +393,12 @@ def build_fact_check_prompt(
+         "— do not stop after one or two, and do not let the marketing framing (DM funnels, "
+         "'comment X', newsletter pitches) crowd out the actual claims. If a study is named "
+         "(title/authors/journal/year), look it up and compare the post's characterization "
+-        "to what the study ACTUALLY found. Any attached images are the post's media — also "
+-        "assess them for authenticity/context. Search the web as needed and cite source URLs."
++        "to what the study ACTUALLY found. If images or video frames are attached, do TWO "
++        "things with them: (a) assess for authenticity and context (AI-generated, stock "
++        "footage, miscaptioning, deepfakes), AND (b) READ and cross-check any graphs, "
++        "charts, tables, or data visualizations against the stated claims — report what the "
++        "visualization actually shows and whether it supports the post's assertions. "
++        "Search the web as needed and cite source URLs."
+     )
+     return "\n\n".join(parts)
+ 
+-- 
+2.43.0
+
