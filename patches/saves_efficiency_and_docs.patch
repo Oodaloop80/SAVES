@@ -1,0 +1,207 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 5926c30..123ca04 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -131,8 +131,18 @@ transcription:
+   remote_url: "http://192.168.1.90:5000/transcribe"
+   model: "large-v3-turbo"
+ 
++vision:
++  enabled: true
++  max_images: 20                          # Instagram carousel max
++  ocr_model: "claude-haiku-4-5"          # Stage 1: Haiku reads images → text; Stage 2: Opus analyzes text-only
++  max_video_frames: 4                     # Unset ocr_model to revert to single combined call
++
+ ai:
+-  model: "claude-opus-4-8"               # Main analysis model
++  model: "claude-opus-4-8"               # Main analysis model (text-only when ocr_model set)
++
++fact_checking:
++  model: "claude-sonnet-4-6"             # Cheaper model for fact-checking
++  include_images: false                  # OCR already captured image content; raw pixels would double-bill
+ 
+ discord:
+   auto_approve_on_timeout: false
+@@ -228,31 +238,31 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
+ 
+ ---
+ 
+-## Current State (as of this session)
+-
+-**Code complete and compiles.** All 40 Python files pass `python -m compileall`.
+-
+-**Bugs fixed in this session (not yet end-to-end tested):**
+-1. `facebook.py` — missing `import asyncio` (crash on every Facebook URL)
+-2. `downloader.py` — `abs_to_obsidian_embed` was wrapping in `![[]]`; formatter also
+-   wraps → double-wrapped embeds. Fixed: function now returns bare relative path.
+-3. `processor.py` + `bot.py` — `body_text` and `captions` were missing from
+-   `content_summary`, so approved notes had empty "Original Content" / "Caption" sections.
+-4. `bot.py` + `main.py` — `state.mark_done()` was never called; state stayed `"pending"`
+-   forever. Fixed: `state` passed into `SAVESBot`, called in `_finalize()`.
+-5. `main.py` — `logging.basicConfig` opened log files before `os.makedirs("logs")`
+-   ran → crash if `logs/` didn't exist. Fixed: makedirs moved to module level.
+-6. `cookie_checker.py` — dead `reddit_cookies` entry (Reddit no longer uses cookies).
+-
+-**Not yet done / not yet tested:**
+-- `with_retry()` in `src/utils/retry.py` is defined but never called anywhere.
+-  Should be wired into extractor/download calls for resilience.
+-- `config.yaml` has several unused keys: `processing.concurrent_downloads`,
++## Current State
++
++**Actively in use.** `process_one.py` has been run end-to-end against real Instagram,
++YouTube, and Reddit URLs. Notes write to the Obsidian vault. Discord approval flow
++is the next stage to test in full.
++
++**Model routing (as configured):**
++- Stage 1 (vision): `claude-haiku-4-5` reads all image slides → OCR text
++- Stage 2 (analysis): `claude-opus-4-8` analyzes OCR text (no images → cheaper)
++- Stage 3 (fact-check, health/finance posts): `claude-sonnet-4-6` with web search
++
++**Cost profile (typical 10-slide health Instagram post with fact-check):**
++~$0.30–0.50 with current model routing and prompt caching.
++Main driver is the Sonnet web-search loop (up to 5 searches). Adjust
++`fact_checking.max_searches` in config to trade coverage for cost.
++
++**Known gaps (not yet wired in):**
++- `with_retry()` in `src/utils/retry.py` is defined but never called. Should wrap
++  extractor and downloader calls for resilience against transient failures.
++- Several `config.yaml` keys are defined but unused: `processing.concurrent_downloads`,
+   `processing.retry_attempts`, `media.download_video`, `media.download_images`,
+   `notes.tags_min/max`, `transcription.skip_if_captions_available`.
+-  These are either dead config or features not yet wired in — leave them for now.
+-- No end-to-end test has been run yet. `scripts/process_one.py <url>` is the first
+-  real test — run this before anything else.
++
++**Prompt caching is active** on system prompts (`_call`) and the fact-check web-search
++loop's first user message. Back-to-back posts and JSON retries benefit automatically.
+ 
+ ---
+ 
+@@ -269,8 +279,9 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
+ 4. Start Whisper server on workstation:
+    `python scripts\whisper_server.py --model large-v3-turbo`
+ 5. Run smoke test: `python scripts\test_connection.py`
+-6. Run first real test: `python scripts\process_one.py "https://reddit.com/r/..."` 
+-   — prints the formatted note, no Discord, no file writes
++6. Run first real test: `python scripts\process_one.py "https://reddit.com/r/..."`
++   — runs the full pipeline and **writes the note to vault_root**. Add `--dry-run` to
++   print only without writing.
+ 7. Run full pipeline: `python src\main.py`, paste a URL into `00 - FILE.md`,
+    watch Discord, approve, verify note appears in vault
+ 8. Deploy to NAS: `docker-compose up --build` from `docker/`
+@@ -279,24 +290,31 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
+ 
+ ## Git Workflow (Important)
+ 
+-This repo is developed via Claude Code on the web (ultraplan session). Claude cannot
+-push to GitHub directly — the session has no credentials. After Claude commits changes:
++This repo is developed via Claude Code on the web. Claude cannot push to GitHub
++directly — the container has no credentials. After each session:
+ 
+-**You run from `C:\DEV\Apps\SAVES\SAVES_app`:**
++**Preferred: patch delivery**
+ ```bash
+-git am patches\<patch-file>    # patches are delivered to the patches\ folder
++git apply patches\<patch-file>   # USE git apply, NOT git am
++git add -A
++git commit -m "..."
+ git push origin main
+ ```
+ 
+-**Patch filename convention:** use underscores only, NO dashes. The file-delivery
+-download strips dashes from filenames, so `saves-foo-patch.patch` arrives as
+-`savesfoopatch.patch` and breaks the `git am` command. Name patches like
+-`saves_foo_patch.patch`.
++`git apply` is used (not `git am`) because `git am` additionally requires the committer
++email to match the patch header, which causes failures in this environment.
+ 
+-Or if Claude has already committed to a connected session:
+-```bash
+-git pull origin main
+-git push origin main
+-```
++**Patch filename convention:** underscores only, NO dashes. File delivery strips
++dashes — `saves-foo.patch` arrives as `savesfoo.patch` and breaks the command.
++Always name patches like `saves_foo_fix.patch`.
++
++**If the patch fails** (context mismatch from local edits): use the full-file deliveries
++instead — Claude delivers the complete file built from a fresh GitHub clone, safe to
++overwrite directly.
++
++**Session startup rule for Claude:** Always `git clone` the repo fresh at the start
++of a session (`git clone --depth 1 https://github.com/Oodaloop80/SAVES.git`).
++Never edit files from a pre-existing container directory — it may be a stale copy
++from a prior session that diverges from GitHub.
+ 
+ Pushing is always your manual step. Claude commits; you push.
+diff --git a/config.yaml b/config.yaml
+index c923dca..ef0954f 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -110,7 +110,7 @@ fact_checking:
+     - finance
+   max_searches: 5             # Cap web searches per fact-check (cost control)
+   max_tokens: 6000            # Fact-check responses include reasoning + cited sources
+-  include_images: true        # Send the post's media to the fact-check for authenticity/deepfake checks
++  include_images: false       # OCR (vision.ocr_model) already extracts image text; sending raw pixels would double-bill the same content
+   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
+ 
+ travel_verification:
+diff --git a/scripts/process_one.py b/scripts/process_one.py
+index ed69e73..e38c3ae 100644
+--- a/scripts/process_one.py
++++ b/scripts/process_one.py
+@@ -110,7 +110,7 @@ async def run(url: str, dry_run: bool = False):
+     fc_result = None
+     if ai_result.get("topics"):
+         print(f"  Topics: {ai_result['topics']} — checking for fact-check triggers")
+-        fc_result = await fact_check(content, ai_result, config)
++        fc_result = await fact_check(content, ai_result, config, image_blocks=image_blocks or None)
+         if fc_result:
+             if fc_result.get("opinion_only"):
+                 print("  Fact-check: opinion/analysis content — no claims to verify")
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index d57c03c..3be4e8e 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -34,7 +34,11 @@ def _call(
+     params = {
+         "model": ai_cfg.get("model", "claude-opus-4-8"),
+         "max_tokens": ai_cfg.get("max_tokens", 4096),
+-        "system": system,
++        # System prompts here (analysis/OCR/fact-check/NL-edit) are large static strings.
++        # Marking them as an ephemeral cache breakpoint lets the JSON-retry call and
++        # back-to-back posts read the prefix from cache (~90% cheaper) instead of re-billing
++        # it. Below the model's cache minimum the marker is simply ignored — never an error.
++        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+         "messages": [{"role": "user", "content": user}],
+     }
+     temperature = ai_cfg.get("temperature")
+@@ -216,8 +220,12 @@ def _fact_check_sync(
+         config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
+     user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
+ 
+-    # Attach the post's media so Claude can judge authenticity / out-of-context use.
+-    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
++    # When OCR already extracted image content as text (image_text populated), sending the
++    # raw pixels to the fact-checker doubles the same visual content — once as OCR text in the
++    # prompt, once as image tokens. Skip images if OCR already ran; still allow them when
++    # include_images is explicitly enabled AND no OCR text is available (e.g. photo-only posts).
++    ocr_extracted = bool((ai_result.get("image_text") or "").strip())
++    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True) and not ocr_extracted) else None
+ 
+     # Web search is only valuable for topics that need active claim verification.
+     # For political/travel/cross-cutting the content itself + comments are sufficient.
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 76b92e6..3551f5a 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -410,7 +410,7 @@ def build_fact_check_prompt(
+             "TEXT FROM THE POST'S IMAGE SLIDES — this is usually where the REAL claims live "
+             "(study titles, statistics, dosages, assertions), while the caption above is "
+             "just bait. Treat this as PRIMARY claim content and verify it thoroughly:\n"
+-            + image_text[:8000]
++            + image_text[:12000]
+         )
+ 
+     if content.top_comments:
