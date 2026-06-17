@@ -1,0 +1,71 @@
+diff --git a/config.yaml b/config.yaml
+index c923dca..ef0954f 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -110,7 +110,7 @@ fact_checking:
+     - finance
+   max_searches: 5             # Cap web searches per fact-check (cost control)
+   max_tokens: 6000            # Fact-check responses include reasoning + cited sources
+-  include_images: true        # Send the post's media to the fact-check for authenticity/deepfake checks
++  include_images: false       # OCR (vision.ocr_model) already extracts image text; sending raw pixels would double-bill the same content
+   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
+ 
+ travel_verification:
+diff --git a/scripts/process_one.py b/scripts/process_one.py
+index ed69e73..e38c3ae 100644
+--- a/scripts/process_one.py
++++ b/scripts/process_one.py
+@@ -110,7 +110,7 @@ async def run(url: str, dry_run: bool = False):
+     fc_result = None
+     if ai_result.get("topics"):
+         print(f"  Topics: {ai_result['topics']} — checking for fact-check triggers")
+-        fc_result = await fact_check(content, ai_result, config)
++        fc_result = await fact_check(content, ai_result, config, image_blocks=image_blocks or None)
+         if fc_result:
+             if fc_result.get("opinion_only"):
+                 print("  Fact-check: opinion/analysis content — no claims to verify")
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index d57c03c..3be4e8e 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -34,7 +34,11 @@ def _call(
+     params = {
+         "model": ai_cfg.get("model", "claude-opus-4-8"),
+         "max_tokens": ai_cfg.get("max_tokens", 4096),
+-        "system": system,
++        # System prompts here (analysis/OCR/fact-check/NL-edit) are large static strings.
++        # Marking them as an ephemeral cache breakpoint lets the JSON-retry call and
++        # back-to-back posts read the prefix from cache (~90% cheaper) instead of re-billing
++        # it. Below the model's cache minimum the marker is simply ignored — never an error.
++        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+         "messages": [{"role": "user", "content": user}],
+     }
+     temperature = ai_cfg.get("temperature")
+@@ -216,8 +220,12 @@ def _fact_check_sync(
+         config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
+     user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
+ 
+-    # Attach the post's media so Claude can judge authenticity / out-of-context use.
+-    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
++    # When OCR already extracted image content as text (image_text populated), sending the
++    # raw pixels to the fact-checker doubles the same visual content — once as OCR text in the
++    # prompt, once as image tokens. Skip images if OCR already ran; still allow them when
++    # include_images is explicitly enabled AND no OCR text is available (e.g. photo-only posts).
++    ocr_extracted = bool((ai_result.get("image_text") or "").strip())
++    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True) and not ocr_extracted) else None
+ 
+     # Web search is only valuable for topics that need active claim verification.
+     # For political/travel/cross-cutting the content itself + comments are sufficient.
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 76b92e6..3551f5a 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -410,7 +410,7 @@ def build_fact_check_prompt(
+             "TEXT FROM THE POST'S IMAGE SLIDES — this is usually where the REAL claims live "
+             "(study titles, statistics, dosages, assertions), while the caption above is "
+             "just bait. Treat this as PRIMARY claim content and verify it thoroughly:\n"
+-            + image_text[:8000]
++            + image_text[:12000]
+         )
+ 
+     if content.top_comments:

@@ -110,7 +110,7 @@ fact_checking:
     - finance
   max_searches: 5             # Cap web searches per fact-check (cost control)
   max_tokens: 6000            # Fact-check responses include reasoning + cited sources
-  include_images: true        # Send the post's media to the fact-check for authenticity/deepfake checks
+  include_images: false       # OCR (vision.ocr_model) already extracts image text; sending raw pixels would double-bill the same content
   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
 
 travel_verification:

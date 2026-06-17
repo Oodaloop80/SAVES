@@ -34,7 +34,11 @@ def _call(
     params = {
         "model": ai_cfg.get("model", "claude-opus-4-8"),
         "max_tokens": ai_cfg.get("max_tokens", 4096),
-        "system": system,
+        # System prompts here (analysis/OCR/fact-check/NL-edit) are large static strings.
+        # Marking them as an ephemeral cache breakpoint lets the JSON-retry call and
+        # back-to-back posts read the prefix from cache (~90% cheaper) instead of re-billing
+        # it. Below the model's cache minimum the marker is simply ignored — never an error.
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": user}],
     }
     temperature = ai_cfg.get("temperature")
@@ -216,8 +220,12 @@ def _fact_check_sync(
         config = {**config, "ai": {**config.get("ai", {}), "model": fc_model}}
     user_prompt = build_fact_check_prompt(content, ai_result, jurisdiction)
 
-    # Attach the post's media so Claude can judge authenticity / out-of-context use.
-    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True)) else None
+    # When OCR already extracted image content as text (image_text populated), sending the
+    # raw pixels to the fact-checker doubles the same visual content — once as OCR text in the
+    # prompt, once as image tokens. Skip images if OCR already ran; still allow them when
+    # include_images is explicitly enabled AND no OCR text is available (e.g. photo-only posts).
+    ocr_extracted = bool((ai_result.get("image_text") or "").strip())
+    imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True) and not ocr_extracted) else None
 
     # Web search is only valuable for topics that need active claim verification.
     # For political/travel/cross-cutting the content itself + comments are sufficient.

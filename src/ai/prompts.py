@@ -410,7 +410,7 @@ def build_fact_check_prompt(
             "TEXT FROM THE POST'S IMAGE SLIDES — this is usually where the REAL claims live "
             "(study titles, statistics, dosages, assertions), while the caption above is "
             "just bait. Treat this as PRIMARY claim content and verify it thoroughly:\n"
-            + image_text[:8000]
+            + image_text[:12000]
         )
 
     if content.top_comments:

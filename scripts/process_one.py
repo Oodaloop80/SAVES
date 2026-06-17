@@ -110,7 +110,7 @@ async def run(url: str, dry_run: bool = False):
     fc_result = None
     if ai_result.get("topics"):
         print(f"  Topics: {ai_result['topics']} — checking for fact-check triggers")
-        fc_result = await fact_check(content, ai_result, config)
+        fc_result = await fact_check(content, ai_result, config, image_blocks=image_blocks or None)
         if fc_result:
             if fc_result.get("opinion_only"):
                 print("  Fact-check: opinion/analysis content — no claims to verify")
