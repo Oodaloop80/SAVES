@@ -306,15 +306,34 @@ email to match the patch header, which causes failures in this environment.
 
 **Patch filename convention:** underscores only, NO dashes. File delivery strips
 dashes — `saves-foo.patch` arrives as `savesfoo.patch` and breaks the command.
-Always name patches like `saves_foo_fix.patch`.
+Name patches `saves_<topic>__base_<shortsha>.patch`, where `<shortsha>` is the commit
+the patch was built against (see Anti-Stale Protocol below).
 
 **If the patch fails** (context mismatch from local edits): use the full-file deliveries
 instead — Claude delivers the complete file built from a fresh GitHub clone, safe to
 overwrite directly.
 
-**Session startup rule for Claude:** Always `git clone` the repo fresh at the start
-of a session (`git clone --depth 1 https://github.com/Oodaloop80/SAVES.git`).
-Never edit files from a pre-existing container directory — it may be a stale copy
-from a prior session that diverges from GitHub.
+### Anti-Stale Protocol (MANDATORY for Claude — both failures it prevents happened)
+
+The container's clone goes stale the instant the user pushes from their machine. Two
+patch failures were caused by Claude building patches against a clone from earlier in
+the session instead of the live remote. To prevent recurrence, Claude MUST:
+
+1. **Verify live HEAD before EVERY patch or file delivery.** Run
+   `git ls-remote https://github.com/Oodaloop80/SAVES.git refs/heads/main` to get the
+   authoritative SHA, then `git clone --depth 1` (or fetch) that exact commit and build
+   against it. Never reuse a clone made earlier in the session.
+
+2. **Stamp the base SHA in the patch filename:** `saves_<topic>__base_<shortsha>.patch`.
+
+3. **User's pre-apply check:** before `git apply`, confirm `git rev-parse --short HEAD`
+   matches the `base_<shortsha>` in the filename. If they differ, the patch is stale —
+   tell Claude your current HEAD and ask for a rebuild rather than forcing it.
+
+4. **One patch per delivery.** Don't leave multiple patches in `patches\`; running an old
+   one first wastes a cycle (the atomic failure is harmless but confusing).
+
+Note: a SessionStart hook only syncs at session *start*, so it does NOT fix mid-session
+staleness (which is what bit us). The verify-before-deliver rule above is the real fix.
 
 Pushing is always your manual step. Claude commits; you push.
