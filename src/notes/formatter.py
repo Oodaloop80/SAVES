@@ -102,7 +102,9 @@ def format_note(
         if isinstance(ai_result.get("_location_check"), dict) else None
     )
     inserts = []
-    if image_text:
+    # web_recipe renderer places image_text and transcript in the correct position itself
+    recipe_type = note_type in ("web_recipe", "recipe")
+    if image_text and not recipe_type:
         inserts.append(_image_text_section(image_text))
     if fc_inline:
         sec = _fact_check_note_section(fc_inline)
@@ -720,16 +722,55 @@ def _render_facebook_post(ai_result, content, media_paths, transcript, collapse)
     return "\n".join(p for p in parts if p)
 
 
+def _recipe_section(ai_result: dict) -> str:
+    ingredients = ai_result.get("recipe_ingredients") or []
+    instructions = ai_result.get("recipe_instructions") or []
+    servings = (ai_result.get("recipe_servings") or "").strip()
+    time_str = (ai_result.get("recipe_time") or "").strip()
+    notes = (ai_result.get("recipe_notes") or "").strip()
+
+    inner = []
+    if servings or time_str:
+        meta = " · ".join(filter(None, [servings, time_str]))
+        inner.append(f"*{meta}*\n")
+    if ingredients:
+        ing_lines = "\n".join(f"- {i}" for i in ingredients)
+        inner.append(f"### Ingredients\n\n{ing_lines}\n")
+    if instructions:
+        step_lines = "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(instructions))
+        inner.append(f"### Instructions\n\n{step_lines}\n")
+    if notes:
+        inner.append(f"### Notes\n\n{notes}\n")
+
+    if inner:
+        return "## Recipe\n\n" + "\n".join(inner)
+    return "## Recipe\n\n*(Ingredients and instructions — see sources below)*\n"
+
+
 def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
+    # Section order per spec:
+    # Media → Summary → Recipe → Caption → Text from Images → Transcript → Sources & Metadata
     saved_date = date.today().strftime("%Y-%m-%d")
     hero = media_paths[:1]
+
+    caption = content.body_text or ""
+    caption_section = ""
+    if caption:
+        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        caption_section = f"> [!quote] Caption\n{quoted}\n"
+
+    # Render image_text inline at the recipe-specified position (not via generic inject)
+    image_text = (ai_result.get("image_text") or "").strip()
+    image_text_section = _image_text_section(image_text) if image_text else ""
+
     parts = [
         _media_embeds(hero),
         _summary_section(ai_result),
-        "## Ingredients\n*(See original content below)*\n",
-        "## Instructions\n*(See original content below)*\n",
+        _recipe_section(ai_result),
+        caption_section,
+        image_text_section,
+        _transcript_block(transcript, collapse),
         _paywall_warning(content),
-        _body_quote(content),
         "---",
         _metadata_section(content, saved_date),
     ]

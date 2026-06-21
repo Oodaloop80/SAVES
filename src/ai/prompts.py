@@ -17,7 +17,12 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
   "key_takeaways": ["bullet 1", "bullet 2"],
   "note_type": "<see Note Types below>",
   "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...],
-  "image_text": null
+  "image_text": null,
+  "recipe_ingredients": null,
+  "recipe_instructions": null,
+  "recipe_servings": null,
+  "recipe_time": null,
+  "recipe_notes": null
 }
 
 `image_text` is only relevant when vision images are provided. If any image is a slide or
@@ -48,6 +53,22 @@ when the images are photographs, artwork, or contain only short decorative capti
 When in doubt between web types: if there are ingredients → web_recipe; if it's about a
 destination or travel tip → web_travel; if it's a news/opinion/blog → web_article;
 otherwise → web_generic.
+
+## Recipe Extraction (required when note_type is web_recipe)
+When classifying as web_recipe, extract the complete recipe from ALL available sources:
+transcript, caption/body text, image-slide text, and OP comments/replies. Populate:
+- recipe_ingredients: list of ingredient strings (e.g. ["2 cups flour", "1 tsp salt"]).
+  If multiple component groups exist (e.g. sauce, dough, filling), prefix each group's
+  items with a label like "**For the sauce:**" as a standalone list entry.
+- recipe_instructions: list of step strings, plain prose without leading numbers
+  (the formatter adds them). Each step should be a complete sentence or two.
+- recipe_servings: serving-size string (e.g. "Serves 4", "Makes 12 cookies"), or null.
+- recipe_time: combined time string (e.g. "Prep: 15 min · Cook: 45 min · Total: 1 hr"),
+  or null if not mentioned.
+- recipe_notes: any tips, substitutions, storage instructions, or chef notes as a single
+  string (may use newlines for multiple tips), or null.
+Return null for any field you cannot find. Do NOT return empty lists — return null if
+no data is available. For all other note types, return null for every recipe_* field.
 
 ## Tagging Rules
 Generate 10-20 tags covering ALL applicable dimensions:
