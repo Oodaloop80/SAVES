@@ -54,9 +54,11 @@ When in doubt between web types: if there are ingredients → web_recipe; if it'
 destination or travel tip → web_travel; if it's a news/opinion/blog → web_article;
 otherwise → web_generic.
 
-## Recipe Extraction (required when note_type is web_recipe)
-When classifying as web_recipe, extract the complete recipe from ALL available sources:
-transcript, caption/body text, image-slide text, and OP comments/replies. Populate:
+## Recipe Extraction (required whenever content contains a recipe)
+Whenever the content contains a recipe — regardless of note_type (this includes
+instagram_reel, tiktok_video, reddit_video, reddit_text, youtube_video, web_recipe, etc.)
+— extract the complete recipe from ALL available sources: transcript, caption/body text,
+image-slide text, and OP comments/replies. Populate:
 - recipe_ingredients: list of ingredient strings (e.g. ["2 cups flour", "1 tsp salt"]).
   If multiple component groups exist (e.g. sauce, dough, filling), prefix each group's
   items with a label like "**For the sauce:**" as a standalone list entry.
@@ -68,7 +70,8 @@ transcript, caption/body text, image-slide text, and OP comments/replies. Popula
 - recipe_notes: any tips, substitutions, storage instructions, or chef notes as a single
   string (may use newlines for multiple tips), or null.
 Return null for any field you cannot find. Do NOT return empty lists — return null if
-no data is available. For all other note types, return null for every recipe_* field.
+no data is available. If the content contains no recipe at all, return null for every
+recipe_* field.
 
 ## Tagging Rules
 Generate 10-20 tags covering ALL applicable dimensions:

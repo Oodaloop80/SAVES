@@ -102,8 +102,11 @@ def format_note(
         if isinstance(ai_result.get("_location_check"), dict) else None
     )
     inserts = []
-    # web_recipe renderer places image_text and transcript in the correct position itself
+    # web_recipe renderer handles recipe, image_text, and transcript itself.
+    # For all other note types, inject Recipe and image_text sections when present.
     recipe_type = note_type in ("web_recipe", "recipe")
+    if not recipe_type and (ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions")):
+        inserts.append(_recipe_section(ai_result))
     if image_text and not recipe_type:
         inserts.append(_image_text_section(image_text))
     if fc_inline:
