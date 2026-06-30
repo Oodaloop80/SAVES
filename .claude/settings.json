@@ -2,8 +2,13 @@
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "powershell -Command \"Write-Host ''; Write-Host '=== SAVES — current phase ===' -ForegroundColor Cyan; Get-Content docs\\ROADMAP.md | Select-String -Pattern '^## Phase' | Select-Object -First 6; Write-Host ''\""
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -Command \"$content = Get-Content docs\\ROADMAP.md -Raw; $match = $content -match '(?s)\\*\\*Current phase:\\*\\*\\s*Phase\\s+(\\d+)'; if ($match) { $phase = [int]$matches[1]; Write-Host ''; Write-Host \\\"=== SAVES — Phase $phase ===\\\" -ForegroundColor Cyan; $phasePattern = \\\"(?s)## Phase $phase.*?(?=## Phase $($phase+1)|$)\\\"; if ($content -match $phasePattern) { $phaseSection = $matches[0]; $items = $phaseSection -split \\\"`n\\\" | Where-Object { $_ -match '^\\s*-\\s*\\[' }; if ($items) { $items | Select-Object -First 10 | ForEach-Object { Write-Host ($_ -replace '^\\s+', '  ') } } }; Write-Host '' }\""
+          }
+        ]
       }
     ]
   },
