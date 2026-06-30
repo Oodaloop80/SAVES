@@ -47,12 +47,15 @@ SAVES/
 │   │   ├── instagram.py           # yt-dlp + gallery-dl; cookie support
 │   │   ├── tiktok.py              # yt-dlp --write-info-json; cookie support
 │   │   ├── facebook.py            # yt-dlp + cookies; detects embedded articles
-│   │   └── generic.py             # Playwright + readability-lxml; cookie banner auto-click
+│   │   └── generic.py             # Playwright → trafilatura Markdown (headings/links/images);
+│   │                              # lazy-image resolve, <picture>/discard-class fix, feature
+│   │                              # image, markdown normalize; readability-lxml fallback
 │   ├── media/
 │   │   ├── downloader.py          # download_media() → {media_root}/{platform}/{author}/{slug}/
 │   │   │                          # abs_to_obsidian_embed() returns BARE relative path (no ![[]])
+│   │   │                          # localize_article_images() downloads inline article images
 │   │   ├── transcriber.py         # mode=remote: POST to 192.168.1.90:5000; mode=local: faster-whisper
-│   │   └── vision.py              # Images → base64; videos → ffmpeg frames at 10/33/57/80%
+│   │   └── vision.py              # Images → base64; videos → scene-change frames → 2×2 montage
 │   ├── ai/
 │   │   ├── prompts.py             # SYSTEM_PROMPT, build_user_prompt(), fact-check/travel prompts
 │   │   ├── claude_client.py       # analyze_content(), fact_check(), nl_edit()
@@ -135,7 +138,9 @@ vision:
   enabled: true
   max_images: 20                          # Instagram carousel max
   ocr_model: "claude-haiku-4-5"          # Stage 1: Haiku reads images → text; Stage 2: Opus analyzes text-only
-  max_video_frames: 4                     # Unset ocr_model to revert to single combined call
+  max_video_frames: 8                     # Scene-detected frames before montaging
+  frame_scene_threshold: 0.3             # ffmpeg scene-change sensitivity (0–1, lower = more frames)
+  frame_grid: 2                          # Tile grid size: 2 = 2×2 montage (4 frames per image block)
 
 ai:
   model: "claude-opus-4-8"               # Main analysis model (text-only when ocr_model set)
@@ -143,6 +148,7 @@ ai:
 fact_checking:
   model: "claude-sonnet-4-6"             # Cheaper model for fact-checking
   include_images: false                  # OCR already captured image content; raw pixels would double-bill
+  web_search_topics: ["health", "finance"]  # Only web-search for these; recipes skip even if health triggered
 
 discord:
   auto_approve_on_timeout: false
@@ -167,12 +173,17 @@ credentials:
 | `tiktok_video` | TikTok | Video embed, Transcript↕, Caption, Summary, Metadata |
 | `facebook_video` | Facebook | Video embed, Transcript↕, Caption, Summary, Metadata |
 | `facebook_post` | Facebook | Summary, Original Content, Metadata |
-| `web_recipe` | Generic | Summary, Ingredients, Instructions, Hero image, Metadata |
+| `web_recipe` | Generic | Media, Summary, Recipe, Caption, Text from Images, Transcript, Sources & Metadata |
 | `web_travel` | Web | Summary, Key Details, Images, Metadata |
-| `web_article` | Web | Summary, Takeaways, Original Content, Hero image, Metadata |
-| `web_generic` | Web | Summary, Takeaways, Original Content, Metadata |
+| `web_article` | Web | Summary, Takeaways, Article body (Markdown with inline images), Metadata |
+| `web_generic` | Web | Summary, Takeaways, Article body (Markdown), Metadata |
 
 All types include YAML frontmatter: title, source_url, platform, saved_date, author, tags, type: save.
+
+**Recipe injection (all platforms):** When Claude extracts recipe fields (`recipe_ingredients`,
+`recipe_instructions`, etc.) from *any* note type (not just `web_recipe`), a `## Recipe`
+section is automatically injected before the `---` separator. This handles Instagram Reels,
+TikTok videos, or Reddit posts that contain recipes.
 
 ---
 
@@ -214,9 +225,60 @@ auto-captions. Vision is skipped for YouTube (only thumbnail available).
 Cookie expiry is monitored — alerts sent to `#SAVES-alerts` when approaching expiry.
 Export cookies from browser using "Get cookies.txt LOCALLY" extension.
 
+**Generic web (articles):** Uses trafilatura (not readability) to extract structured Markdown
+with headings, links, and inline images. All inline images are downloaded locally via
+`localize_article_images()` and rewritten to `EmbedRelativeTo` blocks so notes survive the
+source being taken down. Playwright scrolls the full page before capture to trigger lazy-
+loaded images; image-wrapper CSS classes are stripped so trafilatura's discard rules don't
+prune them. The og:image feature/hero image is prepended to the article body and also goes
+through the localizer. Vision/OCR is skipped for `generic` platform — body text is already
+extracted as structured Markdown.
+
 **Whisper transcription:** Runs on the Windows workstation (Ryzen 9 7950X, 64GB RAM).
 Start with: `python scripts\whisper_server.py --model large-v3-turbo`
 The NAS Docker container POSTs audio files to it via HTTP.
+
+---
+
+## Video Frame Extraction (vision.py)
+
+Scene-change detection is the primary strategy for video frames:
+- ffmpeg `select='eq(n,0)+gt(scene,{threshold})'` grabs a frame whenever on-screen content
+  changes significantly — each new caption card = scene change, so rolling text is captured
+  line-by-line rather than being missed between fixed-interval samples.
+- Frames are tiled into a `frame_grid × frame_grid` montage (default 2×2). A vertical reel
+  frame already hits Anthropic's image-size cap (~1600 tokens), so a 2×2 tile of 4 frames
+  costs the same tokens but covers 4× as much content.
+- Falls back to evenly-spaced frames when scene detection finds too few distinct frames
+  (e.g. a talking-head with no caption changes).
+
+Config knobs: `vision.max_video_frames`, `vision.frame_scene_threshold`, `vision.frame_grid`.
+
+---
+
+## AI Model Temperature Caching
+
+`claude-opus-4-8` and other newer models reject the `temperature` parameter. The module-level
+`_MODELS_REJECTING_TEMPERATURE` set in `claude_client.py` records which models have 400'd on
+temperature this process run. On first rejection, the model is added to the set and the call
+is transparently retried without temperature. Subsequent calls to the same model skip sending
+temperature entirely (no failed request, no log noise). Logged at DEBUG level only.
+
+---
+
+## Fact-Check Behavior
+
+Web-search fact-checking is controlled by `fact_checking.web_search_topics`. Only topics in
+that list trigger the slow multi-round web-search pass. Topics not listed still run a quick
+local fact-check pass (no web search). The progress of each web-search round is logged at
+INFO so the CLI doesn't look frozen during the 1–3 minute health/finance checks.
+
+**Recipe content:** Even if `cooking` or `health` topics are detected, recipe/food content
+skips the web-search loop entirely (nutritional macro claims like "52g protein" trigger health
+but web-searching them is low-value). Detected via: `note_type` in (`web_recipe`, `recipe`),
+or presence of `recipe_ingredients`/`recipe_instructions` fields, or `cooking` in topics.
+The local (no-search) fact-check still runs so genuine safety issues (undercooked meat, unsafe
+substitutions) can surface.
 
 ---
 
@@ -241,13 +303,16 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
 ## Current State
 
 **Actively in use.** `process_one.py` has been run end-to-end against real Instagram,
-YouTube, and Reddit URLs. Notes write to the Obsidian vault. Discord approval flow
-is the next stage to test in full.
+YouTube, Reddit, and web article URLs. Notes write to the Obsidian vault. Discord approval
+flow is the next stage to test in full.
 
 **Model routing (as configured):**
-- Stage 1 (vision): `claude-haiku-4-5` reads all image slides → OCR text
+- Stage 1 (vision): `claude-haiku-4-5` reads all image slides / video frames → OCR text
 - Stage 2 (analysis): `claude-opus-4-8` analyzes OCR text (no images → cheaper)
 - Stage 3 (fact-check, health/finance posts): `claude-sonnet-4-6` with web search
+
+**Vision skip:** `generic` platform (web articles) and `youtube` are skipped for vision.
+Article text is already extracted as structured Markdown; video frames are not worthwhile.
 
 **Cost profile (typical 10-slide health Instagram post with fact-check):**
 ~$0.30–0.50 with current model routing and prompt caching.
@@ -319,10 +384,19 @@ The container's clone goes stale the instant the user pushes from their machine.
 patch failures were caused by Claude building patches against a clone from earlier in
 the session instead of the live remote. To prevent recurrence, Claude MUST:
 
-1. **Verify live HEAD before EVERY patch or file delivery.** Run
-   `git ls-remote https://github.com/Oodaloop80/SAVES.git refs/heads/main` to get the
-   authoritative SHA, then `git clone --depth 1` (or fetch) that exact commit and build
-   against it. Never reuse a clone made earlier in the session.
+1. **Verify live HEAD before EVERY patch or file delivery.** The git proxy in this
+   environment is unreliable (token expires mid-session). Use the GitHub REST API instead:
+   ```bash
+   curl -sS "https://api.github.com/repos/Oodaloop80/SAVES/commits/main" | python3 -c \
+     "import sys,json; d=json.load(sys.stdin); print(d['sha'][:7])"
+   ```
+   Then download the live tarball:
+   ```bash
+   curl -sL "https://api.github.com/repos/Oodaloop80/SAVES/tarball/main" -o /tmp/saves.tar.gz
+   mkdir -p /tmp/SAVES-fresh && tar -xzf /tmp/saves.tar.gz -C /tmp/SAVES-fresh --strip-components=1
+   ```
+   Build all patches and file deliveries from `/tmp/SAVES-fresh`. Never reuse a clone from
+   earlier in the session.
 
 2. **Stamp the base SHA in the patch filename:** `saves_<topic>__base_<shortsha>.patch`.
 
