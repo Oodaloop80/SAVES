@@ -47,6 +47,51 @@ class GenericExtractor(BaseExtractor):
                     except Exception:
                         continue
 
+            # Most article sites LAZY-LOAD in-body images: the real URL only lands in
+            # <img src> once the image scrolls into view, so a no-scroll capture leaves them
+            # as empty/placeholder src and we collect none of them. Scroll the full page to
+            # trigger the lazy loaders, then promote any data-src/srcset URLs into src so
+            # trafilatura sees real image URLs.
+            try:
+                await page.evaluate(
+                    """async () => {
+                        await new Promise((resolve) => {
+                            let total = 0;
+                            const step = 600;
+                            const timer = setInterval(() => {
+                                window.scrollBy(0, step);
+                                total += step;
+                                if (total >= document.body.scrollHeight - window.innerHeight) {
+                                    clearInterval(timer);
+                                    window.scrollTo(0, 0);
+                                    resolve();
+                                }
+                            }, 120);
+                        });
+                    }"""
+                )
+                await page.wait_for_timeout(1200)
+                await page.evaluate(
+                    """() => {
+                        document.querySelectorAll('img').forEach((img) => {
+                            const cur = img.getAttribute('src') || '';
+                            const lazy = img.getAttribute('data-src')
+                                || img.getAttribute('data-lazy-src')
+                                || img.getAttribute('data-original')
+                                || img.getAttribute('data-img-url');
+                            if (lazy && (cur === '' || cur.startsWith('data:'))) {
+                                img.setAttribute('src', lazy);
+                            } else if (img.getAttribute('srcset') && (cur === '' || cur.startsWith('data:'))) {
+                                const parts = img.getAttribute('srcset')
+                                    .split(',').map((s) => s.trim().split(/\\s+/)[0]).filter(Boolean);
+                                if (parts.length) img.setAttribute('src', parts[parts.length - 1]);
+                            }
+                        });
+                    }"""
+                )
+            except Exception:
+                pass
+
             html = await page.content()
             title = await page.title()
 

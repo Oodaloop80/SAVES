@@ -120,9 +120,11 @@ async def _process_one(
         if audio_candidates and config.get("transcription", {}).get("enabled", True):
             transcript = await transcribe(audio_candidates[0], config)
 
-    # 5. Prepare vision data (images + video keyframes) for non-YouTube platforms
+    # 5. Prepare vision data (images + video keyframes) for non-YouTube platforms.
+    # Skip generic web pages: the article text is already extracted as Markdown, so OCR'ing
+    # the page's images (logos, screenshots) just adds a noisy "Text from Images" section.
     image_blocks: list[dict] = []
-    if media_paths_abs and platform != "youtube":
+    if media_paths_abs and platform not in ("youtube", "generic"):
         try:
             image_blocks = await asyncio.to_thread(
                 prepare_images_for_claude, media_paths_abs, platform, config

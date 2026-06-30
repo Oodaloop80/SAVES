@@ -97,7 +97,8 @@ async def run(url: str, dry_run: bool = False):
         print("  No audio/video media — skipping transcription")
 
     image_blocks = []
-    if media_paths_abs and platform != "youtube":
+    # Skip OCR/vision for generic web articles — body text is already extracted as Markdown.
+    if media_paths_abs and platform not in ("youtube", "generic"):
         image_blocks = prepare_images_for_claude(media_paths_abs, platform, config)
         if image_blocks:
             print(f"  Vision: {len(image_blocks)} image block(s) prepared for Claude")
