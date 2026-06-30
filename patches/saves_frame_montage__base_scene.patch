@@ -1,0 +1,176 @@
+diff --git a/src/ai/prompts.py b/src/ai/prompts.py
+index 5927fe1..b395f08 100644
+--- a/src/ai/prompts.py
++++ b/src/ai/prompts.py
+@@ -197,6 +197,12 @@ Instead, STITCH the frames together into the full on-screen script: output each
+ line exactly once, in the order it first appears, reconstructing the complete running
+ caption as a single continuous block of text. Still transcribe any other non-caption text
+ (labels, titles, ingredient lists) in full.
++
++GRID / CONTACT-SHEET images: A single image may be a MONTAGE of several video frames tiled
++in a grid (e.g. a 2×2 of four frames). Read the cells in reading order — left to right, then
++top to bottom — treating each cell as a LATER moment in the video than the one before it.
++Apply the same stitch-and-dedupe rule across all cells of all images: assemble one clean,
++in-order transcript of the on-screen text with no repeated lines.
+ """
+ 
+ 
+diff --git a/src/media/vision.py b/src/media/vision.py
+index 722e154..72b0fb1 100644
+--- a/src/media/vision.py
++++ b/src/media/vision.py
+@@ -44,6 +44,7 @@ def prepare_images_for_claude(
+     max_images = vcfg.get("max_images", 5)
+     max_frames = vcfg.get("max_video_frames", 8)
+     scene_threshold = vcfg.get("frame_scene_threshold", 0.3)
++    frame_grid = vcfg.get("frame_grid", 2)
+ 
+     blocks = []
+     for path in media_paths:
+@@ -58,7 +59,9 @@ def prepare_images_for_claude(
+                 blocks.append(block)
+         elif ext in VIDEO_EXTS:
+             remaining = max_images - len(blocks)
+-            frames = extract_video_frames(path, min(max_frames, remaining), scene_threshold)
++            frames = extract_video_frames(
++                path, min(max_frames, remaining), scene_threshold, frame_grid
++            )
+             for frame_path in frames:
+                 if len(blocks) >= max_images:
+                     break
+@@ -70,10 +73,13 @@ def prepare_images_for_claude(
+ 
+ 
+ def extract_video_frames(
+-    video_path: str, num_frames: int = 8, scene_threshold: float = 0.3
++    video_path: str,
++    num_blocks: int = 8,
++    scene_threshold: float = 0.3,
++    grid: int = 2,
+ ) -> list[str]:
+     """
+-    Extract up to num_frames keyframes from a video for OCR/vision.
++    Return up to num_blocks image-file paths for a video, for OCR/vision.
+ 
+     Primary strategy is SCENE-CHANGE detection: a frame is grabbed every time the
+     on-screen content changes by more than scene_threshold. For reels with burned-in
+@@ -81,22 +87,81 @@ def extract_video_frames(
+     captures each distinct line ~once instead of sampling blind time intervals (the
+     old behavior, which missed most lines that appeared between samples).
+ 
+-    Falls back to evenly-spaced sampling when scene detection finds too few frames
+-    (e.g. a static talking-head with no rolling text). Returns paths to JPEG files in
+-    a temp directory (persists until OS cleanup).
++    COST-NEUTRAL DENSITY: each returned path may be a grid×grid MONTAGE (contact sheet)
++    tiling that many scene frames into one image. A vertical reel frame already exceeds
++    Anthropic's image-size cap, so it bills the same ~1600 tokens whether it holds one
++    frame or a 2×2 tile of four — so montaging multiplies how much rolling caption text
++    we capture per image WITHOUT increasing token cost. `grid=1` disables montaging.
++
++    Falls back to single evenly-spaced frames when scene detection finds too few frames
++    (e.g. a static talking-head), and to single scene frames if montaging fails — so it
++    can never return less coverage than the pre-montage behavior. Returns paths to JPEG
++    files in a temp directory (persists until OS cleanup).
+     """
+-    if num_frames <= 0:
++    if num_blocks <= 0:
+         return []
+ 
+-    scene_frames = _extract_scene_frames(video_path, num_frames, scene_threshold)
+-    # If scene detection captured a healthy spread, use it. Require at least a few
+-    # so a near-static video doesn't fall through with just 1 frame.
+-    if len(scene_frames) >= max(3, num_frames // 2):
+-        return scene_frames
++    grid = max(1, int(grid))
++    cells = grid * grid
++    # Pull enough scene frames to fill every block's grid; cap to bound CPU.
++    want_frames = min(num_blocks * cells, 48)
++    # Scale each scene frame so a grid×grid tile lands near the 1536px cap (legible).
++    cell_width = max(480, 1280 // grid)
++
++    scene_frames = _extract_scene_frames(
++        video_path, want_frames, scene_threshold, cell_width
++    )
++
++    # Not enough scene changes (static framing) → fall back to single even frames.
++    if len(scene_frames) < max(3, cells):
++        even_frames = _extract_even_frames(video_path, num_blocks)
++        if len(even_frames) >= len(scene_frames):
++            return even_frames
++
++    if grid <= 1 or len(scene_frames) <= 1:
++        return scene_frames[:num_blocks]
++
++    montages = _montage_frames(scene_frames, grid)
++    if montages:
++        return montages[:num_blocks]
++    # Montaging failed → fall back to single scene frames (still better than nothing).
++    return scene_frames[:num_blocks]
++
++
++def _montage_frames(frame_paths: list[str], grid: int) -> list[str]:
++    """Tile frames into grid×grid contact sheets (read left→right, top→bottom, each
++    cell a later moment). Returns one montage path per full-or-partial group. Uses only
++    ffmpeg (image2 sequence + tile filter) so it works cross-platform. Returns [] on any
++    failure so the caller can fall back to single frames."""
++    cells = grid * grid
++    if not frame_paths or cells <= 1:
++        return []
++    try:
++        # Renumber the selected frames contiguously so ffmpeg's image2 demuxer can read
++        # them as sel_000.jpg, sel_001.jpg, ... (byte-copy; we never delete temp files).
++        seqdir = tempfile.mkdtemp(prefix="saves_montage_")
++        for i, src in enumerate(frame_paths):
++            with open(src, "rb") as rf, open(os.path.join(seqdir, f"sel_{i:03d}.jpg"), "wb") as wf:
++                wf.write(rf.read())
+ 
+-    even_frames = _extract_even_frames(video_path, num_frames)
+-    # Use whichever method yielded more coverage.
+-    return even_frames if len(even_frames) >= len(scene_frames) else scene_frames
++        in_pattern = os.path.join(seqdir, "sel_%03d.jpg")
++        n_blocks = (len(frame_paths) + cells - 1) // cells
++        montages = []
++        for k in range(n_blocks):
++            out_path = os.path.join(seqdir, f"montage_{k:02d}.jpg")
++            r = subprocess.run(
++                ["ffmpeg", "-start_number", str(k * cells),
++                 "-i", in_pattern,
++                 "-vf", f"tile={grid}x{grid}",
++                 "-frames:v", "1", "-q:v", "5", "-y", out_path],
++                capture_output=True, timeout=60,
++            )
++            if r.returncode == 0 and os.path.exists(out_path):
++                montages.append(out_path)
++        return montages
++    except Exception as e:
++        logger.warning(f"Frame montage failed: {e}")
++        return []
+ 
+ 
+ def _video_duration(video_path: str) -> float:
+@@ -114,19 +179,21 @@ def _video_duration(video_path: str) -> float:
+ 
+ 
+ def _extract_scene_frames(
+-    video_path: str, max_frames: int, threshold: float
++    video_path: str, max_frames: int, threshold: float, width: int = 1280
+ ) -> list[str]:
+     """Grab a frame at each scene change (plus the opening frame). If more than
+     max_frames are found, subsample evenly across the full set to preserve coverage
+-    of the whole video rather than just the first scene changes."""
++    of the whole video rather than just the first scene changes. `width` scales each
++    frame (smaller when the frames will be montaged into a grid)."""
+     try:
+         tmpdir = tempfile.mkdtemp(prefix="saves_scene_")
+         out_pattern = os.path.join(tmpdir, "scene_%03d.jpg")
+         # select: keep frame 0 OR any frame whose scene-change score exceeds threshold.
+-        # vsync vfr drops the unselected frames; scale caps width to keep files small.
++        # vsync vfr drops the unselected frames; scale caps width to keep files small
++        # and (for montaging) keeps every cell a uniform size as tile requires.
+         r = subprocess.run(
+             ["ffmpeg", "-i", video_path,
+-             "-vf", f"select='eq(n,0)+gt(scene,{threshold})',scale=1280:-2",
++             "-vf", f"select='eq(n,0)+gt(scene,{threshold})',scale={width}:-2",
+              "-vsync", "vfr", "-q:v", "5", "-y", out_pattern],
+             capture_output=True, timeout=120,
+         )

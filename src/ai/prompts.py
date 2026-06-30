@@ -200,6 +200,12 @@ Instead, STITCH the frames together into the full on-screen script: output each 
 line exactly once, in the order it first appears, reconstructing the complete running
 caption as a single continuous block of text. Still transcribe any other non-caption text
 (labels, titles, ingredient lists) in full.
+
+GRID / CONTACT-SHEET images: A single image may be a MONTAGE of several video frames tiled
+in a grid (e.g. a 2×2 of four frames). Read the cells in reading order — left to right, then
+top to bottom — treating each cell as a LATER moment in the video than the one before it.
+Apply the same stitch-and-dedupe rule across all cells of all images: assemble one clean,
+in-order transcript of the on-screen text with no repeated lines.
 """
 
 
