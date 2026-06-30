@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "powershell -Command \"Write-Host ''; Write-Host '=== SAVES — current phase ===' -ForegroundColor Cyan; Get-Content docs\\ROADMAP.md | Select-String -Pattern '^## Phase' | Select-Object -First 6; Write-Host ''\""
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(ffmpeg *)",
+      "Bash(ffprobe *)",
+      "Bash(yt-dlp *)",
+      "Bash(playwright *)"
+    ]
+  }
+}

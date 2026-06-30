@@ -4,7 +4,7 @@
 > Full reasoning lives in `docs/PLAN.md`. Orientation lives in `CLAUDE.md`. Recreate/maintain
 > details live in `docs/HANDBOOK.md`.
 
-**Current phase:** Phase 0 → Phase 1 (moving development from Claude Code web to the CLI).
+**Current phase:** Phase 1 (CLI setup in progress).
 
 **Status in one line:** Core pipeline is feature-complete and in active dev use. Remaining work
 is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionless save loop.
@@ -20,12 +20,12 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 
 ---
 
-## Phase 0 — Finalize docs & plan  *(this session)*
+## Phase 0 — Finalize docs & plan  *(completed)*
 - [x] Update `CLAUDE.md` with all recent work
 - [x] Write `docs/PLAN.md` (strategy + phased plan)
 - [x] Write `docs/HANDBOOK.md` (recreate & maintain)
 - [x] Write `docs/ROADMAP.md` (this file)
-- [ ] Commit all four docs to the repo
+- [x] Commit all four docs to the repo (commit `9e7ffb6`)
 
 ## Phase 1 — CLI setup & frictionless loop  *(first desktop session)*
 - [ ] `git pull`; confirm remote + clean tree on the desktop
