@@ -1,4 +1,5 @@
 import os
+
 import yaml
 
 _config: dict | None = None

@@ -30,6 +30,7 @@ async def check_travel_location(content, ai_result: dict, config: dict) -> dict 
 
 def _location_check_sync(content, ai_result: dict, config: dict) -> dict | None:
     import anthropic
+
     from src.ai.prompts import TRAVEL_LOCATION_SYSTEM_PROMPT, build_travel_location_prompt
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])

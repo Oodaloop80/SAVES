@@ -17,18 +17,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 logging.getLogger("src").setLevel(logging.INFO)
 
-from src.config import load_config
-from src.credentials import load_credentials
-from src.extractors import get_extractor
-from src.extractors.enrich import enrich_embedded_media
-from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
-from src.media.transcriber import transcribe, is_audio_video
-from src.media.vision import prepare_images_for_claude
-from src.ai.claude_client import analyze_content, fact_check
-from src.notes.formatter import format_note
-from src.notes.file_manager import write_note
-from src.utils.url_parser import detect_platform, normalize_url
-from src.utils.vault_scanner import scan_saves_folders
+from src.ai.claude_client import analyze_content, fact_check  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.credentials import load_credentials  # noqa: E402
+from src.extractors import get_extractor  # noqa: E402
+from src.extractors.enrich import enrich_embedded_media  # noqa: E402
+from src.media.downloader import (  # noqa: E402
+    abs_to_obsidian_embed,
+    download_media,
+    localize_article_images,
+)
+from src.media.transcriber import is_audio_video, transcribe  # noqa: E402
+from src.media.vision import prepare_images_for_claude  # noqa: E402
+from src.notes.file_manager import write_note  # noqa: E402
+from src.notes.formatter import format_note  # noqa: E402
+from src.utils.url_parser import detect_platform, normalize_url  # noqa: E402
+from src.utils.vault_scanner import scan_saves_folders  # noqa: E402
 
 
 async def run(url: str, dry_run: bool = False):

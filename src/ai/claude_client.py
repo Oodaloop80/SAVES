@@ -5,10 +5,14 @@ import os
 import anthropic
 
 from src.ai.prompts import (
-    SYSTEM_PROMPT, build_user_prompt,
-    NL_EDIT_SYSTEM_PROMPT, build_nl_edit_prompt,
-    FACT_CHECK_SYSTEM_PROMPT, build_fact_check_prompt,
-    IMAGE_OCR_SYSTEM_PROMPT, build_image_ocr_prompt,
+    FACT_CHECK_SYSTEM_PROMPT,
+    IMAGE_OCR_SYSTEM_PROMPT,
+    NL_EDIT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    build_fact_check_prompt,
+    build_image_ocr_prompt,
+    build_nl_edit_prompt,
+    build_user_prompt,
 )
 from src.extractors.base import ExtractedContent
 

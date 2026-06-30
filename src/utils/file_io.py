@@ -13,7 +13,7 @@ def read_inbox(path: str) -> list[str]:
 def remove_url_from_inbox(path: str, url: str) -> None:
     """Atomically remove a URL line from the inbox file. Never deletes the file."""
     lines = read_inbox(path)
-    filtered = [l for l in lines if url not in l]
+    filtered = [line for line in lines if url not in line]
     if len(filtered) == len(lines):
         return  # URL not found — nothing to do
     dir_name = os.path.dirname(os.path.abspath(path))

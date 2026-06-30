@@ -1,18 +1,14 @@
-import asyncio
 import logging
-import os
 
 import discord
 from discord.ext import tasks
 
-from src.discord_bot.approval import PendingApprovalsStore, PendingApproval
-from src.discord_bot.notifications import (
-    send_approval_request, send_log, send_alert, send_cookie_warning
-)
-from src.notes.formatter import format_note
+from src.discord_bot.approval import PendingApproval, PendingApprovalsStore
+from src.discord_bot.notifications import send_approval_request, send_cookie_warning, send_log
 from src.notes.file_manager import write_note
-from src.utils.file_io import remove_url_from_inbox
+from src.notes.formatter import format_note
 from src.utils.cookie_checker import check_all_cookies
+from src.utils.file_io import remove_url_from_inbox
 from src.utils.preferences import PreferencesStore
 
 logger = logging.getLogger(__name__)

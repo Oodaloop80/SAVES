@@ -4,8 +4,8 @@ import logging
 import os
 import re
 import subprocess
-import urllib.request
 import urllib.parse
+import urllib.request
 
 logger = logging.getLogger(__name__)
 

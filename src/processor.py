@@ -8,8 +8,8 @@ from src.discord_bot.approval import new_pending
 from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
-from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
-from src.media.transcriber import transcribe, is_audio_video
+from src.media.downloader import abs_to_obsidian_embed, download_media, localize_article_images
+from src.media.transcriber import is_audio_video, transcribe
 from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key

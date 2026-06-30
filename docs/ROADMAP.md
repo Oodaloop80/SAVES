@@ -28,11 +28,11 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [x] Commit all four docs to the repo (commit `9e7ffb6`)
 
 ## Phase 1 — CLI setup & frictionless loop  *(first desktop session)*
-- [ ] `git pull`; confirm remote + clean tree on the desktop
-- [ ] `.claude/settings.json`: SessionStart hook (sync + print current ROADMAP phase) + Bash
+- [x] `git pull`; confirm remote + clean tree on the desktop
+- [x] `.claude/settings.json`: SessionStart hook (sync + print current ROADMAP phase) + Bash
       allowlist (`python`, `git`, `ffmpeg`, `yt-dlp`) to cut permission prompts
-- [ ] `.claude/commands/save.md`: the `/save <url>` loop (process → auto-QA → commit/push)
-- [ ] Minimal `pyproject.toml` (ruff) + one smoke test for lint/test feedback
+- [x] `.claude/commands/save.md`: the `/save <url>` loop (process → auto-QA → commit/push)
+- [x] Minimal `pyproject.toml` (ruff) + one smoke test for lint/test feedback
 - [ ] Re-run review cheaply: single-pass `/code-review` over the working tree (replaces the
       multi-agent review that got cut off by the spend limit); log fixes below
 - [ ] Verify: `scripts/test_connection.py` green; `process_one.py` good on one URL per platform

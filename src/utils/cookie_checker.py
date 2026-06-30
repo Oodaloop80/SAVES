@@ -1,6 +1,5 @@
 import os
 import time
-from datetime import datetime, timedelta
 
 
 def check_all_cookies(config: dict, cookies_dir: str) -> list[dict]:

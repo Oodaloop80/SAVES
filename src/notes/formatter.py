@@ -373,7 +373,7 @@ def _body_quote(content: ExtractedContent) -> str:
     header = f"> **{content.platform} — {content.author or 'Unknown'}**"
     if m.get("score"):
         header += f" — {m['score']:,} upvotes"
-    quoted = "\n".join(f"> {l}" for l in content.body_text[:20000].splitlines())
+    quoted = "\n".join(f"> {line}" for line in content.body_text[:20000].splitlines())
     return f"> [!quote] Original Post\n{header}\n>\n{quoted}\n"
 
 
@@ -414,7 +414,7 @@ def _video_description_block(content: ExtractedContent) -> str:
     if not desc:
         return ""
     channel = (content.metadata or {}).get("youtube_channel", "YouTube")
-    quoted = "\n".join(f"> {l}" for l in desc[:6000].splitlines())
+    quoted = "\n".join(f"> {line}" for line in desc[:6000].splitlines())
     return f"> [!quote]- Video Description (from {channel} on YouTube)\n{quoted}\n"
 
 
@@ -536,7 +536,7 @@ def _image_text_section(image_text: str) -> str:
     """Text extracted from carousel slides where the image content IS the text."""
     if not image_text or not image_text.strip():
         return ""
-    quoted = "\n".join(f"> {l}" for l in image_text.strip().splitlines())
+    quoted = "\n".join(f"> {line}" for line in image_text.strip().splitlines())
     return f"> [!quote] Text from Images\n{quoted}\n"
 
 
@@ -647,7 +647,7 @@ def _render_instagram_reel(ai_result, content, media_paths, transcript, collapse
         _transcript_block(transcript, collapse),
     ]
     if caption:
-        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
@@ -665,7 +665,7 @@ def _render_instagram_post(ai_result, content, media_paths, transcript, collapse
         _no_media_warning(media_paths),
     ]
     if caption:
-        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
@@ -684,7 +684,7 @@ def _render_tiktok_video(ai_result, content, media_paths, transcript, collapse):
         _transcript_block(transcript, collapse),
     ]
     if caption:
-        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
@@ -703,7 +703,7 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
         _transcript_block(transcript, collapse),
     ]
     if caption:
-        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
         _summary_section(ai_result),
@@ -759,7 +759,7 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     caption = content.body_text or ""
     caption_section = ""
     if caption:
-        quoted = "\n".join(f"> {l}" for l in caption[:8000].splitlines())
+        quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         caption_section = f"> [!quote] Caption\n{quoted}\n"
 
     # Render image_text inline at the recipe-specified position (not via generic inject)

@@ -89,7 +89,8 @@ class InstagramExtractor(BaseExtractor):
     def _ytdlp_metadata(self, url: str) -> dict:
         """Extract post metadata via yt-dlp. Requires cookies for most Instagram posts.
         Returns {} when yt-dlp can't access the post (no cookies, rate-limited, etc.)."""
-        import tempfile, json
+        import json
+        import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             cookies_path = os.path.join(self.cookies_dir, "instagram.txt")
             cookies_exist = os.path.exists(cookies_path)
@@ -314,7 +315,7 @@ class InstagramExtractor(BaseExtractor):
         cmd.append(url)
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            return [l.strip() for l in result.stdout.splitlines()
-                    if l.strip().startswith("http")]
+            return [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("http")]
         except Exception:
             return []

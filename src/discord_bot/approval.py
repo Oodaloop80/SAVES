@@ -4,8 +4,7 @@ import os
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from typing import Any
+from dataclasses import asdict, dataclass, field
 
 logger = logging.getLogger(__name__)
 
