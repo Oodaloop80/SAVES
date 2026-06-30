@@ -40,7 +40,7 @@ vision:
   enabled: true                   # Send images/video frames to Claude for visual text extraction
   max_images: 20                  # Instagram carousels cap at 20 slides; cover the full post
   ocr_model: "claude-haiku-4-5"   # <-- SET THIS (was haiku, or absent)
-  max_video_frames: 4             # Frames to extract per video (evenly spaced, 10-80% of duration)
+  max_video_frames: 8             # Frames to extract per video (evenly spaced, 10-80% of duration). Higher = more burned-in caption coverage, esp. when audio transcript is unavailable.
   skip_platforms: []              # Platforms to exclude (youtube always skipped automatically)
 
 ai:
