@@ -319,7 +319,14 @@ def _factcheck_with_web_search(
     seen_urls: set[str] = set()
 
     # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
-    for _ in range(6):
+    max_rounds = 6
+    for i in range(max_rounds):
+        logger.info(
+            "  Fact-check: web-search round %d/%d (up to %d searches; this pass is slow "
+            "and silent while Claude searches)%s",
+            i + 1, max_rounds, max_searches,
+            f" — {len(harvested)} source(s) so far" if harvested else "",
+        )
         msg = client.messages.create(
             model=model,
             max_tokens=max_tokens,

@@ -1,0 +1,42 @@
+diff --git a/scripts/process_one.py b/scripts/process_one.py
+index e38c3ae..7b34380 100644
+--- a/scripts/process_one.py
++++ b/scripts/process_one.py
+@@ -6,11 +6,17 @@ Usage:
+     python scripts/process_one.py <URL> --dry-run   # print note only, no file write
+ """
+ import asyncio
++import logging
+ import os
+ import sys
+ 
+ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+ 
++# Surface our own INFO-level progress (e.g. the fact-check web-search rounds) so a slow
++# silent pass doesn't look like a freeze. Third-party libs stay at WARNING to avoid noise.
++logging.basicConfig(level=logging.WARNING, format="%(message)s")
++logging.getLogger("src").setLevel(logging.INFO)
++
+ from src.config import load_config
+ from src.credentials import load_credentials
+ from src.extractors import get_extractor
+diff --git a/src/ai/claude_client.py b/src/ai/claude_client.py
+index 3be4e8e..67035f6 100644
+--- a/src/ai/claude_client.py
++++ b/src/ai/claude_client.py
+@@ -319,7 +319,14 @@ def _factcheck_with_web_search(
+     seen_urls: set[str] = set()
+ 
+     # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
+-    for _ in range(6):
++    max_rounds = 6
++    for i in range(max_rounds):
++        logger.info(
++            "  Fact-check: web-search round %d/%d (up to %d searches; this pass is slow "
++            "and silent while Claude searches)%s",
++            i + 1, max_rounds, max_searches,
++            f" — {len(harvested)} source(s) so far" if harvested else "",
++        )
+         msg = client.messages.create(
+             model=model,
+             max_tokens=max_tokens,

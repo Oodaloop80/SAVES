@@ -6,10 +6,16 @@ Usage:
     python scripts/process_one.py <URL> --dry-run   # print note only, no file write
 """
 import asyncio
+import logging
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+# Surface our own INFO-level progress (e.g. the fact-check web-search rounds) so a slow
+# silent pass doesn't look like a freeze. Third-party libs stay at WARNING to avoid noise.
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+logging.getLogger("src").setLevel(logging.INFO)
 
 from src.config import load_config
 from src.credentials import load_credentials
