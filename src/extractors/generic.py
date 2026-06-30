@@ -113,6 +113,32 @@ class GenericExtractor(BaseExtractor):
                         });
                     }"""
                 )
+                # Strip class/id from image-WRAPPER elements (the <picture>/<div>/<figure>
+                # chrome that holds only the image, no text). trafilatura discards nodes whose
+                # class matches its UI-junk rules (e.g. XDA wraps images in
+                # class="...image-expandable..." and "expandable" matches the discard list),
+                # taking the nested <img> with them. Clearing only wrapper classes — never
+                # text containers — lets trafilatura keep the images without affecting which
+                # node it picks as the main content.
+                await page.evaluate(
+                    """() => {
+                        document.querySelectorAll('img').forEach((img) => {
+                            const s = img.currentSrc || img.getAttribute('src') || '';
+                            if (!s || s.startsWith('data:')) return;
+                            img.removeAttribute('class');
+                            let el = img.parentElement;
+                            for (let d = 0; d < 5 && el; d++, el = el.parentElement) {
+                                const tag = el.tagName.toLowerCase();
+                                if (!['picture', 'div', 'span', 'a', 'figure'].includes(tag)) break;
+                                // Only strip wrappers holding essentially just the image (no
+                                // real text of their own) so text/content containers are safe.
+                                if (tag !== 'picture' && (el.textContent || '').trim().length > 0) break;
+                                el.removeAttribute('class');
+                                el.removeAttribute('id');
+                            }
+                        });
+                    }"""
+                )
             except Exception:
                 pass
 
