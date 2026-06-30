@@ -1,0 +1,281 @@
+diff --git a/requirements.txt b/requirements.txt
+index 24738c7..53bcecb 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -5,6 +5,7 @@ yt-dlp>=2024.1.0
+ gallery-dl>=1.26.0
+ playwright>=1.40.0
+ readability-lxml>=0.8.1
++trafilatura>=1.12.0
+ watchdog>=4.0.0
+ pyyaml>=6.0.1
+ python-dotenv>=1.0.0
+diff --git a/scripts/process_one.py b/scripts/process_one.py
+index e38c3ae..20468cb 100644
+--- a/scripts/process_one.py
++++ b/scripts/process_one.py
+@@ -15,7 +15,7 @@ from src.config import load_config
+ from src.credentials import load_credentials
+ from src.extractors import get_extractor
+ from src.extractors.enrich import enrich_embedded_media
+-from src.media.downloader import download_media, abs_to_obsidian_embed
++from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
+ from src.media.transcriber import transcribe, is_audio_video
+ from src.media.vision import prepare_images_for_claude
+ from src.ai.claude_client import analyze_content, fact_check
+@@ -72,6 +72,10 @@ async def run(url: str, dry_run: bool = False):
+     print(f"  Downloaded {len(media_paths_abs)} media file(s)")
+     embed_paths = [abs_to_obsidian_embed(p, media_root, vault_root) for p in media_paths_abs]
+ 
++    if content.metadata.get("article_markdown"):
++        await localize_article_images(content, platform, media_root, vault_root)
++        print("  Localized inline article images into the vault")
++
+     transcript = None
+     if content.captions:
+         transcript = content.captions
+diff --git a/src/extractors/generic.py b/src/extractors/generic.py
+index 84cd544..afcb7be 100644
+--- a/src/extractors/generic.py
++++ b/src/extractors/generic.py
+@@ -62,26 +62,37 @@ class GenericExtractor(BaseExtractor):
+ 
+             await browser.close()
+ 
+-        doc = Document(html)
+-        clean_text = _html_to_text(doc.summary())
++        # Primary path: trafilatura converts the article's main content to clean Markdown,
++        # preserving headings, paragraphs, links, and inline images — the same shape the
++        # Obsidian Web Clipper produces. We keep a plain-text copy for Claude's analysis and
++        # the paywall check. Falls back to readability + tag-stripping if trafilatura yields
++        # nothing (so a parse miss degrades gracefully rather than crashing).
++        article_markdown = _extract_markdown(html, url)
++        if article_markdown:
++            clean_text = _markdown_to_text(article_markdown)
++        else:
++            doc = Document(html)
++            clean_text = _html_to_text(doc.summary())
+         possible_paywall = len(clean_text) < 200
+ 
++        meta = _extract_metadata(html, url)
++
+         media_urls = []
+         if og.get("og:image"):
+             media_urls.append(og["og:image"])
+-        for img in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', doc.summary()):
+-            if img not in media_urls and img.startswith("http"):
+-                media_urls.append(img)
+ 
+         return ExtractedContent(
+             url=url,
+             platform="generic",
+-            title=og.get("og:title") or title,
+-            author=og.get("og:author"),
++            title=og.get("og:title") or meta.get("title") or title,
++            author=og.get("og:author") or meta.get("author"),
+             body_text=clean_text,
+             metadata={
+-                "og_description": og.get("og:description"),
+-                "published_time": og.get("article:published_time"),
++                "article_markdown": article_markdown or None,
++                "og_description": og.get("og:description") or meta.get("description"),
++                "published_time": og.get("article:published_time") or meta.get("date"),
++                # Surfaced into the note's frontmatter `posted:` line.
++                "upload_date": og.get("article:published_time") or meta.get("date"),
+                 "possible_paywall": possible_paywall,
+                 "domain": _domain(url),
+             },
+@@ -89,6 +100,54 @@ class GenericExtractor(BaseExtractor):
+         )
+ 
+ 
++def _extract_markdown(html: str, url: str) -> str | None:
++    """Extract the main article content as Markdown using trafilatura. Returns None on
++    failure so the caller can fall back to readability."""
++    try:
++        import trafilatura
++        # Default precision/recall balance: on real articles this captures the full body
++        # cleanly. (favor_recall is deliberately NOT set — it can duplicate paragraphs on
++        # some pages, which hurts readability more than the marginal extra recall helps.)
++        md = trafilatura.extract(
++            html,
++            output_format="markdown",
++            include_links=True,
++            include_images=True,
++            include_formatting=True,
++            url=url,
++        )
++        return md.strip() if md and md.strip() else None
++    except Exception:
++        return None
++
++
++def _extract_metadata(html: str, url: str) -> dict:
++    """Pull author/date/title/description from the page via trafilatura's metadata parser."""
++    try:
++        import trafilatura
++        doc = trafilatura.extract_metadata(html, default_url=url)
++        if not doc:
++            return {}
++        return {
++            "title": getattr(doc, "title", None),
++            "author": getattr(doc, "author", None),
++            "date": getattr(doc, "date", None),
++            "description": getattr(doc, "description", None),
++        }
++    except Exception:
++        return {}
++
++
++def _markdown_to_text(md: str) -> str:
++    """Strip Markdown syntax to plain text for Claude's analysis + the paywall check."""
++    text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', md)          # images
++    text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)    # links → link text
++    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)  # heading markers
++    text = re.sub(r'[*_`>]', '', text)                      # emphasis/quote markers
++    text = re.sub(r'\n{3,}', '\n\n', text)
++    return text.strip()
++
++
+ def _html_to_text(html: str) -> str:
+     text = re.sub(r'<[^>]+>', ' ', html)
+     text = re.sub(r'&nbsp;', ' ', text)
+diff --git a/src/media/downloader.py b/src/media/downloader.py
+index d2bbf1a..b573103 100644
+--- a/src/media/downloader.py
++++ b/src/media/downloader.py
+@@ -180,6 +180,57 @@ def _url_looks_like_video(url: str) -> bool:
+     return any(d in url for d in video_domains)
+ 
+ 
++_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(\s*(https?://[^)\s]+)(?:\s+[^)]*)?\)')
++
++
++async def localize_article_images(
++    content, platform: str, media_root: str, vault_root: str
++) -> None:
++    """Download the inline images referenced in content.metadata['article_markdown'] and
++    rewrite the Markdown to embed the LOCAL copies, so the note survives the source article
++    being taken down. Images that fail to download keep their original remote URL (still
++    renders while the article is live). Mutates content.metadata in place; no-op when there
++    is no article markdown or no images."""
++    md = (content.metadata or {}).get("article_markdown")
++    if not md:
++        return
++
++    urls, seen = [], set()
++    for m in _MD_IMAGE_RE.finditer(md):
++        u = m.group(2)
++        if u not in seen:
++            seen.add(u)
++            urls.append(u)
++    if not urls:
++        return
++
++    save_dir = os.path.join(media_root, platform)
++    os.makedirs(save_dir, exist_ok=True)
++
++    url_to_embed: dict[str, str] = {}
++    for u in urls:
++        try:
++            abs_path = await asyncio.to_thread(
++                lambda url=u: _maybe_convert_heic(_direct_download(url, save_dir))
++            )
++            if abs_path and os.path.exists(abs_path):
++                url_to_embed[u] = abs_to_obsidian_embed(abs_path, media_root, vault_root)
++        except Exception as e:
++            logger.warning("Article image download failed for %s: %s", u, e)
++
++    if not url_to_embed:
++        return
++
++    def _repl(m: "re.Match") -> str:
++        embed = url_to_embed.get(m.group(2))
++        if not embed:
++            return m.group(0)  # download failed — leave the remote link in place
++        return f"\n```EmbedRelativeTo\nmedia://{embed}\n```\n"
++
++    content.metadata["article_markdown"] = _MD_IMAGE_RE.sub(_repl, md)
++    logger.info("Localized %d/%d article image(s) into the vault", len(url_to_embed), len(urls))
++
++
+ def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
+     """Return the media path RELATIVE TO media_root, with forward slashes.
+ 
+diff --git a/src/notes/formatter.py b/src/notes/formatter.py
+index 16598be..4568370 100644
+--- a/src/notes/formatter.py
++++ b/src/notes/formatter.py
+@@ -792,15 +792,26 @@ def _render_web_travel(ai_result, content, media_paths, transcript, collapse):
+     return "\n".join(p for p in parts if p)
+ 
+ 
++def _article_body(content: ExtractedContent) -> str:
++    """Clean Markdown body for web articles (headings, paragraphs, links, inline image
++    embeds), as produced by the trafilatura extractor + image localizer. Falls back to the
++    blockquoted plain text when no structured Markdown is available."""
++    md = (content.metadata or {}).get("article_markdown")
++    if md and md.strip():
++        return md.strip() + "\n"
++    return _body_quote(content)
++
++
+ def _render_web_article(ai_result, content, media_paths, transcript, collapse):
++    # Hero embed is intentionally omitted: article images are embedded inline in the body
++    # by the localizer. The format_note safety net still embeds downloaded media at the top
++    # if (and only if) the body contains no inline embeds.
+     saved_date = date.today().strftime("%Y-%m-%d")
+-    hero = media_paths[:1]
+     parts = [
+-        _media_embeds(hero),
+         _summary_section(ai_result),
+         _takeaways_section(ai_result),
+         _paywall_warning(content),
+-        _body_quote(content),
++        _article_body(content),
+         "---",
+         _metadata_section(content, saved_date),
+     ]
+@@ -809,13 +820,11 @@ def _render_web_article(ai_result, content, media_paths, transcript, collapse):
+ 
+ def _render_web_generic(ai_result, content, media_paths, transcript, collapse):
+     saved_date = date.today().strftime("%Y-%m-%d")
+-    hero = media_paths[:1]
+     parts = [
+-        _media_embeds(hero),
+         _summary_section(ai_result),
+         _takeaways_section(ai_result),
+         _paywall_warning(content),
+-        _body_quote(content),
++        _article_body(content),
+         "---",
+         _metadata_section(content, saved_date),
+     ]
+diff --git a/src/processor.py b/src/processor.py
+index 195659e..edce452 100644
+--- a/src/processor.py
++++ b/src/processor.py
+@@ -8,7 +8,7 @@ from src.discord_bot.approval import new_pending
+ from src.discord_bot.notifications import send_alert
+ from src.extractors import get_extractor
+ from src.extractors.enrich import enrich_embedded_media
+-from src.media.downloader import download_media, abs_to_obsidian_embed
++from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
+ from src.media.transcriber import transcribe, is_audio_video
+ from src.media.vision import prepare_images_for_claude
+ from src.queue_manager import ProcessingState
+@@ -103,6 +103,14 @@ async def _process_one(
+ 
+     embed_paths = [abs_to_obsidian_embed(p, media_root, vault_root) for p in media_paths_abs]
+ 
++    # 3b. For web articles, download inline images into the vault and rewrite the article
++    # Markdown to embed the local copies (archival — survives the source being taken down).
++    if content.metadata.get("article_markdown"):
++        try:
++            await localize_article_images(content, platform, media_root, vault_root)
++        except Exception as e:
++            logger.warning(f"Article image localization failed (non-fatal): {e}")
++
+     # 4. Transcribe
+     transcript = None
+     if content.captions:

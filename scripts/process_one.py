@@ -21,7 +21,7 @@ from src.config import load_config
 from src.credentials import load_credentials
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
-from src.media.downloader import download_media, abs_to_obsidian_embed
+from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
 from src.media.transcriber import transcribe, is_audio_video
 from src.media.vision import prepare_images_for_claude
 from src.ai.claude_client import analyze_content, fact_check
@@ -77,6 +77,10 @@ async def run(url: str, dry_run: bool = False):
     )
     print(f"  Downloaded {len(media_paths_abs)} media file(s)")
     embed_paths = [abs_to_obsidian_embed(p, media_root, vault_root) for p in media_paths_abs]
+
+    if content.metadata.get("article_markdown"):
+        await localize_article_images(content, platform, media_root, vault_root)
+        print("  Localized inline article images into the vault")
 
     transcript = None
     if content.captions:

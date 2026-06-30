@@ -8,7 +8,7 @@ from src.discord_bot.approval import new_pending
 from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
-from src.media.downloader import download_media, abs_to_obsidian_embed
+from src.media.downloader import download_media, abs_to_obsidian_embed, localize_article_images
 from src.media.transcriber import transcribe, is_audio_video
 from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
@@ -102,6 +102,14 @@ async def _process_one(
         content.metadata["media_download_failed"] = True
 
     embed_paths = [abs_to_obsidian_embed(p, media_root, vault_root) for p in media_paths_abs]
+
+    # 3b. For web articles, download inline images into the vault and rewrite the article
+    # Markdown to embed the local copies (archival — survives the source being taken down).
+    if content.metadata.get("article_markdown"):
+        try:
+            await localize_article_images(content, platform, media_root, vault_root)
+        except Exception as e:
+            logger.warning(f"Article image localization failed (non-fatal): {e}")
 
     # 4. Transcribe
     transcript = None

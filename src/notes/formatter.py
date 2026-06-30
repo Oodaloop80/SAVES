@@ -795,15 +795,26 @@ def _render_web_travel(ai_result, content, media_paths, transcript, collapse):
     return "\n".join(p for p in parts if p)
 
 
+def _article_body(content: ExtractedContent) -> str:
+    """Clean Markdown body for web articles (headings, paragraphs, links, inline image
+    embeds), as produced by the trafilatura extractor + image localizer. Falls back to the
+    blockquoted plain text when no structured Markdown is available."""
+    md = (content.metadata or {}).get("article_markdown")
+    if md and md.strip():
+        return md.strip() + "\n"
+    return _body_quote(content)
+
+
 def _render_web_article(ai_result, content, media_paths, transcript, collapse):
+    # Hero embed is intentionally omitted: article images are embedded inline in the body
+    # by the localizer. The format_note safety net still embeds downloaded media at the top
+    # if (and only if) the body contains no inline embeds.
     saved_date = date.today().strftime("%Y-%m-%d")
-    hero = media_paths[:1]
     parts = [
-        _media_embeds(hero),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
         _paywall_warning(content),
-        _body_quote(content),
+        _article_body(content),
         "---",
         _metadata_section(content, saved_date),
     ]
@@ -812,13 +823,11 @@ def _render_web_article(ai_result, content, media_paths, transcript, collapse):
 
 def _render_web_generic(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
-    hero = media_paths[:1]
     parts = [
-        _media_embeds(hero),
         _summary_section(ai_result),
         _takeaways_section(ai_result),
         _paywall_warning(content),
-        _body_quote(content),
+        _article_body(content),
         "---",
         _metadata_section(content, saved_date),
     ]

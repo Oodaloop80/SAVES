@@ -180,6 +180,57 @@ def _url_looks_like_video(url: str) -> bool:
     return any(d in url for d in video_domains)
 
 
+_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(\s*(https?://[^)\s]+)(?:\s+[^)]*)?\)')
+
+
+async def localize_article_images(
+    content, platform: str, media_root: str, vault_root: str
+) -> None:
+    """Download the inline images referenced in content.metadata['article_markdown'] and
+    rewrite the Markdown to embed the LOCAL copies, so the note survives the source article
+    being taken down. Images that fail to download keep their original remote URL (still
+    renders while the article is live). Mutates content.metadata in place; no-op when there
+    is no article markdown or no images."""
+    md = (content.metadata or {}).get("article_markdown")
+    if not md:
+        return
+
+    urls, seen = [], set()
+    for m in _MD_IMAGE_RE.finditer(md):
+        u = m.group(2)
+        if u not in seen:
+            seen.add(u)
+            urls.append(u)
+    if not urls:
+        return
+
+    save_dir = os.path.join(media_root, platform)
+    os.makedirs(save_dir, exist_ok=True)
+
+    url_to_embed: dict[str, str] = {}
+    for u in urls:
+        try:
+            abs_path = await asyncio.to_thread(
+                lambda url=u: _maybe_convert_heic(_direct_download(url, save_dir))
+            )
+            if abs_path and os.path.exists(abs_path):
+                url_to_embed[u] = abs_to_obsidian_embed(abs_path, media_root, vault_root)
+        except Exception as e:
+            logger.warning("Article image download failed for %s: %s", u, e)
+
+    if not url_to_embed:
+        return
+
+    def _repl(m: "re.Match") -> str:
+        embed = url_to_embed.get(m.group(2))
+        if not embed:
+            return m.group(0)  # download failed — leave the remote link in place
+        return f"\n```EmbedRelativeTo\nmedia://{embed}\n```\n"
+
+    content.metadata["article_markdown"] = _MD_IMAGE_RE.sub(_repl, md)
+    logger.info("Localized %d/%d article image(s) into the vault", len(url_to_embed), len(urls))
+
+
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
     """Return the media path RELATIVE TO media_root, with forward slashes.
 
