@@ -1,0 +1,94 @@
+diff --git a/src/extractors/generic.py b/src/extractors/generic.py
+index ce553b7..c474c05 100644
+--- a/src/extractors/generic.py
++++ b/src/extractors/generic.py
+@@ -1,8 +1,11 @@
+ import asyncio
++import logging
+ import re
+ 
+ from src.extractors.base import BaseExtractor, ExtractedContent
+ 
++logger = logging.getLogger(__name__)
++
+ COOKIE_BANNER_SELECTORS = [
+     "#accept", "#accept-cookies", "#acceptCookies",
+     ".accept-cookies", ".cookie-accept", ".btn-accept",
+@@ -70,21 +73,42 @@ class GenericExtractor(BaseExtractor):
+                         });
+                     }"""
+                 )
+-                await page.wait_for_timeout(1200)
++                await page.wait_for_timeout(2500)
++                # Resolve every <img> to a real URL so trafilatura sees it. We try, in order:
++                #   1) currentSrc — the URL the browser actually LOADED (covers srcset + most
++                #      lazy loaders once the image has scrolled into view)
++                #   2) data-src / data-lazy-src / data-original / data-img-url
++                #   3) data-srcset / srcset (largest candidate)
++                #   4) a sibling/ancestor <noscript> fallback (common WordPress lazy plugins
++                #      keep the real <img src> inside <noscript> for no-JS users)
+                 await page.evaluate(
+                     """() => {
++                        const fromSrcset = (ss) => {
++                            if (!ss) return '';
++                            const parts = ss.split(',').map((s) => s.trim().split(/\\s+/)[0]).filter(Boolean);
++                            return parts.length ? parts[parts.length - 1] : '';
++                        };
+                         document.querySelectorAll('img').forEach((img) => {
+                             const cur = img.getAttribute('src') || '';
+-                            const lazy = img.getAttribute('data-src')
+-                                || img.getAttribute('data-lazy-src')
+-                                || img.getAttribute('data-original')
+-                                || img.getAttribute('data-img-url');
+-                            if (lazy && (cur === '' || cur.startsWith('data:'))) {
+-                                img.setAttribute('src', lazy);
+-                            } else if (img.getAttribute('srcset') && (cur === '' || cur.startsWith('data:'))) {
+-                                const parts = img.getAttribute('srcset')
+-                                    .split(',').map((s) => s.trim().split(/\\s+/)[0]).filter(Boolean);
+-                                if (parts.length) img.setAttribute('src', parts[parts.length - 1]);
++                            let url = '';
++                            if (img.currentSrc && !img.currentSrc.startsWith('data:')) url = img.currentSrc;
++                            if (!url) url = img.getAttribute('data-src') || img.getAttribute('data-lazy-src')
++                                || img.getAttribute('data-original') || img.getAttribute('data-img-url') || '';
++                            if (!url) url = fromSrcset(img.getAttribute('data-srcset') || img.getAttribute('srcset'));
++                            if (!url) {
++                                let sc = img.parentElement;
++                                for (let d = 0; d < 3 && sc; d++, sc = sc.parentElement) {
++                                    const ns = sc.querySelector && sc.querySelector('noscript');
++                                    if (ns) {
++                                        const m = ns.textContent.match(/<img[^>]+src=[\"']([^\"']+)[\"']/i);
++                                        if (m) { url = m[1]; break; }
++                                    }
++                                }
++                            }
++                            if (url && !url.startsWith('data:') && url !== cur) {
++                                img.setAttribute('src', url);
++                                img.removeAttribute('srcset');
++                                img.removeAttribute('loading');
+                             }
+                         });
+                     }"""
+@@ -107,6 +131,14 @@ class GenericExtractor(BaseExtractor):
+ 
+             await browser.close()
+ 
++        # Diagnostic: how many <img> tags carry a real http(s) src after lazy-resolution.
++        # Compared with the inline-image count below, this localizes where images are lost:
++        #   many http imgs but 0 in markdown → trafilatura pruned them (extraction issue)
++        #   0 http imgs                       → lazy-load resolution failed (capture issue)
++        total_imgs = len(re.findall(r'<img\b', html, re.I))
++        http_imgs = len(re.findall(r'<img\b[^>]*\bsrc=["\']https?://', html, re.I))
++        logger.info("generic extractor: %d <img> tag(s) in HTML, %d with http src", total_imgs, http_imgs)
++
+         # Primary path: trafilatura converts the article's main content to clean Markdown,
+         # preserving headings, paragraphs, links, and inline images — the same shape the
+         # Obsidian Web Clipper produces. We keep a plain-text copy for Claude's analysis and
+@@ -114,6 +146,8 @@ class GenericExtractor(BaseExtractor):
+         # nothing (so a parse miss degrades gracefully rather than crashing).
+         article_markdown = _extract_markdown(html, url)
+         if article_markdown:
++            logger.info("generic extractor: trafilatura produced %d inline image(s) in markdown",
++                        article_markdown.count("!["))
+             clean_text = _markdown_to_text(article_markdown)
+         else:
+             doc = Document(html)
