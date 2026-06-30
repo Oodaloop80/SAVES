@@ -191,6 +191,15 @@ Separate each slide's text with a blank line. Output ONLY the transcribed text â
 preamble, no commentary, no markdown fences. If an image is purely a photograph, artwork,
 or has only short decorative text, output a short bracketed note like
 "[Slide 3: photograph of a person holding a supplement bottle, no substantive text]".
+
+IMPORTANT â€” video frames with rolling captions: When the images are frames sampled from a
+video, they often carry BURNED-IN captions that build up line-by-line as the speaker talks.
+Consecutive frames will repeat or extend the same on-screen text. Do NOT transcribe each
+frame in isolation and do NOT repeat a line that simply carried over between frames.
+Instead, STITCH the frames together into the full on-screen script: output each DISTINCT
+line exactly once, in the order it first appears, reconstructing the complete running
+caption as a single continuous block of text. Still transcribe any other non-caption text
+(labels, titles, ingredient lists) in full.
 """
 
 
