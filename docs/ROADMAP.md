@@ -33,7 +33,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       allowlist (`python`, `git`, `ffmpeg`, `yt-dlp`) to cut permission prompts
 - [x] `.claude/commands/save.md`: the `/save <url>` loop (process → auto-QA → commit/push)
 - [x] Minimal `pyproject.toml` (ruff) + one smoke test for lint/test feedback
-- [ ] Re-run review cheaply: single-pass `/code-review` over the working tree (replaces the
+- [x] Re-run review cheaply: single-pass `/code-review` over the working tree (replaces the
       multi-agent review that got cut off by the spend limit); log fixes below
 - [ ] Verify: `scripts/test_connection.py` green; `process_one.py` good on one URL per platform
 
@@ -43,6 +43,12 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] Extraction timeout (`asyncio.timeout` around `extractor.extract()`)
 - [ ] Claude API backoff/circuit-breaker (wire the unused `utils/retry.py`)
 - [ ] Crash-safe `_finalize` ordering; dedup uses `processing_state.json` as source of truth
+- [ ] **Restart orphans approval buttons** (review Finding 2): `setup_hook` registers
+      persistent views with `pending_id="__placeholder__"` (`bot.py:200-201`), so after a
+      restart every already-sent approval routes to the placeholder → `get_by_id` returns
+      None → "already processed" and the item is stuck. `_restore_pending` only re-sends
+      items with `discord_message_id is None`. Fix: encode the real pending ID in each
+      button's `custom_id` (dynamic items) instead of a shared placeholder.
 - [ ] (optional) persist NL-edit sessions across bot restart
 
 ## Phase 3 — Runtime token efficiency
@@ -69,4 +75,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Verified review fixes (fill in as Phase 1 review runs)
 | # | File:line | Issue | Severity | Status |
 |---|-----------|-------|----------|--------|
-| _ | _ | _ | _ | _ |
+| 1 | `queue_manager.py:77` | Dedup keyed on raw inbox URL, but `ProcessingState` is keyed on the normalized URL (tracking params stripped) → social links re-enqueue after restart → duplicate notes | High | ✅ Fixed (normalize in `enqueue_from_file`) |
+| 2 | `bot.py:200-201` | Persistent views registered with `pending_id="__placeholder__"` → after restart, already-sent approvals route to placeholder and become unapprovable | High | ⏳ Deferred to Phase 2 (see item above) |
+| 3 | `file_io.py:16` | `remove_url_from_inbox` matches by substring → a URL that's a prefix of another inbox URL removes both | Low | Noted |
+| 4 | `file_manager.py:110` | `move_note` same-volume `os.rename` overwrites an existing destination (no conflict resolution) | Low | Noted |

@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 
-from src.utils.url_parser import extract_urls
+from src.utils.url_parser import extract_urls, normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,11 @@ class QueueManager:
         urls = extract_urls(text)
         new_count = 0
         for url in urls:
+            # Normalize before dedup so the key space matches ProcessingState, which is
+            # keyed by the normalized URL (processor normalizes before mark_pending/done).
+            # Without this, social share links with tracking params (igsh/fbclid/utm_*)
+            # miss the state lookup and get re-enqueued after a restart → duplicate notes.
+            url = normalize_url(url)
             if url in self._queued:
                 continue
             if self._state.is_processed(url):
