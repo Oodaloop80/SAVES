@@ -171,20 +171,28 @@ class GenericExtractor(BaseExtractor):
         # the paywall check. Falls back to readability + tag-stripping if trafilatura yields
         # nothing (so a parse miss degrades gracefully rather than crashing).
         article_markdown = _extract_markdown(html, url)
+        media_urls = []
         if article_markdown:
+            article_markdown = _normalize_markdown(article_markdown)
+            # Lead the article body with the feature image (og:image), routed through the
+            # SAME local-image pipeline as the inline images (downloaded + embedded by the
+            # localizer) so the title picture is archived too. Skip if it's already present
+            # in the body. Because every image is now embedded inline, we clear media_urls so
+            # the separate download step doesn't redundantly (and sometimes flakily) re-fetch.
+            hero = og.get("og:image")
+            if hero and hero not in article_markdown:
+                article_markdown = f"![]({hero})\n\n{article_markdown}"
             logger.info("generic extractor: trafilatura produced %d inline image(s) in markdown",
                         article_markdown.count("!["))
             clean_text = _markdown_to_text(article_markdown)
         else:
             doc = Document(html)
             clean_text = _html_to_text(doc.summary())
+            if og.get("og:image"):
+                media_urls.append(og["og:image"])
         possible_paywall = len(clean_text) < 200
 
         meta = _extract_metadata(html, url)
-
-        media_urls = []
-        if og.get("og:image"):
-            media_urls.append(og["og:image"])
 
         return ExtractedContent(
             url=url,
@@ -241,6 +249,40 @@ def _extract_metadata(html: str, url: str) -> dict:
         }
     except Exception:
         return {}
+
+
+_LIST_ITEM_RE = re.compile(r'(?:[-*+]\s|\d+[.)]\s)')
+
+
+def _normalize_markdown(md: str) -> str:
+    """Clean trafilatura's Markdown so Obsidian renders it as prose:
+
+    - De-indent lines with 4+ leading spaces (outside fenced code blocks). Markdown treats
+      a 4-space indent as a code block; trafilatura sometimes indents paragraphs that follow
+      images/figures, which would otherwise render the article body as monospace code. Real
+      code from trafilatura comes in fenced ``` blocks, so a bare 4-space indent is always
+      spurious here. Nested list items keep their indentation.
+    - Strip trailing whitespace (also removes the stray space trafilatura leaves after inline
+      images, so image replacement stays clean).
+    - Collapse 3+ blank lines to a single blank line.
+    """
+    out, in_fence = [], False
+    for line in md.splitlines():
+        stripped_lead = line.lstrip(" ")
+        if stripped_lead.startswith("```"):
+            in_fence = not in_fence
+            out.append(stripped_lead.rstrip())
+            continue
+        if in_fence:
+            out.append(line.rstrip())
+            continue
+        indent = len(line) - len(stripped_lead)
+        if indent >= 4 and not _LIST_ITEM_RE.match(stripped_lead):
+            out.append(stripped_lead.rstrip())
+        else:
+            out.append(line.rstrip())
+    text = "\n".join(out)
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
 def _markdown_to_text(md: str) -> str:
