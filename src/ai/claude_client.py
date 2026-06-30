@@ -238,6 +238,21 @@ def _fact_check_sync(
                 use_web_search = False
                 logger.debug("Web search skipped — no topics in web_search_topics")
 
+    # Recipes/food content frequently trip the health topic on macro/nutrition mentions
+    # ("52g protein"), but web-searching those claims is slow (minutes) and low-value. Still
+    # run the fact-check pass (so genuine dosage/safety issues — raw egg, undercooked meat,
+    # unsafe substitutions — can still surface) but skip the web-search loop for them.
+    if use_web_search:
+        note_type = ai_result.get("note_type", "")
+        is_recipe = (
+            note_type in ("web_recipe", "recipe")
+            or bool(ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions"))
+            or "cooking" in (ai_result.get("topics") or [])
+        )
+        if is_recipe:
+            use_web_search = False
+            logger.info("  Fact-check: recipe/food content — skipping web search (quick local pass only)")
+
     if use_web_search:
         try:
             raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
