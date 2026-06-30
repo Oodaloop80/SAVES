@@ -14,6 +14,12 @@ from src.extractors.base import ExtractedContent
 
 logger = logging.getLogger(__name__)
 
+# Models that have rejected the `temperature` parameter this process. Once a model 400s on
+# temperature we stop sending it for that model entirely — so we don't fire a doomed request
+# (and log a line) on every subsequent call. Self-learning: models that DO accept temperature
+# (e.g. sonnet/haiku) keep getting it.
+_MODELS_REJECTING_TEMPERATURE: set[str] = set()
+
 
 def _make_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -31,8 +37,9 @@ def _call(
     when configured, but transparently retry without it if the API reports it deprecated.
     """
     ai_cfg = config.get("ai", {})
+    model = ai_cfg.get("model", "claude-opus-4-8")
     params = {
-        "model": ai_cfg.get("model", "claude-opus-4-8"),
+        "model": model,
         "max_tokens": ai_cfg.get("max_tokens", 4096),
         # System prompts here (analysis/OCR/fact-check/NL-edit) are large static strings.
         # Marking them as an ephemeral cache breakpoint lets the JSON-retry call and
@@ -41,15 +48,19 @@ def _call(
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": user}],
     }
+    # Only send temperature if configured AND this model hasn't already rejected it. This
+    # avoids a wasted failed request (and a log line) on every call to a model like
+    # claude-opus-4-8 that doesn't accept the parameter.
     temperature = ai_cfg.get("temperature")
-    if temperature is not None:
+    if temperature is not None and model not in _MODELS_REJECTING_TEMPERATURE:
         params["temperature"] = temperature
 
     try:
         msg = client.messages.create(**params)
     except anthropic.BadRequestError as e:
         if "temperature" in str(e) and "temperature" in params:
-            logger.info("Model rejects `temperature`; retrying without it")
+            logger.debug("Model %s rejects `temperature`; retrying without it (and skipping it from now on)", model)
+            _MODELS_REJECTING_TEMPERATURE.add(model)
             params.pop("temperature", None)
             msg = client.messages.create(**params)
         else:
