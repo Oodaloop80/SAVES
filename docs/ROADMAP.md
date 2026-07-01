@@ -4,7 +4,8 @@
 > Full reasoning lives in `docs/PLAN.md`. Orientation lives in `CLAUDE.md`. Recreate/maintain
 > details live in `docs/HANDBOOK.md`.
 
-**Current phase:** Phase 2 (harden the pipeline). Phase 1 complete.
+**Current phase:** Phase 3 (runtime token efficiency). Phases 1–2 complete (one optional
+Phase 2 item — persist NL-edit sessions across restart — deferred).
 
 **Status in one line:** Core pipeline is feature-complete and in active dev use. Remaining work
 is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionless save loop.
@@ -37,18 +38,27 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       multi-agent review that got cut off by the spend limit); log fixes below
 - [x] Verify: `scripts/test_connection.py` green; `process_one.py` good on one URL per platform
 
-## Phase 2 — Harden the existing pipeline
-- [ ] Startup config validation (fail fast on missing paths/keys/channels)
-- [ ] Graceful missing-inbox handling in `FileWatcher`
-- [ ] Extraction timeout (`asyncio.timeout` around `extractor.extract()`)
-- [ ] Claude API backoff/circuit-breaker (wire the unused `utils/retry.py`)
-- [ ] Crash-safe `_finalize` ordering; dedup uses `processing_state.json` as source of truth
-- [ ] **Restart orphans approval buttons** (review Finding 2): `setup_hook` registers
-      persistent views with `pending_id="__placeholder__"` (`bot.py:200-201`), so after a
-      restart every already-sent approval routes to the placeholder → `get_by_id` returns
-      None → "already processed" and the item is stuck. `_restore_pending` only re-sends
-      items with `discord_message_id is None`. Fix: encode the real pending ID in each
-      button's `custom_id` (dynamic items) instead of a shared placeholder.
+## Phase 2 — Harden the existing pipeline  *(completed — one optional item deferred)*
+- [x] Startup config validation (fail fast on missing paths/channels — `utils/validation.py`,
+      called from `main`; keys stay with `load_credentials`). Dir existence is a soft warning.
+- [x] Graceful missing-inbox handling in `FileWatcher` (skip + warn if the watch dir is
+      absent instead of crashing at startup)
+- [x] Extraction timeout (`asyncio.timeout(processing.extract_timeout_seconds)` around
+      `extractor.extract()`; timeouts mark_failed + alert, queue moves on)
+- [x] Claude API backoff + wire `utils/retry.py`. Claude backoff = Anthropic SDK
+      `max_retries` (ai.max_retries, honors Retry-After — better than a fixed-delay wrapper
+      for HTTP). `utils/retry.py` is wired into the remote-transcription POST (Whisper server
+      warmup), which the SDK doesn't cover; this also puts `processing.retry_attempts/
+      retry_delay_seconds` to use. (Extractor/download retry deferred — needs transient-vs-
+      permanent classification so it doesn't retry deleted-URL 404s.)
+- [x] Crash-safe `_finalize` ordering; dedup uses `processing_state.json` as source of truth.
+      Idempotency guard at the top of `_finalize` short-circuits when the URL is already
+      `done` (double-click / restored-message re-approval → no duplicate note); `mark_done`
+      is recorded immediately after the note hits disk, before the slower cleanup.
+- [x] **Restart orphans approval buttons** (review Finding 2): fixed. `setup_hook` now
+      re-registers a persistent view per already-sent item, bound to its real
+      `discord_message_id` (via `add_view(view, message_id=…)`), so button clicks after a
+      restart carry the item's real pending ID. Placeholder views removed.
 - [ ] (optional) persist NL-edit sessions across bot restart
 
 ## Phase 3 — Runtime token efficiency
@@ -76,7 +86,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 | # | File:line | Issue | Severity | Status |
 |---|-----------|-------|----------|--------|
 | 1 | `queue_manager.py:77` | Dedup keyed on raw inbox URL, but `ProcessingState` is keyed on the normalized URL (tracking params stripped) → social links re-enqueue after restart → duplicate notes | High | ✅ Fixed (normalize in `enqueue_from_file`) |
-| 2 | `bot.py:200-201` | Persistent views registered with `pending_id="__placeholder__"` → after restart, already-sent approvals route to placeholder and become unapprovable | High | ⏳ Deferred to Phase 2 (see item above) |
+| 2 | `bot.py:200-201` | Persistent views registered with `pending_id="__placeholder__"` → after restart, already-sent approvals route to placeholder and become unapprovable | High | ✅ Fixed (per-message `add_view(view, message_id=…)` in `setup_hook` carries the real pending id) |
 | 3 | `file_io.py:16` | `remove_url_from_inbox` matches by substring → a URL that's a prefix of another inbox URL removes both | Low | Noted |
 | 4 | `file_manager.py:110` | `move_note` same-volume `os.rename` overwrites an existing destination (no conflict resolution) | Low | Noted |
 | 5 | `test_connection.py` / `process_one.py` | Emoji/Unicode `print()` crashes on Windows (cp1252) — both CLI scripts unrunnable on the dev workstation | High | ✅ Fixed (force UTF-8 on stdout/stderr) |

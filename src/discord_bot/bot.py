@@ -196,9 +196,26 @@ class SAVESBot(discord.Client):
         self.store = PendingApprovalsStore(paths.get("pending_approvals_file", "pending_approvals.json"))
         self._discord_cfg = config.get("discord", {})
 
+    def _build_view(self, pending: PendingApproval) -> ApprovalView:
+        """Pick the approval-view variant for an item: the warning variant when fact-check or
+        location flags are present, else the standard one. Both carry the item's *real*
+        pending ID, so button clicks resolve to the correct item — including after a restart."""
+        has_flags = bool(
+            pending.ai_result.get("_fact_check") or pending.ai_result.get("_location_check")
+        )
+        return ApprovalViewWithWarning(self, pending.id) if has_flags else ApprovalView(self, pending.id)
+
     async def setup_hook(self):
-        self.add_view(ApprovalView(self, "__placeholder__"))
-        self.add_view(ApprovalViewWithWarning(self, "__placeholder__"))
+        # Re-register a persistent view for every already-sent approval, bound to its specific
+        # Discord message. discord.py routes a button click to the view registered for that
+        # message id (falling back to a message-agnostic view only when none is found), so each
+        # restored view carries the item's real pending ID instead of a shared placeholder that
+        # would resolve to None → "already processed" and strand the item after a restart.
+        # Items still awaiting their first send (discord_message_id is None) are (re)sent by
+        # _restore_pending in on_ready, and channel.send() registers that view automatically.
+        for item in self.store.get_all():
+            if item.discord_message_id is not None:
+                self.add_view(self._build_view(item), message_id=item.discord_message_id)
         self.cookie_check_loop.start()
 
     async def on_ready(self):
@@ -211,10 +228,7 @@ class SAVESBot(discord.Client):
                 await self.send_for_approval(item)
 
     async def send_for_approval(self, pending: PendingApproval) -> None:
-        has_flags = bool(
-            pending.ai_result.get("_fact_check") or pending.ai_result.get("_location_check")
-        )
-        view = ApprovalViewWithWarning(self, pending.id) if has_flags else ApprovalView(self, pending.id)
+        view = self._build_view(pending)
         channel_name = self._discord_cfg.get("channel_approvals", "SAVES-approvals")
         msg_id = await send_approval_request(self, channel_name, pending, view)
         if msg_id:
@@ -275,6 +289,22 @@ class SAVESBot(discord.Client):
         from src.extractors.base import ExtractedContent
         paths = self.config.get("paths", {})
 
+        # Idempotency guard — processing_state.json is the source of truth. If this URL is
+        # already marked done (double-click, or a button whose message was restored after a
+        # restart while the note had already been written), do NOT write a second note.
+        # write_note never overwrites, so a re-run would create a "-2" duplicate. Clean up
+        # the stale pending entry and tell the user where it already lives.
+        if self.state is not None and self.state.is_done(pending.url):
+            existing = self.state.path_for(pending.url) or "vault"
+            self.store.remove(pending.id)
+            try:
+                await interaction.edit_original_response(
+                    content=f"✅ Already saved to `{existing}`", embed=None, view=None
+                )
+            except discord.HTTPException:
+                pass
+            return
+
         cs = pending.content_summary
         content = ExtractedContent(
             url=pending.url,
@@ -304,13 +334,16 @@ class SAVESBot(discord.Client):
             content=note_md,
         )
 
+        # Record completion in the state file immediately after the note is on disk — before
+        # the slower preference/inbox/Discord cleanup — so a crash mid-cleanup can't cause a
+        # duplicate note on re-approval (the guard at the top short-circuits on state=done).
+        if self.state is not None:
+            self.state.mark_done(pending.url, note_path)
+
         # Save learned preference: source → final folder path
         source_key = pending.ai_result.get("_source_key")
         final_path = pending.ai_result["folder_path"]
         self.prefs.set(source_key, final_path)
-
-        if self.state is not None:
-            self.state.mark_done(pending.url, note_path)
 
         remove_url_from_inbox(paths.get("inbox_file", ""), pending.url)
         self.store.remove(pending.id)

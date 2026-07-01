@@ -42,6 +42,19 @@ class FileWatcher:
     def start(self):
         import os
         watch_dir = os.path.dirname(self._inbox_path)
+        # watchdog's Observer.schedule() raises FileNotFoundError if the directory is
+        # missing (e.g. NAS not mounted yet). Degrade gracefully instead of crashing the
+        # whole app at startup: log a clear warning and skip watching. The processor still
+        # drains the queue, and enqueue_from_file already tolerates a missing inbox file, so
+        # URLs will be picked up on the next restart once the path exists.
+        if not os.path.isdir(watch_dir):
+            logger.error(
+                "Inbox directory does not exist: %s — file watcher NOT started. URLs added "
+                "to the inbox will not be auto-detected until this path exists and the app "
+                "is restarted.",
+                watch_dir,
+            )
+            return
         handler = _InboxHandler(self._inbox_path, self._loop, self._on_change)
         self._observer = Observer()
         self._observer.schedule(handler, watch_dir, recursive=False)

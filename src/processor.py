@@ -61,8 +61,20 @@ async def _process_one(
 
     # 1. Extract
     extractor = get_extractor(url, config)
+    # Backstop against a hung extractor (stalled network read, a wedged Playwright page)
+    # holding up the whole serial queue forever. The blocking yt-dlp subprocess and the
+    # Playwright page have their own inner timeouts; this outer bound covers the async
+    # await itself so a genuinely stuck extraction fails and the queue moves on.
+    extract_timeout = config.get("processing", {}).get("extract_timeout_seconds", 180)
     try:
-        content = await extractor.extract(url)
+        async with asyncio.timeout(extract_timeout):
+            content = await extractor.extract(url)
+    except (TimeoutError, asyncio.TimeoutError):
+        err_msg = f"extraction timed out after {extract_timeout}s"
+        logger.warning("%s: %s", err_msg, url)
+        state.mark_failed(url, err_msg)
+        await send_alert(bot, alert_channel, f"Extraction timed out ({extract_timeout}s): {url}")
+        return
     except Exception as e:
         err_msg = str(e)
         if any(code in err_msg for code in ("404", "not found", "removed")):

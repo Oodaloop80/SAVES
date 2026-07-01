@@ -17,9 +17,10 @@ watcher:
 
 processing:
   concurrent_downloads: 1
-  retry_attempts: 3
-  retry_delay_seconds: 30
+  retry_attempts: 3            # used by the remote-transcription retry (utils/retry.py)
+  retry_delay_seconds: 30      # base backoff for that retry (exponential: 30s, 60s, …)
   skip_duplicates: true
+  extract_timeout_seconds: 180  # hard cap on a single extractor.extract() await
 
 media:
   download_video: true
@@ -48,6 +49,7 @@ ai:
   max_tokens: 8192          # room for full multi-slide image_text OCR + all JSON fields
   temperature: 0.3
   max_content_chars: 20000
+  max_retries: 4            # Anthropic SDK transient-error retries (honors Retry-After)
 
 platforms:
   reddit:

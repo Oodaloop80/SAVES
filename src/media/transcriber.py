@@ -6,6 +6,8 @@ import subprocess
 
 import requests
 
+from src.utils.retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 _whisper_model = None
@@ -42,16 +44,27 @@ async def transcribe(audio_path: str, config: dict) -> str | None:
 
     mode = tcfg.get("mode", "local")
     if mode == "remote":
-        return await asyncio.to_thread(_transcribe_remote, audio_path, tcfg)
+        return await asyncio.to_thread(_transcribe_remote, audio_path, config)
     return await asyncio.to_thread(_transcribe_local, audio_path, tcfg)
 
 
-def _transcribe_remote(audio_path: str, tcfg: dict) -> str | None:
+def _transcribe_remote(audio_path: str, config: dict) -> str | None:
+    tcfg = config.get("transcription", {})
     remote_url = tcfg.get("remote_url", "")
     if not remote_url:
         logger.error("transcription.remote_url is not set in config.yaml")
         return None
-    try:
+
+    # The Whisper server runs on the workstation and is often still warming up (model load)
+    # or briefly unreachable when the first video of a session arrives. Retry the POST with
+    # backoff (utils/retry.py) so a transient blip doesn't silently drop the transcript. The
+    # POST is stateless/idempotent — the file is re-opened fresh on each attempt.
+    pcfg = config.get("processing", {})
+    attempts = pcfg.get("retry_attempts", 3)
+    base_delay = pcfg.get("retry_delay_seconds", 30)
+
+    @with_retry(attempts=attempts, base_delay=base_delay, exceptions=(requests.RequestException,))
+    def _post() -> str | None:
         with open(audio_path, "rb") as f:
             resp = requests.post(
                 remote_url,
@@ -60,8 +73,11 @@ def _transcribe_remote(audio_path: str, tcfg: dict) -> str | None:
             )
         resp.raise_for_status()
         return resp.json().get("text") or None
+
+    try:
+        return _post()
     except Exception as e:
-        logger.warning(f"Remote transcription failed for {audio_path}: {e}")
+        logger.warning(f"Remote transcription failed for {audio_path} after retries: {e}")
         return None
 
 

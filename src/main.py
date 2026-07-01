@@ -9,6 +9,7 @@ from src.discord_bot.bot import SAVESBot
 from src.processor import run_processor
 from src.queue_manager import ProcessingState, QueueManager
 from src.utils.preferences import PreferencesStore
+from src.utils.validation import validate_startup
 from src.watcher import FileWatcher
 
 os.makedirs("logs", exist_ok=True)
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 async def main():
     config = load_config()
     load_credentials()
+    validate_startup(config)  # fail fast on missing paths/channels before anything starts
 
     paths = config.get("paths", {})
     inbox_path = paths.get("inbox_file", "")

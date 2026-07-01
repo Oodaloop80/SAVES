@@ -38,6 +38,12 @@ class ProcessingState:
         status = self._state.get(url, {}).get("status")
         return status in ("done", "pending", "failed_permanent")
 
+    def is_done(self, url: str) -> bool:
+        return self._state.get(url, {}).get("status") == "done"
+
+    def path_for(self, url: str) -> str | None:
+        return self._state.get(url, {}).get("path")
+
     def mark_pending(self, url: str):
         self._state[url] = {"status": "pending", "timestamp": time.time()}
         self._save()

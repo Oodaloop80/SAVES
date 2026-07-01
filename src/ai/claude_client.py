@@ -25,8 +25,18 @@ logger = logging.getLogger(__name__)
 _MODELS_REJECTING_TEMPERATURE: set[str] = set()
 
 
-def _make_client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+def _make_client(config: dict | None = None) -> anthropic.Anthropic:
+    # The Anthropic SDK retries transient failures (429/500/502/503/529 + connection errors)
+    # with exponential backoff and honors the server's Retry-After header — strictly better
+    # for an HTTP API than a fixed-delay wrapper. We just make the attempt count configurable
+    # (ai.max_retries) so a flaky-network deploy can lean on it harder. This is the "Claude
+    # API backoff"; utils/retry.py is instead wired into the remote-transcription POST, which
+    # the SDK does not cover.
+    max_retries = (config or {}).get("ai", {}).get("max_retries", 4)
+    return anthropic.Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        max_retries=max_retries,
+    )
 
 
 def _call(
@@ -95,7 +105,7 @@ def _analyze_sync(
     image_blocks: list[dict] | None = None,
     existing_folders: list[str] | None = None,
 ) -> dict:
-    client = _make_client()
+    client = _make_client(config)
 
     # Two-stage option: a cheap vision model (vision.ocr_model) reads the image slides
     # into text, then the main ai.model does the full analysis on text only — no images.
@@ -190,7 +200,7 @@ async def nl_edit(current_state: dict, instruction: str, config: dict) -> dict:
 
 
 def _nl_edit_sync(current_state: dict, instruction: str, config: dict) -> dict:
-    client = _make_client()
+    client = _make_client(config)
     user_prompt = build_nl_edit_prompt(current_state, instruction)
     raw = _call(client, NL_EDIT_SYSTEM_PROMPT, user_prompt, config)
     try:
@@ -224,7 +234,7 @@ def _fact_check_sync(
     config: dict,
     image_blocks: list[dict] | None = None,
 ) -> dict | None:
-    client = _make_client()
+    client = _make_client(config)
     fc_cfg = config.get("fact_checking", {})
     jurisdiction = fc_cfg.get("jurisdiction")
 

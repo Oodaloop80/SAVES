@@ -320,11 +320,14 @@ Main driver is the Sonnet web-search loop (up to 5 searches). Adjust
 `fact_checking.max_searches` in config to trade coverage for cost.
 
 **Known gaps (not yet wired in):**
-- `with_retry()` in `src/utils/retry.py` is defined but never called. Should wrap
-  extractor and downloader calls for resilience against transient failures.
+- `with_retry()` in `src/utils/retry.py` is now wired into the remote-transcription POST
+  (`transcriber._transcribe_remote`) using `processing.retry_attempts`/`retry_delay_seconds`.
+  Extractor and downloader calls are still NOT retry-wrapped — that needs a transient-vs-
+  permanent error split first so it doesn't retry deleted-URL 404s. (Claude API resilience is
+  handled by the Anthropic SDK's own `max_retries`, set via `ai.max_retries`.)
 - Several `config.yaml` keys are defined but unused: `processing.concurrent_downloads`,
-  `processing.retry_attempts`, `media.download_video`, `media.download_images`,
-  `notes.tags_min/max`, `transcription.skip_if_captions_available`.
+  `media.download_video`, `media.download_images`, `notes.tags_min/max`,
+  `transcription.skip_if_captions_available`.
 
 **Prompt caching is active** on system prompts (`_call`) and the fact-check web-search
 loop's first user message. Back-to-back posts and JSON retries benefit automatically.
