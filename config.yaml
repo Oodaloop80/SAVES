@@ -107,13 +107,15 @@ fact_checking:
     - political
     - finance
   web_search: true            # Let Claude search the web for verifiable evidence + source URLs
-  web_search_topics:          # Only these topics get web search; others rely on content + comments
-    - health
-    - finance
+  web_search_topics:          # Topics eligible for web search — but ONLY via the on-demand
+    - health                  # "Deep fact-check" button. The automatic on-arrival pass is
+    - finance                 # always local-only (cheap flags: conflict-of-interest, media
+    - political               # authenticity, dosage/safety); web search never runs on its own.
   max_searches: 5             # Default web-search cap for topics without a specific override below
-  max_searches_by_topic:      # Per-topic web-search cap. A post matching several topics uses the
-    health: 6                 # highest applicable cap. Recipes/food always skip web search (local
-    finance: 3                # check only), regardless of these numbers.
+  max_searches_by_topic:      # Per-topic web-search cap (on-demand button). A post matching
+    health: 6                 # several topics uses the highest applicable cap. Recipes/food
+    finance: 3                # always skip web search (local check only), regardless of these.
+    political: 1
   max_tokens: 6000            # Fact-check responses include reasoning + cited sources
   include_images: false       # OCR (vision.ocr_model) already extracts image text; sending raw pixels would double-bill the same content
   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity

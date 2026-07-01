@@ -65,17 +65,24 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] (optional) persist NL-edit sessions across bot restart
 
 ## Phase 3 — Runtime token efficiency  *(real-time only — instant results preserved)*
-> Strategy under review with Bora (2026-07-01). Batch API intentionally excluded here — see
-> Phase 6. Attack cost in priority order of where the money actually goes:
-> **fact-check web-search loop ≫ Opus analysis ≫ Haiku OCR.**
+> Strategy locked with Bora (2026-07-01). Batch API excluded (Phase 6). Priority order of
+> where the money goes: **fact-check web-search loop ≫ Opus analysis ≫ Haiku OCR.**
+- [x] Per-topic web-search caps: **health 6, finance 3, political 1** (finance stays on web
+      search; recipes/food stay local-only). Rounds scale with the cap so a 6-search health
+      check isn't cut off.
+- [x] **On-demand fact-check**: the automatic on-arrival pass is LOCAL only (cheap flags —
+      conflict-of-interest, media authenticity, dosage/safety); the web-search loop runs via a
+      Discord "🔍 Deep fact-check" button (health 6 / finance 3 / political 1). Code + view
+      logic done and unit-verified; live Discord button click still to be tested in Phase 4.
+- [x] **A/B Opus vs Sonnet** analysis: `scripts/ab_compare.py` writes two labeled notes to the
+      DEV vault for review. First run (L-theanine): identical routing, comparable tags (Sonnet
+      a bit more verbose). Verdict pending Bora's Obsidian review across more saves.
+- [ ] `effort: medium` on Opus analysis + Sonnet fact-check; drop the rejected `temperature`
+      param on Opus (currently wastes one 400'd request per process) — untapped, big lever
 - [ ] Cache the travel-location check (`verifier.py`) — zero-risk quick win
 - [ ] Right-size `max_tokens` (analysis 8192→4096, OCR 8192→6000) with truncation watch
-- [ ] Narrow `web_search_topics` — drop `finance`, keep `health`
-- [ ] Trim `SYSTEM_PROMPT` folder examples; make recipe/travel rules conditional (A/B on ~50 saves)
+- [ ] Trim `SYSTEM_PROMPT` folder examples; make recipe/travel rules conditional
 - [ ] Conditional OCR — skip Haiku OCR for pure-photo posts
-- [ ] (candidate) `effort: medium` on Opus analysis + Sonnet fact-check — untapped, big lever
-- [ ] (candidate) Cap `max_searches` 5→3 and/or gate fact-check to on-demand (Discord button)
-- [ ] (candidate) A/B Opus→Sonnet for the analysis stage (40% cheaper, quality test needed)
 
 ## Phase 4 — Deploy, mobile, live-test
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
@@ -95,6 +102,10 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] Batch API (night-time): route the two pre-approval Claude calls (OCR + analysis) through
       Message Batches for 50% off; add a "pending batch" state to `processing_state.json` and a
       poller that resumes when the batch completes. Fact-check can batch too once stable.
+- [ ] (deferred / rejected for now) Multi-LLM providers (Gemini free tier, bucket-exhaustion
+      fallback). Shelved 2026-07-01 — attacks the smallest cost bucket (OCR ~7%) and risks
+      output consistency across providers. Revisit ONLY if Claude costs get out of hand; if so,
+      scope it narrowly (OCR-only offload or availability failover), never the analysis stage.
 
 ---
 

@@ -214,7 +214,15 @@ async def fact_check(
     ai_result: dict,
     config: dict,
     image_blocks: list[dict] | None = None,
+    allow_web_search: bool = True,
 ) -> dict | None:
+    """Run the fact-check pass.
+
+    `allow_web_search=False` forces the cheap local pass (no web-search loop) regardless of
+    topic — used for the automatic on-arrival pass, which surfaces conflict-of-interest,
+    media-authenticity, and dosage/safety flags without paying for web search. The Discord
+    "Deep fact-check" button re-runs this with `allow_web_search=True` on demand.
+    """
     fc_cfg = config.get("fact_checking", {})
     if not fc_cfg.get("enabled", True):
         return None
@@ -224,7 +232,7 @@ async def fact_check(
         return None
     import asyncio
     return await asyncio.to_thread(
-        _fact_check_sync, content, ai_result, config, image_blocks
+        _fact_check_sync, content, ai_result, config, image_blocks, allow_web_search
     )
 
 
@@ -233,6 +241,7 @@ def _fact_check_sync(
     ai_result: dict,
     config: dict,
     image_blocks: list[dict] | None = None,
+    allow_web_search: bool = True,
 ) -> dict | None:
     client = _make_client(config)
     fc_cfg = config.get("fact_checking", {})
@@ -253,8 +262,9 @@ def _fact_check_sync(
     imgs = image_blocks if (image_blocks and fc_cfg.get("include_images", True) and not ocr_extracted) else None
 
     # Web search is only valuable for topics that need active claim verification.
-    # For political/travel/cross-cutting the content itself + comments are sufficient.
-    use_web_search = fc_cfg.get("web_search", True)
+    # The automatic on-arrival pass calls with allow_web_search=False (cheap local flags
+    # only); the Discord "Deep fact-check" button calls with allow_web_search=True.
+    use_web_search = allow_web_search and fc_cfg.get("web_search", True)
     if use_web_search:
         web_search_topics = set(fc_cfg.get("web_search_topics", []))
         if web_search_topics:

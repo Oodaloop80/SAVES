@@ -41,7 +41,7 @@ from src.utils.url_parser import detect_platform, normalize_url  # noqa: E402
 from src.utils.vault_scanner import scan_saves_folders  # noqa: E402
 
 
-async def run(url: str, dry_run: bool = False):
+async def run(url: str, dry_run: bool = False, deep: bool = False):
     load_credentials()
     config = load_config()
 
@@ -130,8 +130,12 @@ async def run(url: str, dry_run: bool = False):
 
     fc_result = None
     if ai_result.get("topics"):
-        print(f"  Topics: {ai_result['topics']} — checking for fact-check triggers")
-        fc_result = await fact_check(content, ai_result, config, image_blocks=image_blocks or None)
+        mode = "DEEP web-searched" if deep else "local (pass --deep for web search)"
+        print(f"  Topics: {ai_result['topics']} — fact-check [{mode}]")
+        fc_result = await fact_check(
+            content, ai_result, config,
+            image_blocks=image_blocks or None, allow_web_search=deep,
+        )
         if fc_result:
             if fc_result.get("opinion_only"):
                 print("  Fact-check: opinion/analysis content — no claims to verify")
@@ -159,7 +163,12 @@ async def run(url: str, dry_run: bool = False):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python scripts/process_one.py <URL> [--dry-run]")
+        print("Usage: python scripts/process_one.py <URL> [--dry-run] [--deep]")
         sys.exit(1)
     dry = "--dry-run" in sys.argv
-    asyncio.run(run(sys.argv[1], dry_run=dry))
+    deep = "--deep" in sys.argv
+    url_arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+    if not url_arg:
+        print("Usage: python scripts/process_one.py <URL> [--dry-run] [--deep]")
+        sys.exit(1)
+    asyncio.run(run(url_arg, dry_run=dry, deep=deep))

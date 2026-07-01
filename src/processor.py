@@ -161,12 +161,19 @@ async def _process_one(
         state.mark_failed(url, f"AI failed: {e}")
         return
 
-    # 7. Fact-check (health/political/finance) and travel location check in parallel
+    # 7. Fact-check (health/political/finance) and travel location check in parallel.
+    # The automatic pass is LOCAL ONLY (allow_web_search=False) — it surfaces the cheap,
+    # valuable flags (conflict-of-interest, media authenticity, dosage/safety) without paying
+    # for the slow web-search loop. The user runs the web-searched deep check on demand via
+    # the Discord "🔍 Deep fact-check" button when a post is worth verifying.
     fc_result = None
     lc_result = None
     try:
         fc_task = asyncio.create_task(
-            fact_check(content, ai_result, config, image_blocks=image_blocks or None)
+            fact_check(
+                content, ai_result, config,
+                image_blocks=image_blocks or None, allow_web_search=False,
+            )
         )
         lc_task = asyncio.create_task(check_travel_location(content, ai_result, config))
         fc_result, lc_result = await asyncio.gather(fc_task, lc_task, return_exceptions=True)

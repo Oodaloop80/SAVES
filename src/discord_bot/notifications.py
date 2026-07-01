@@ -13,17 +13,9 @@ def _get_channel(bot: discord.Client, channel_name: str) -> discord.TextChannel 
     return None
 
 
-async def send_approval_request(
-    bot: discord.Client,
-    channel_name: str,
-    pending,  # PendingApproval
-    view: discord.ui.View,
-) -> int | None:
-    channel = _get_channel(bot, channel_name)
-    if channel is None:
-        logger.error(f"Discord channel #{channel_name} not found")
-        return None
-
+def build_approval_embed(pending) -> discord.Embed:
+    """Build the approval embed for a pending item. Extracted so it can be re-rendered when
+    the on-demand deep fact-check completes and populates `_fact_check` with fresh results."""
     ai = pending.ai_result
     tags_preview = " ".join(f"#{t}" for t in (ai.get("tags") or [])[:8])
     summary = ai.get("summary", "")[:300]
@@ -98,8 +90,33 @@ async def send_approval_request(
                 inline=False,
             )
 
-    embed.set_footer(text=f"ID: {pending.id[:8]} | {pending.url[:80]}")
+    # Signal that what's shown is the cheap local pass and web verification is one click away.
+    if ai.get("_fact_check") and not ai.get("_deep_fact_check_done"):
+        embed.add_field(
+            name="🔍 Deep fact-check available",
+            value=(
+                "The flags above are the quick **local** pass (no web search). Press "
+                "**🔍 Deep fact-check** to run web-searched claim verification with sources."
+            ),
+            inline=False,
+        )
 
+    embed.set_footer(text=f"ID: {pending.id[:8]} | {pending.url[:80]}")
+    return embed
+
+
+async def send_approval_request(
+    bot: discord.Client,
+    channel_name: str,
+    pending,  # PendingApproval
+    view: discord.ui.View,
+) -> int | None:
+    channel = _get_channel(bot, channel_name)
+    if channel is None:
+        logger.error(f"Discord channel #{channel_name} not found")
+        return None
+
+    embed = build_approval_embed(pending)
     msg = await channel.send(embed=embed, view=view)
     return msg.id
 

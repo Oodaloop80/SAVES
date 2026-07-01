@@ -18,10 +18,16 @@ _nl_edit_sessions: dict[int, str] = {}
 
 
 class ApprovalView(discord.ui.View):
-    def __init__(self, bot: "SAVESBot", pending_id: str):
+    def __init__(self, bot: "SAVESBot", pending_id: str, show_deep_button: bool = True):
         super().__init__(timeout=None)
         self.bot = bot
         self.pending_id = pending_id
+        # The deep (web-searched) fact-check button only makes sense for posts with checkable
+        # topics that haven't already had it run — drop it otherwise so it isn't dead weight.
+        if not show_deep_button:
+            for item in list(self.children):
+                if getattr(item, "custom_id", None) == "deep_fact_check":
+                    self.remove_item(item)
 
     @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -68,6 +74,37 @@ class ApprovalView(discord.ui.View):
             f"**Current tags:**\n{tag_list}\n\nSelect tags to remove:",
             view=view,
             ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🔍 Deep fact-check", style=discord.ButtonStyle.primary,
+        custom_id="deep_fact_check", row=1,
+    )
+    async def deep_fact_check(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pending = self.bot.store.get_by_id(self.pending_id)
+        if not pending:
+            await interaction.response.send_message("This item has already been processed.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        await interaction.edit_original_response(
+            content="🔍 Running deep fact-check (web search — this takes ~1–3 min)…"
+        )
+        try:
+            await self.bot._run_deep_fact_check(pending)
+        except Exception as e:
+            logger.warning("Deep fact-check failed for %s: %s", pending.url, e)
+            await interaction.edit_original_response(
+                content="⚠️ Deep fact-check failed — you can still approve the note."
+            )
+            return
+        # Re-render with the web-searched results: new embed + refreshed view (warning variant
+        # now that flags are present, and the deep-check button dropped since it's done).
+        from src.discord_bot.notifications import build_approval_embed
+        embed = build_approval_embed(pending)
+        new_view = self.bot._build_view(pending)
+        await interaction.edit_original_response(
+            content="✅ Deep fact-check complete — review the findings below.",
+            embed=embed, view=new_view,
         )
 
 
@@ -199,11 +236,46 @@ class SAVESBot(discord.Client):
     def _build_view(self, pending: PendingApproval) -> ApprovalView:
         """Pick the approval-view variant for an item: the warning variant when fact-check or
         location flags are present, else the standard one. Both carry the item's *real*
-        pending ID, so button clicks resolve to the correct item — including after a restart."""
-        has_flags = bool(
-            pending.ai_result.get("_fact_check") or pending.ai_result.get("_location_check")
+        pending ID, so button clicks resolve to the correct item — including after a restart.
+        The deep (web-searched) fact-check button is shown only for posts with checkable
+        topics that haven't already had the deep check run."""
+        ai = pending.ai_result
+        has_flags = bool(ai.get("_fact_check") or ai.get("_location_check"))
+        checkable = set(
+            self.config.get("fact_checking", {}).get("topics", ["health", "political", "finance"])
         )
-        return ApprovalViewWithWarning(self, pending.id) if has_flags else ApprovalView(self, pending.id)
+        topics = ai.get("topics") or []
+        show_deep = any(t in checkable for t in topics) and not ai.get("_deep_fact_check_done")
+        cls = ApprovalViewWithWarning if has_flags else ApprovalView
+        return cls(self, pending.id, show_deep_button=show_deep)
+
+    async def _run_deep_fact_check(self, pending: PendingApproval):
+        """Run the on-demand web-searched fact-check for a pending item, store the result on
+        it, and mark the deep check done. Reconstructs a lightweight ExtractedContent from the
+        stored content_summary — images aren't needed (OCR text already lives in ai_result)."""
+        from src.ai.claude_client import fact_check
+        from src.extractors.base import ExtractedContent
+        cs = pending.content_summary
+        content = ExtractedContent(
+            url=pending.url,
+            platform=pending.platform,
+            title=cs.get("title", ""),
+            author=cs.get("author"),
+            body_text=cs.get("body_text", ""),
+            captions=cs.get("captions"),
+            metadata=cs.get("metadata", {}),
+            chapters=cs.get("chapters"),
+            top_comments=cs.get("top_comments"),
+        )
+        result = await fact_check(
+            content, pending.ai_result, self.config,
+            image_blocks=None, allow_web_search=True,
+        )
+        if result:
+            pending.ai_result["_fact_check"] = result
+        pending.ai_result["_deep_fact_check_done"] = True
+        self.store.update(pending)
+        return result
 
     async def setup_hook(self):
         # Re-register a persistent view for every already-sent approval, bound to its specific
