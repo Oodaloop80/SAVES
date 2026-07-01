@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # (e.g. sonnet/haiku) keep getting it.
 _MODELS_REJECTING_TEMPERATURE: set[str] = set()
 
+# Same self-learning pattern for `effort` (output_config.effort). Opus 4.5–4.8 and Sonnet 4.6
+# accept it; Haiku 4.5 (our OCR stage) and Sonnet 4.5 reject it (400). On first rejection we
+# cache the model and stop sending effort to it — so the shared Haiku OCR path silently drops
+# effort without a failed request every run.
+_MODELS_REJECTING_EFFORT: set[str] = set()
+
 
 def _make_client(config: dict | None = None) -> anthropic.Anthropic:
     # The Anthropic SDK retries transient failures (429/500/502/503/529 + connection errors)
@@ -69,16 +75,33 @@ def _call(
     if temperature is not None and model not in _MODELS_REJECTING_TEMPERATURE:
         params["temperature"] = temperature
 
+    # Send effort (thinking depth) the same way. Supported on Opus 4.5–4.8 / Sonnet 4.6;
+    # rejected by Haiku 4.5 (OCR) and Sonnet 4.5. The self-learning set means the Haiku OCR
+    # call 400s at most once, then effort is skipped for it every subsequent call.
+    effort = ai_cfg.get("effort")
+    if effort is not None and model not in _MODELS_REJECTING_EFFORT:
+        params["output_config"] = {"effort": effort}
+
     try:
         msg = client.messages.create(**params)
     except anthropic.BadRequestError as e:
-        if "temperature" in str(e) and "temperature" in params:
+        err = str(e)
+        # Retry once, dropping whichever unsupported param(s) the model rejected, and cache
+        # the model so we don't send them again this process run.
+        retried = False
+        if "temperature" in err and "temperature" in params:
             logger.debug("Model %s rejects `temperature`; retrying without it (and skipping it from now on)", model)
             _MODELS_REJECTING_TEMPERATURE.add(model)
             params.pop("temperature", None)
-            msg = client.messages.create(**params)
-        else:
+            retried = True
+        if ("effort" in err or "output_config" in err) and "output_config" in params:
+            logger.debug("Model %s rejects `effort`; retrying without it (and skipping it from now on)", model)
+            _MODELS_REJECTING_EFFORT.add(model)
+            params.pop("output_config", None)
+            retried = True
+        if not retried:
             raise
+        msg = client.messages.create(**params)
     return msg.content[0].text
 
 

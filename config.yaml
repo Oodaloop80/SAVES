@@ -47,7 +47,11 @@ vision:
 ai:
   model: "claude-opus-4-8"
   max_tokens: 8192          # room for full multi-slide image_text OCR + all JSON fields
-  temperature: 0.3
+  temperature: 0.3          # kept: opus-4-8 rejects it (handled+cached); sonnet-4-6 accepts it
+  effort: "medium"          # thinking depth for analysis + local fact-check (low|medium|high).
+                            # medium is the cost/quality sweet spot. Auto-skipped for the Haiku
+                            # OCR stage (Haiku 4.5 rejects effort) and not sent to the web-search
+                            # fact-check loop (that stays thorough at default effort).
   max_content_chars: 20000
   max_retries: 4            # Anthropic SDK transient-error retries (honors Retry-After)
 
