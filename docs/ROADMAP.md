@@ -15,7 +15,10 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Decisions locked (change anytime)
 
 - **Dev surface:** Claude Code **CLI** on the desktop (not web).
-- **Runtime cost:** **night-time Batch API** for the two pre-approval Claude calls; daytime real-time.
+- **Runtime cost:** cut cost with **real-time** levers first (model routing, `effort`, prompt
+  caching, fact-check gating) so results stay instant during tuning. The **Batch API** (50%
+  off but async — no instant results) is **deferred to a final phase**, adopted only once
+  save quality is dialed in and instant feedback is no longer needed.
 - **Docs system:** `CLAUDE.md` (auto-loaded orientation) + `docs/HANDBOOK.md` (recreate/maintain)
   + `docs/ROADMAP.md` (this file). Update the relevant doc in the same commit as each change.
 
@@ -61,13 +64,18 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       restart carry the item's real pending ID. Placeholder views removed.
 - [ ] (optional) persist NL-edit sessions across bot restart
 
-## Phase 3 — Runtime token efficiency
+## Phase 3 — Runtime token efficiency  *(real-time only — instant results preserved)*
+> Strategy under review with Bora (2026-07-01). Batch API intentionally excluded here — see
+> Phase 6. Attack cost in priority order of where the money actually goes:
+> **fact-check web-search loop ≫ Opus analysis ≫ Haiku OCR.**
 - [ ] Cache the travel-location check (`verifier.py`) — zero-risk quick win
 - [ ] Right-size `max_tokens` (analysis 8192→4096, OCR 8192→6000) with truncation watch
 - [ ] Narrow `web_search_topics` — drop `finance`, keep `health`
 - [ ] Trim `SYSTEM_PROMPT` folder examples; make recipe/travel rules conditional (A/B on ~50 saves)
 - [ ] Conditional OCR — skip Haiku OCR for pure-photo posts
-- [ ] Batch API (night-time): route OCR + analysis through Message Batches; "pending batch" state
+- [ ] (candidate) `effort: medium` on Opus analysis + Sonnet fact-check — untapped, big lever
+- [ ] (candidate) Cap `max_searches` 5→3 and/or gate fact-check to on-demand (Discord button)
+- [ ] (candidate) A/B Opus→Sonnet for the analysis stage (40% cheaper, quality test needed)
 
 ## Phase 4 — Deploy, mobile, live-test
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
@@ -79,6 +87,14 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Phase 5 — Ongoing tuning
 - [ ] Feed real URLs via `/save`; refine quality + routing; let `preferences.json` learn
 - [ ] Keep docs current per change; targeted single-agent reviews on risky edits only
+
+## Phase 6 — Cost optimization (post-stabilization)  *(gated: only once quality is dialed in)*
+> Deferred here on purpose (Bora, 2026-07-01): batching removes instant results, which would
+> cripple the tweaking/testing loop. Do NOT start until saves are consistently high-quality
+> and instant feedback is no longer needed.
+- [ ] Batch API (night-time): route the two pre-approval Claude calls (OCR + analysis) through
+      Message Batches for 50% off; add a "pending batch" state to `processing_state.json` and a
+      poller that resumes when the batch completes. Fact-check can batch too once stable.
 
 ---
 
