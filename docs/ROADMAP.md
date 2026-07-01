@@ -79,3 +79,5 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 | 2 | `bot.py:200-201` | Persistent views registered with `pending_id="__placeholder__"` → after restart, already-sent approvals route to placeholder and become unapprovable | High | ⏳ Deferred to Phase 2 (see item above) |
 | 3 | `file_io.py:16` | `remove_url_from_inbox` matches by substring → a URL that's a prefix of another inbox URL removes both | Low | Noted |
 | 4 | `file_manager.py:110` | `move_note` same-volume `os.rename` overwrites an existing destination (no conflict resolution) | Low | Noted |
+| 5 | `test_connection.py` / `process_one.py` | Emoji/Unicode `print()` crashes on Windows (cp1252) — both CLI scripts unrunnable on the dev workstation | High | ✅ Fixed (force UTF-8 on stdout/stderr) |
+| 6 | `test_connection.py:61` | Reddit check used a bot UA + no cookies → Cloudflare 403 false negative while the real extractor (browser UA + reddit.txt) succeeds | Med | ✅ Fixed (test via extractor session) |

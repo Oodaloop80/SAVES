@@ -12,6 +12,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Windows consoles default to cp1252 and crash when printing the note's Unicode
+# (↕/→/✅ etc.). Force UTF-8 on both streams (no-op on Linux/Docker).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # Surface our own INFO-level progress (e.g. the fact-check web-search rounds) so a slow
 # silent pass doesn't look like a freeze. Third-party libs stay at WARNING to avoid noise.
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
