@@ -4,7 +4,7 @@
 > Full reasoning lives in `docs/PLAN.md`. Orientation lives in `CLAUDE.md`. Recreate/maintain
 > details live in `docs/HANDBOOK.md`.
 
-**Current phase:** Phase 1 (CLI setup in progress).
+**Current phase:** Phase 2 (harden the pipeline). Phase 1 complete.
 
 **Status in one line:** Core pipeline is feature-complete and in active dev use. Remaining work
 is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionless save loop.
@@ -27,7 +27,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [x] Write `docs/ROADMAP.md` (this file)
 - [x] Commit all four docs to the repo (commit `9e7ffb6`)
 
-## Phase 1 — CLI setup & frictionless loop  *(first desktop session)*
+## Phase 1 — CLI setup & frictionless loop  *(completed)*
 - [x] `git pull`; confirm remote + clean tree on the desktop
 - [x] `.claude/settings.json`: SessionStart hook (sync + print current ROADMAP phase) + Bash
       allowlist (`python`, `git`, `ffmpeg`, `yt-dlp`) to cut permission prompts
@@ -35,7 +35,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [x] Minimal `pyproject.toml` (ruff) + one smoke test for lint/test feedback
 - [x] Re-run review cheaply: single-pass `/code-review` over the working tree (replaces the
       multi-agent review that got cut off by the spend limit); log fixes below
-- [ ] Verify: `scripts/test_connection.py` green; `process_one.py` good on one URL per platform
+- [x] Verify: `scripts/test_connection.py` green; `process_one.py` good on one URL per platform
 
 ## Phase 2 — Harden the existing pipeline
 - [ ] Startup config validation (fail fast on missing paths/keys/channels)
