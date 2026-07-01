@@ -279,8 +279,19 @@ def _fact_check_sync(
             logger.info("  Fact-check: recipe/food content — skipping web search (quick local pass only)")
 
     if use_web_search:
+        # Per-topic search budget: a health post gets more searches than a finance post
+        # (see fact_checking.max_searches_by_topic). A post matching several web-search
+        # topics uses the highest applicable cap so a health claim isn't under-searched
+        # just because the post also touches finance. Falls back to the global default.
+        post_topics = set(ai_result.get("topics", []))
+        web_topics = set(fc_cfg.get("web_search_topics", []))
+        by_topic = fc_cfg.get("max_searches_by_topic", {}) or {}
+        caps = [by_topic[t] for t in (post_topics & web_topics) if t in by_topic]
+        effective_searches = max(caps) if caps else fc_cfg.get("max_searches", 5)
         try:
-            raw, harvested = _factcheck_with_web_search(client, user_prompt, config, imgs)
+            raw, harvested = _factcheck_with_web_search(
+                client, user_prompt, config, imgs, max_searches=effective_searches
+            )
         except Exception as e:
             logger.warning("Web-search fact-check failed (%s); falling back to no-search", e)
             raw = _call(client, FACT_CHECK_SYSTEM_PROMPT, _with_images(user_prompt, imgs), config)
@@ -319,6 +330,7 @@ def _factcheck_with_web_search(
     user_prompt: str,
     config: dict,
     image_blocks: list[dict] | None = None,
+    max_searches: int | None = None,
 ) -> tuple[str, list[str]]:
     """Run the fact-check with the server-side web_search tool enabled.
 
@@ -331,7 +343,8 @@ def _factcheck_with_web_search(
     fc_cfg = config.get("fact_checking", {})
     model = ai_cfg.get("model", "claude-opus-4-8")
     max_tokens = fc_cfg.get("max_tokens", ai_cfg.get("max_tokens", 6000))
-    max_searches = fc_cfg.get("max_searches", 5)
+    if max_searches is None:
+        max_searches = fc_cfg.get("max_searches", 5)
 
     tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
 
@@ -358,8 +371,10 @@ def _factcheck_with_web_search(
     harvested: list[str] = []
     seen_urls: set[str] = set()
 
-    # Follow pause_turn continuations (server-side tool loop hit its iteration cap).
-    max_rounds = 6
+    # Follow pause_turn continuations (server-side tool loop hit its iteration cap). Give the
+    # loop enough rounds to actually spend the search budget plus a synthesis round, so a
+    # higher per-topic cap (e.g. health=6) isn't silently cut off at a fixed 6 rounds.
+    max_rounds = max(6, max_searches + 2)
     for i in range(max_rounds):
         logger.info(
             "  Fact-check: web-search round %d/%d (up to %d searches; this pass is slow "

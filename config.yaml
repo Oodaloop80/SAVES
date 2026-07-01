@@ -110,7 +110,10 @@ fact_checking:
   web_search_topics:          # Only these topics get web search; others rely on content + comments
     - health
     - finance
-  max_searches: 5             # Cap web searches per fact-check (cost control)
+  max_searches: 5             # Default web-search cap for topics without a specific override below
+  max_searches_by_topic:      # Per-topic web-search cap. A post matching several topics uses the
+    health: 6                 # highest applicable cap. Recipes/food always skip web search (local
+    finance: 3                # check only), regardless of these numbers.
   max_tokens: 6000            # Fact-check responses include reasoning + cited sources
   include_images: false       # OCR (vision.ocr_model) already extracts image text; sending raw pixels would double-bill the same content
   jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"  # used for tax/legal claim validity
