@@ -61,6 +61,19 @@ def _label_callout(label: str, model_id: str, ai_result: dict) -> str:
     )
 
 
+def _inject_after_frontmatter(note_md: str, callout: str) -> str:
+    """Insert the A/B callout AFTER the YAML frontmatter block, not before it. Obsidian only
+    renders the Properties table when the opening `---` is the first line of the file; a callout
+    prepended ahead of it silently breaks frontmatter parsing. If the note has no frontmatter
+    (shouldn't happen), fall back to prepending."""
+    if note_md.startswith("---\n"):
+        end = note_md.find("\n---\n", 4)  # closing fence of the frontmatter block
+        if end != -1:
+            after = end + len("\n---\n")
+            return note_md[:after] + "\n" + callout + note_md[after:].lstrip("\n")
+    return callout + note_md
+
+
 async def run(url: str):
     load_credentials()
     config = load_config()
@@ -124,8 +137,9 @@ async def run(url: str):
         print(f"  Note type: {ai_result.get('note_type')}")
         print(f"  Tags ({len(ai_result.get('tags', []))}): {', '.join(ai_result.get('tags', []))}")
 
-        note_md = _label_callout(label, model_id, ai_result) + format_note(
-            ai_result, content, embed_paths, transcript, model_config, None
+        note_md = _inject_after_frontmatter(
+            format_note(ai_result, content, embed_paths, transcript, model_config, None),
+            _label_callout(label, model_id, ai_result),
         )
         base_title = ai_result.get("title") or content.title or url
         note_path = write_note(vault_root, AB_FOLDER, f"[{label}] {base_title}", note_md)
