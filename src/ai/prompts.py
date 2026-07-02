@@ -22,7 +22,10 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
   "recipe_instructions": null,
   "recipe_servings": null,
   "recipe_time": null,
-  "recipe_notes": null
+  "recipe_notes": null,
+  "source_language": "English",
+  "translation": null,
+  "nutrition": null
 }
 
 `image_text` is only relevant when vision images are provided. If any image is a slide or
@@ -75,6 +78,65 @@ image-slide text (in `image_text`), and OP comments/replies. Populate ALL of the
 Return null for any field you cannot find. Do NOT return empty lists — return null if
 no data is available. If the content contains no recipe at all, return null for every
 recipe_* field.
+
+Keep the ORIGINAL units exactly as written in recipe_ingredients and recipe_instructions
+(e.g. "180°C", "250 g", "500 ml") — do NOT convert them yourself. Imperial/Fahrenheit
+equivalents are added automatically afterward, so converting here would produce doubled or
+conflicting numbers. (If the recipe itself is in another language, translate the words to
+English but leave the numeric measurements and their units untouched.)
+
+## Nutrition Estimate (populate ONLY when the content contains a recipe)
+Whenever you extracted a recipe (recipe_ingredients is non-null), ALSO estimate its
+nutrition from the ingredient list and populate the "nutrition" object below. These are
+ESTIMATES derived from typical USDA food-composition values — approximate, NOT
+label-accurate. Compute every amount PER SERVING (divide totals by your best estimate of
+the number of servings). Express each value as a string INCLUDING its unit. Use null only
+when you genuinely cannot estimate a field; provide every macro you reasonably can.
+
+"nutrition": {
+  "serving_size": "amount per serving, e.g. '1 cup (240 g)' or '2 tacos'",
+  "servings": <integer number of servings the recipe yields>,
+  "prep_time": "e.g. '15 min'" | null,
+  "cook_time": "e.g. '30 min'" | null,
+  "total_time": "e.g. '45 min'" | null,
+  "calories": "e.g. '320 kcal'",
+  "protein": "e.g. '12 g'",
+  "total_fat": "e.g. '18 g'",
+  "saturated_fat": "e.g. '6 g'",
+  "trans_fat": "e.g. '0 g'",
+  "monounsaturated_fat": "e.g. '7 g'" | null,
+  "polyunsaturated_fat": "e.g. '4 g'" | null,
+  "cholesterol": "e.g. '45 mg'",
+  "sodium": "e.g. '480 mg'",
+  "total_carbs": "e.g. '34 g'",
+  "dietary_fiber": "e.g. '4 g'",
+  "total_sugars": "e.g. '8 g'",
+  "added_sugars": "e.g. '5 g'" | null,
+  "potassium": "e.g. '320 mg'" | null,
+  "omega_3": "e.g. '0.2 g'" | null,
+  "omega_6": "e.g. '1.1 g'" | null,
+  "micros": [{"name": "Vitamin D", "amount": "2 mcg", "dv": "10%"}, {"name": "Iron", "amount": "2 mg", "dv": "11%"}],
+  "notes": "one-line caveat, e.g. 'Estimated from listed ingredients; excludes optional toppings.'"
+}
+"micros" lists the notable vitamins & minerals (and any omegas not already broken out) with
+%DV where you can estimate it. Round sensibly — do not invent false precision. If there is
+no recipe, set "nutrition" to null.
+
+## Language & Translation
+Detect the PRIMARY language of the saved content (caption/body, on-screen slide text,
+transcript — NOT the UI chrome).
+- Set "source_language" to the English name of that language (e.g. "Spanish", "Japanese",
+  "English").
+- When source_language is NOT English, set "translation" to a faithful, COMPLETE English
+  translation of the main textual content — the caption/body and any on-screen/slide text —
+  formatted with light Markdown (short paragraphs; a bulleted list is fine). Translate
+  meaning accurately; do not summarize or omit. When the content is already English, set
+  "translation" to null.
+- Recipe fields (recipe_ingredients, recipe_instructions, recipe_notes, etc.) must ALWAYS be
+  written in English so the recipe is directly usable — translate them if the source is
+  another language (keep the numeric measurements/units as written, per the recipe rules
+  above). The "translation" block covers the surrounding caption/narrative, not the recipe.
+- summary, key_takeaways, tags, and folder_path are ALWAYS in English regardless of source.
 
 ## Tagging Rules
 Generate 10-20 tags covering ALL applicable dimensions:

@@ -3,6 +3,7 @@ import urllib.parse
 from datetime import date, datetime, timezone
 
 from src.extractors.base import ExtractedContent
+from src.utils.units import convert_measurements
 
 
 def _format_posted(value) -> str:
@@ -79,6 +80,11 @@ def format_note(
             location_check_result.get("location_disputed") or location_check_result.get("advisories")
         ):
             parts.append(_location_callout(location_check_result))
+
+    # English translation of non-English content, right at the top (collapsed by default).
+    translation_block = _translation_section(ai_result)
+    if translation_block:
+        parts.append(translation_block)
 
     renderer = _RENDERERS.get(note_type, _render_web_generic)
     body = renderer(ai_result, content, media_paths, transcript, collapse_transcript)
@@ -281,6 +287,18 @@ def _takeaways_section(ai_result: dict) -> str:
         return ""
     bullets = "\n".join(f"> - {t}" for t in items)
     return f"> [!tip] Key Takeaways\n{bullets}\n"
+
+
+def _translation_section(ai_result: dict) -> str:
+    """Collapsible English-translation callout, shown only when the source content is in
+    another language (Claude fills `translation` and leaves it null for English)."""
+    translation = (ai_result.get("translation") or "").strip()
+    if not translation:
+        return ""
+    lang = (ai_result.get("source_language") or "").strip()
+    suffix = f" (from {lang})" if lang and lang.lower() != "english" else ""
+    quoted = "\n".join(f"> {line}" for line in translation.splitlines())
+    return f"> [!info]- 🌐 English Translation{suffix}\n{quoted}\n"
 
 
 def _author_link(content: ExtractedContent) -> str:
@@ -728,6 +746,186 @@ def _render_facebook_post(ai_result, content, media_paths, transcript, collapse)
     return "\n".join(p for p in parts if p)
 
 
+# FDA reference Daily Values (adult, 2,000-kcal diet). Used to compute %DV deterministically
+# from the estimated amounts so the label doesn't rely on the model for the arithmetic.
+_DAILY_VALUES = {
+    "total_fat": (78.0, "g"),
+    "saturated_fat": (20.0, "g"),
+    "cholesterol": (300.0, "mg"),
+    "sodium": (2300.0, "mg"),
+    "total_carbs": (275.0, "g"),
+    "dietary_fiber": (28.0, "g"),
+    "added_sugars": (50.0, "g"),
+    "potassium": (4700.0, "mg"),
+}
+_MASS_IN_GRAMS = {"g": 1.0, "mg": 1e-3, "mcg": 1e-6, "µg": 1e-6, "ug": 1e-6, "kg": 1000.0}
+
+
+def _parse_amount(value) -> tuple[float | None, str]:
+    """Pull a leading number and unit out of a string like '18 g', '320 kcal', '2,300mg'."""
+    if value is None:
+        return None, ""
+    m = re.match(r"\s*([\d.,]+)\s*([a-zA-Zµ%]*)", str(value))
+    if not m:
+        return None, ""
+    try:
+        return float(m.group(1).replace(",", "")), m.group(2).lower()
+    except ValueError:
+        return None, ""
+
+
+def _dv_percent(key: str, value) -> str:
+    """%DV for a nutrient from its estimated amount, or '' when it can't be computed."""
+    ref = _DAILY_VALUES.get(key)
+    if not ref:
+        return ""
+    amount, unit = _parse_amount(value)
+    if amount is None:
+        return ""
+    ref_amount, ref_unit = ref
+    if unit in _MASS_IN_GRAMS:
+        grams = amount * _MASS_IN_GRAMS[unit]
+    elif not unit:  # bare number — assume it's already in the reference unit
+        grams = amount * _MASS_IN_GRAMS[ref_unit]
+    else:
+        return ""
+    ref_grams = ref_amount * _MASS_IN_GRAMS[ref_unit]
+    if ref_grams <= 0:
+        return ""
+    return f"{round(grams / ref_grams * 100)}%"
+
+
+def _nutrition_label(nutrition: dict | None) -> str:
+    """Render an FDA-style Nutrition Facts panel (HTML — Obsidian renders it on desktop and
+    mobile) from Claude's per-serving estimate. Returns '' when no nutrition data is present.
+    Amounts come from the model; %DV is computed here from the FDA reference values."""
+    if not isinstance(nutrition, dict) or not nutrition:
+        return ""
+
+    def val(key: str) -> str:
+        v = nutrition.get(key)
+        return str(v).strip() if v not in (None, "", "null") else ""
+
+    serving_size = val("serving_size")
+    servings = val("servings")
+    cal_num, _ = _parse_amount(val("calories"))
+    calories = str(int(round(cal_num))) if cal_num is not None else (val("calories") or "—")
+
+    def cell(text, *, align="left", bold=False, size=14, indent=0, border="1px solid #000"):
+        left_pad = 8 + indent * 16
+        weight = "font-weight:bold;" if bold else ""
+        return (
+            f'<td style="border-top:{border};padding:1px 8px 1px {left_pad}px;'
+            f'text-align:{align};font-size:{size}px;{weight}">{text}</td>'
+        )
+
+    def nutrient_row(label, key, *, indent=0, bold=False, prefix="", show_dv=True):
+        amount = val(key)
+        if not amount:
+            return ""
+        name = f"<b>{label}</b>" if bold else label
+        left = f"{prefix}{name} {amount}" if not prefix else f"{prefix} {amount} {label}"
+        pct = _dv_percent(key, amount) if show_dv else ""
+        return (
+            "<tr>"
+            + cell(left, indent=indent)
+            + cell(pct, align="right", bold=True)
+            + "</tr>"
+        )
+
+    rows = []
+    rows.append(nutrient_row("Total Fat", "total_fat", bold=True))
+    rows.append(nutrient_row("Saturated Fat", "saturated_fat", indent=1))
+    rows.append(nutrient_row("Trans Fat", "trans_fat", indent=1, show_dv=False))
+    rows.append(nutrient_row("Polyunsaturated Fat", "polyunsaturated_fat", indent=1, show_dv=False))
+    rows.append(nutrient_row("Monounsaturated Fat", "monounsaturated_fat", indent=1, show_dv=False))
+    rows.append(nutrient_row("Cholesterol", "cholesterol", bold=True))
+    rows.append(nutrient_row("Sodium", "sodium", bold=True))
+    rows.append(nutrient_row("Total Carbohydrate", "total_carbs", bold=True))
+    rows.append(nutrient_row("Dietary Fiber", "dietary_fiber", indent=1))
+    rows.append(nutrient_row("Total Sugars", "total_sugars", indent=1, show_dv=False))
+    rows.append(nutrient_row("Added Sugars", "added_sugars", indent=2, prefix="Includes"))
+    rows.append(nutrient_row("Protein", "protein", bold=True, show_dv=False))
+    rows.append(nutrient_row("Omega-3", "omega_3", indent=1, show_dv=False))
+    rows.append(nutrient_row("Omega-6", "omega_6", indent=1, show_dv=False))
+    macro_html = "".join(r for r in rows if r)
+
+    # Bottom section: potassium + any vitamins/minerals, separated by the thick FDA rule.
+    micro_rows = []
+    pot = val("potassium")
+    if pot:
+        micro_rows.append(
+            "<tr>" + cell(f"Potassium {pot}", border="8px solid #000")
+            + cell(_dv_percent("potassium", pot), align="right", bold=True, border="8px solid #000")
+            + "</tr>"
+        )
+    micros = nutrition.get("micros")
+    if isinstance(micros, list):
+        for i, mic in enumerate(micros):
+            if not isinstance(mic, dict):
+                continue
+            name = str(mic.get("name", "")).strip()
+            if not name:
+                continue
+            amount = str(mic.get("amount", "")).strip()
+            dv = str(mic.get("dv", "")).strip()
+            # Thick rule above the first bottom-section row when potassium didn't already draw it.
+            border = "8px solid #000" if (not micro_rows and i == 0) else "1px solid #000"
+            micro_rows.append(
+                "<tr>" + cell(f"{name} {amount}".strip(), border=border)
+                + cell(dv, align="right", bold=True, border=border) + "</tr>"
+            )
+    micro_html = "".join(micro_rows)
+
+    servings_line = (
+        f'<tr><td colspan="2" style="padding:0 8px;font-size:13px;">{servings} servings per recipe</td></tr>'
+        if servings else ""
+    )
+    serving_size_line = (
+        '<tr>'
+        f'<td style="padding:0 8px 4px;font-weight:bold;border-bottom:8px solid #000;">Serving size</td>'
+        f'<td style="padding:0 8px 4px;text-align:right;font-weight:bold;border-bottom:8px solid #000;">{serving_size}</td>'
+        '</tr>'
+        if serving_size else
+        '<tr><td colspan="2" style="padding:0 8px 4px;border-bottom:8px solid #000;"></td></tr>'
+    )
+
+    table = (
+        '<table style="border-collapse:collapse;width:100%;max-width:360px;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:14px;border:1px solid #000;">'
+        '<tr><td colspan="2" style="font-size:28px;font-weight:900;padding:4px 8px 0;">Nutrition Facts</td></tr>'
+        + servings_line
+        + serving_size_line
+        + '<tr><td colspan="2" style="padding:2px 8px 0;font-size:12px;font-weight:bold;">Amount per serving</td></tr>'
+        + '<tr>'
+        '<td style="padding:0 8px;font-size:26px;font-weight:900;border-bottom:4px solid #000;">Calories</td>'
+        f'<td style="padding:0 8px;font-size:26px;font-weight:900;text-align:right;border-bottom:4px solid #000;">{calories}</td>'
+        '</tr>'
+        + '<tr><td colspan="2" style="padding:1px 8px;text-align:right;font-weight:bold;font-size:12px;border-bottom:1px solid #000;">% Daily Value*</td></tr>'
+        + macro_html
+        + micro_html
+        + '<tr><td colspan="2" style="padding:4px 8px;font-size:11px;border-top:4px solid #000;">'
+        '* Percent Daily Values are based on a 2,000 calorie diet.</td></tr>'
+        '</table>'
+    )
+
+    times = []
+    for key, lbl in (("prep_time", "Prep"), ("cook_time", "Cook"), ("total_time", "Total")):
+        v = val(key)
+        if v:
+            times.append(f"{lbl}: {v}")
+    times_line = f"\n{' · '.join(times)}\n" if times else ""
+
+    caveat = val("notes")
+    caveat_line = f"\n*{caveat}*\n" if caveat else ""
+
+    return (
+        "### Nutrition Facts\n\n"
+        "*🤖 AI estimate from the recipe — approximate, not a verified nutrition analysis.*\n"
+        f"{times_line}\n{table}\n{caveat_line}"
+    )
+
+
 def _recipe_section(ai_result: dict) -> str:
     ingredients = ai_result.get("recipe_ingredients") or []
     instructions = ai_result.get("recipe_instructions") or []
@@ -740,13 +938,19 @@ def _recipe_section(ai_result: dict) -> str:
         meta = " · ".join(filter(None, [servings, time_str]))
         inner.append(f"*{meta}*\n")
     if ingredients:
-        ing_lines = "\n".join(f"- {i}" for i in ingredients)
+        ing_lines = "\n".join(f"- {convert_measurements(str(i))}" for i in ingredients)
         inner.append(f"### Ingredients\n\n{ing_lines}\n")
     if instructions:
-        step_lines = "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(instructions))
+        step_lines = "\n".join(
+            f"{idx + 1}. {convert_measurements(str(step))}" for idx, step in enumerate(instructions)
+        )
         inner.append(f"### Instructions\n\n{step_lines}\n")
     if notes:
-        inner.append(f"### Notes\n\n{notes}\n")
+        inner.append(f"### Notes\n\n{convert_measurements(notes)}\n")
+
+    label = _nutrition_label(ai_result.get("nutrition"))
+    if label:
+        inner.append(label)
 
     if inner:
         return "## Recipe\n\n" + "\n".join(inner)
