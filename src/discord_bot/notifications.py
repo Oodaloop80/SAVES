@@ -135,6 +135,21 @@ async def send_alert(bot: discord.Client, channel_name: str, message: str) -> No
         logger.warning(f"ALERT (channel not found): {message}")
 
 
+async def send_duplicate_notice(
+    bot: discord.Client, channel_name: str, url: str, existing_path: str | None
+) -> None:
+    """Tell the user a pasted URL was already saved, so it was skipped before any
+    extraction/AI tokens were spent."""
+    lines = [
+        "🔁 **Duplicate — already saved**",
+        f"`{url}`",
+    ]
+    if existing_path:
+        lines.append(f"Existing note: `{existing_path}`")
+    lines.append("Skipped before processing — no tokens spent.")
+    await send_log(bot, channel_name, "\n".join(lines))
+
+
 async def send_cookie_warning(
     bot: discord.Client, channel_name: str, warning: dict
 ) -> None:

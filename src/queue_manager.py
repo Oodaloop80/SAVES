@@ -63,27 +63,48 @@ class ProcessingState:
 
 
 class QueueManager:
-    def __init__(self, queue: asyncio.Queue, state: ProcessingState):
+    def __init__(self, queue: asyncio.Queue, state: ProcessingState, skip_duplicates: bool = True):
         self._queue = queue
         self._state = state
+        self._skip_duplicates = skip_duplicates
         self._queued: set[str] = set()
+        # Normalized URLs we've already reported as duplicates this session. Prevents a
+        # second "duplicate" Discord ping when the watcher re-fires between detection and
+        # the caller removing the line from the inbox.
+        self._reported_duplicates: set[str] = set()
 
-    async def enqueue_from_file(self, inbox_path: str):
+    async def enqueue_from_file(self, inbox_path: str) -> list[tuple[str, str | None]]:
+        """Queue new URLs from the inbox and return already-saved duplicates.
+
+        Returns a list of ``(raw_url, existing_note_path)`` for URLs that were already
+        saved to completion — the caller notifies the user and clears them from the inbox.
+        ``raw_url`` is the URL exactly as it appears in the inbox (so it can be matched for
+        removal); ``existing_note_path`` is the vault path recorded when it was first saved.
+        """
         try:
             with open(inbox_path, "r", encoding="utf-8") as f:
                 text = f.read()
         except FileNotFoundError:
-            return
+            return []
 
         urls = extract_urls(text)
         new_count = 0
-        for url in urls:
+        duplicates: list[tuple[str, str | None]] = []
+        for raw_url in urls:
             # Normalize before dedup so the key space matches ProcessingState, which is
             # keyed by the normalized URL (processor normalizes before mark_pending/done).
             # Without this, social share links with tracking params (igsh/fbclid/utm_*)
             # miss the state lookup and get re-enqueued after a restart → duplicate notes.
-            url = normalize_url(url)
+            url = normalize_url(raw_url)
             if url in self._queued:
+                continue
+            # Already saved before? Report it as a duplicate (once) so the user gets a
+            # Discord heads-up BEFORE any extraction/AI tokens are spent — instead of the
+            # old behaviour of silently skipping it.
+            if self._skip_duplicates and self._state.is_done(url):
+                if url not in self._reported_duplicates:
+                    self._reported_duplicates.add(url)
+                    duplicates.append((raw_url, self._state.path_for(url)))
                 continue
             if self._state.is_processed(url):
                 continue
@@ -93,3 +114,6 @@ class QueueManager:
 
         if new_count:
             logger.info(f"Queued {new_count} new URL(s)")
+        if duplicates:
+            logger.info(f"Detected {len(duplicates)} already-saved duplicate(s)")
+        return duplicates
