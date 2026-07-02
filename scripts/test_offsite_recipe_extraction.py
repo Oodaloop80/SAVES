@@ -25,7 +25,8 @@ from src.utils.recipe_data import (  # noqa: E402
 )
 
 CFG = {"notes": {}}
-HEADING = "## 🔗 Recipe from Bio / Off-Site Link"
+BIO_TITLE = "🔗 Recipe from Bio / Off-Site Link"   # now a styled callout title, not an '##' heading
+RECIPE_CALLOUT = "> [!example]+ 🍽️ Recipe"          # the styled Recipe section
 _checks = 0
 
 # A realistic WordPress-Recipe-Maker-style page: JSON-LD inside an @graph, HowToStep +
@@ -73,6 +74,42 @@ EXPECTED_STEPS = [
     "Cook the spaghetti until al dente.",
     "Toss pasta with garlic confit and spinach.",  # <b> stripped
 ]
+
+# A WordPress-Recipe-Maker card: ingredient GROUPS with section titles, an affiliate <a> in an
+# ingredient name, and instruction steps with <strong> bold lead-ins — the structure JSON-LD
+# flattens away. A minimal JSON-LD Recipe is present too (WPRM pages always emit both) to supply
+# name/yield/time. This is the shape drveganblog.com actually serves.
+WPRM_HTML = """
+<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Recipe","name":"Garlic Confit Pasta",
+ "recipeYield":"2 servings","totalTime":"PT25M",
+ "recipeIngredient":["2 cloves garlic","120 ml olive oil","salt to taste"],
+ "recipeInstructions":[{"@type":"HowToStep","text":"Confit the garlic. Cook gently."},
+                       {"@type":"HowToStep","text":"Blend. Until smooth."}]}
+</script>
+</head><body>
+<div class="wprm-recipe-ingredient-group">
+  <h4 class="wprm-recipe-ingredient-group-name">For the garlic confit</h4>
+  <ul class="wprm-recipe-ingredients">
+    <li class="wprm-recipe-ingredient"><span class="wprm-recipe-ingredient-amount">2</span>&#32;<span class="wprm-recipe-ingredient-name">cloves garlic</span></li>
+    <li class="wprm-recipe-ingredient"><span class="wprm-recipe-ingredient-amount">120</span>&#32;<span class="wprm-recipe-ingredient-unit">ml</span>&#32;<span class="wprm-recipe-ingredient-name"><a href="https://amzn.to/aff">extra virgin olive oil</a></span></li>
+  </ul>
+</div>
+<div class="wprm-recipe-ingredient-group">
+  <h4 class="wprm-recipe-ingredient-group-name">To finish</h4>
+  <ul class="wprm-recipe-ingredients">
+    <li class="wprm-recipe-ingredient"><span class="wprm-recipe-ingredient-name">fine sea salt</span>&#32;<span class="wprm-recipe-ingredient-notes">to taste</span></li>
+  </ul>
+</div>
+<div class="wprm-recipe-instruction-group">
+  <ol class="wprm-recipe-instructions">
+    <li id="wprm-recipe-1-step-0-0" class="wprm-recipe-instruction"><div class="wprm-recipe-instruction-text"><span><strong>Confit the garlic.</strong> Cook the cloves gently in the oil.</span></div></li>
+    <li id="wprm-recipe-1-step-0-1" class="wprm-recipe-instruction"><div class="wprm-recipe-instruction-text"><span><strong>Blend.</strong> Blitz until smooth.</span></div></li>
+  </ol>
+</div>
+</body></html>
+"""
 
 
 def check(cond: bool, msg: str) -> None:
@@ -204,18 +241,60 @@ def test_full_page_reproduced_in_note():
     ai = apply_structured_recipe(ai, content)
     note = format_note(ai, content, [], None, CFG)
 
-    check(HEADING in note, "bio section heading present")
-    # Note: convert_measurements annotates units, so "250 g" and "spinach" are no longer
+    check(BIO_TITLE in note, "bio provenance callout present")
+    check(RECIPE_CALLOUT in note, "recipe rendered as its own styled '🍽️ Recipe' callout")
+    # This sample is JSON-LD only (no WPRM markup), so ingredients render as a flat list inside
+    # the callout. convert_measurements annotates units, so "250 g" and "spinach" are no longer
     # contiguous in the rendered note (e.g. "250 g (≈8.8 oz) spinach").
-    check("### Ingredients" in note and "250 g" in note and "spinach" in note,
+    check("🧺 Ingredients" in note and "250 g" in note and "spinach" in note,
           "accurate structured recipe (from JSON-LD) rendered in the note")
-    check(note.count("### Ingredients") == 1, "recipe appears exactly once (no duplicate)")
+    check(note.count(RECIPE_CALLOUT) == 1, "recipe appears exactly once (no duplicate)")
+    # The Recipe section comes BEFORE the bio/off-site provenance section.
+    check(note.index(RECIPE_CALLOUT) < note.index(BIO_TITLE),
+          "styled Recipe section is ordered before the bio / off-site link section")
     check("### 📄 Full recipe page" in note, "source page is reproduced under its own heading")
     check("media://instagram/drveganblog-hero.jpg" in note,
           "the page's image survives into the reproduced page")
     check("Notes from the chef" in note, "the page's formatting/sections are preserved")
-    check("reproduced beneath it" in note, "banner tells the reader the full page follows")
+    check("reproduced below" in note, "banner tells the reader the full page follows")
     check("drveganblog.com/garlic-confit-pasta" in note, "source URL cited")
+
+
+def test_wprm_groups_parsed():
+    data = extract_recipe_jsonld(WPRM_HTML)
+    check(data is not None, "WPRM page parsed")
+    ig = data["ingredient_groups"]
+    check([g["name"] for g in ig] == ["For the garlic confit", "To finish"],
+          "ingredient section titles preserved from the WPRM markup")
+    check(ig[0]["items"][0] == "2 cloves garlic", "amount + name assembled from spans")
+    check(ig[0]["items"][1] == "120 ml extra virgin olive oil",
+          "amount + unit + name assembled; affiliate <a> reduced to plain text")
+    check("amzn.to" not in " ".join(ig[0]["items"]), "affiliate link URL dropped")
+    check(ig[1]["items"][0] == "fine sea salt, to taste", "ingredient notes appended after a comma")
+    mg = data["instruction_groups"]
+    check(mg[0]["steps"][0] == "**Confit the garlic.** Cook the cloves gently in the oil.",
+          "instruction bold lead-in preserved as Markdown (**…**)")
+    # Flat lists are kept in sync with the groups.
+    check(data["ingredients"][0] == "2 cloves garlic", "flat ingredients derived from the groups")
+
+
+def test_wprm_groups_rendered_in_note():
+    data = extract_recipe_jsonld(WPRM_HTML)
+    ai = {"note_type": "instagram_reel", "title": "Garlic confit pasta", "summary": "x",
+          "tags": ["pasta"], "source_language": "English"}
+    content = _content({
+        "offsite_recipe_detected": True,
+        "followed_recipe_url": "https://drveganblog.com/garlic-confit-pasta/",
+        "followed_recipe_data": data,
+    })
+    ai = apply_structured_recipe(ai, content)
+    check(ai["recipe_ingredient_groups"] is not None, "grouped fields set on ai_result")
+    note = format_note(ai, content, [], None, CFG)
+    check(RECIPE_CALLOUT in note, "styled recipe callout rendered")
+    check("**For the garlic confit**" in note and "**To finish**" in note,
+          "ingredient section titles are shown as bold sub-headers in the note")
+    check("**Confit the garlic.**" in note, "method step bold lead-in rendered in the note")
+    check("🍳 Method" in note, "method sub-section labeled")
 
 
 def test_page_reproduced_even_without_structured_recipe():
@@ -245,6 +324,8 @@ def main():
         test_apply_direct_recipe_data_key,
         test_apply_noop_without_data,
         test_prompt_formatting,
+        test_wprm_groups_parsed,
+        test_wprm_groups_rendered_in_note,
         test_full_page_reproduced_in_note,
         test_page_reproduced_even_without_structured_recipe,
     ):

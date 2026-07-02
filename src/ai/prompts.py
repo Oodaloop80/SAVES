@@ -19,7 +19,9 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
   "topics": ["health"|"political"|"finance"|"cooking"|"travel"|"tech"|...],
   "image_text": null,
   "recipe_ingredients": null,
+  "recipe_ingredient_groups": null,
   "recipe_instructions": null,
+  "recipe_instruction_groups": null,
   "recipe_servings": null,
   "recipe_time": null,
   "recipe_notes": null,
@@ -63,13 +65,31 @@ instagram_reel, tiktok_video, reddit_video, reddit_text, youtube_video, web_reci
 — extract the complete recipe from ALL available sources: transcript, caption/body text,
 image-slide text (in `image_text`), and OP comments/replies. Populate ALL of these fields:
 - recipe_ingredients: list of ingredient strings (e.g. ["2 cups flour", "1 tsp salt"]).
-  If multiple component groups exist (e.g. sauce, dough, filling), prefix each group's
-  items with a label like "**For the sauce:**" as a standalone list entry.
+  This is the FLAT list of every ingredient, in order.
 - recipe_instructions: REQUIRED when steps are present. List every step as a separate
   string in order. Pull steps from EVERY source — transcript, image slides, caption,
   comments. If the creator explains how to cook something, those are instructions: extract
   them all. Plain prose without leading numbers (the formatter adds them). Each step
-  should be a complete sentence or two. Do NOT collapse multiple steps into one.
+  should be a complete sentence or two. Do NOT collapse multiple steps into one. If a step
+  has a short bold lead-in / title in the source (e.g. "Confit the garlic. Place the
+  cloves…"), KEEP it and mark the lead-in in bold: "**Confit the garlic.** Place the cloves…".
+
+CRITICAL — preserve the recipe's SECTION TITLES. Recipes are almost always organized into
+named parts: the ingredients list has headers like "For the garlic confit", "For the pasta",
+"To finish"; the method may have its own headers too. These groupings are essential to how the
+recipe reads — ALWAYS reproduce them. Whenever the source groups ingredients (or steps) under
+titles, ALSO populate the grouped fields, keeping each group's EXACT title:
+- recipe_ingredient_groups: list of objects, in order:
+  [{"name": "For the garlic confit", "items": ["1 head garlic", "1 cup olive oil"]},
+   {"name": "For the pasta", "items": ["200 g spaghetti", "1 tsp salt"]},
+   {"name": "To finish", "items": ["fresh basil", "black pepper"]}]
+- recipe_instruction_groups: same shape but with "steps" instead of "items":
+  [{"name": "Make the confit", "steps": ["**Confit the garlic.** Place the cloves…", …]}]
+Use "name": null for a group that genuinely has no title (e.g. a single unnamed step list).
+Keep recipe_ingredients / recipe_instructions populated too (the flat concatenation of every
+group, same order) — the formatter uses the groups when present and the flat list otherwise.
+If the recipe has only ONE unnamed section, leave the *_groups fields null and just use the
+flat lists.
 - recipe_servings: serving-size string (e.g. "Serves 4", "Makes 12 cookies"), or null.
 - recipe_time: combined time string (e.g. "Prep: 15 min · Cook: 45 min · Total: 1 hr"),
   or null if not mentioned.
@@ -132,10 +152,11 @@ transcript — NOT the UI chrome).
   formatted with light Markdown (short paragraphs; a bulleted list is fine). Translate
   meaning accurately; do not summarize or omit. When the content is already English, set
   "translation" to null.
-- Recipe fields (recipe_ingredients, recipe_instructions, recipe_notes, etc.) must ALWAYS be
-  written in English so the recipe is directly usable — translate them if the source is
-  another language (keep the numeric measurements/units as written, per the recipe rules
-  above). The "translation" block covers the surrounding caption/narrative, not the recipe.
+- Recipe fields (recipe_ingredients, recipe_instructions, recipe_notes, the *_groups and their
+  section titles, etc.) must ALWAYS be written in English so the recipe is directly usable —
+  translate them if the source is another language (keep the numeric measurements/units as
+  written, per the recipe rules above). The "translation" block covers the surrounding
+  caption/narrative, not the recipe.
 - summary, key_takeaways, tags, and folder_path are ALWAYS in English regardless of source.
 
 ## Tagging Rules

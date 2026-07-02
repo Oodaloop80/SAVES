@@ -108,16 +108,17 @@ def format_note(
         if isinstance(ai_result.get("_location_check"), dict) else None
     )
     inserts = []
-    # web_recipe renderer handles recipe, image_text, and transcript itself.
-    # For all other note types, inject Recipe and image_text sections when present.
+    # web_recipe renderer handles recipe, image_text, and transcript itself. For all other note
+    # types, inject the styled '🍽️ Recipe' section first (always its own section), then the
+    # bio / off-site provenance + full-page reproduction, then image_text.
     recipe_type = note_type in ("web_recipe", "recipe")
-    has_recipe_fields = bool(ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions"))
-    # A 'recipe in bio' post gets its own provenance section that holds the extracted recipe;
-    # when it does, don't also emit the generic '## Recipe' (would duplicate the ingredients).
-    bio_section = "" if recipe_type else _bio_recipe_section(ai_result, content)
-    bio_owns_recipe = bool(bio_section) and bool((content.metadata or {}).get("followed_recipe_url")) and has_recipe_fields
-    if not recipe_type and has_recipe_fields and not bio_owns_recipe:
+    has_recipe_fields = bool(
+        ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions")
+        or ai_result.get("recipe_ingredient_groups")
+    )
+    if not recipe_type and has_recipe_fields:
         inserts.append(_recipe_section(ai_result))
+    bio_section = "" if recipe_type else _bio_recipe_section(ai_result, content)
     if bio_section:
         inserts.append(bio_section)
     if image_text and not recipe_type:
@@ -938,42 +939,92 @@ def _nutrition_label(nutrition: dict | None) -> str:
     )
 
 
-def _recipe_body(ai_result: dict) -> str:
-    """The inner recipe content (times, ingredients, instructions, notes, nutrition label)
-    without a heading, so it can be placed under either '## Recipe' or the bio-link section."""
-    ingredients = ai_result.get("recipe_ingredients") or []
-    instructions = ai_result.get("recipe_instructions") or []
+def _blockquote(md: str) -> str:
+    """Prefix every line so a multi-line Markdown block renders inside an Obsidian callout.
+    Blank lines become a bare '>' so the callout keeps flowing."""
+    return "\n".join((">" if not line.strip() else f"> {line}") for line in md.splitlines())
+
+
+def _ingredients_md(ai_result: dict) -> str:
+    """Ingredients as Markdown — grouped under their section titles ('For the garlic confit',
+    'For the pasta', 'To finish', …) when the structured data carried them, otherwise a single
+    flat bulleted list. Preserving these titles is a hard requirement: a recipe's ingredients
+    belong to specific components and must not be flattened into one anonymous list."""
+    groups = ai_result.get("recipe_ingredient_groups")
+    if groups:
+        blocks = []
+        for g in groups:
+            items = g.get("items") or []
+            if not items:
+                continue
+            lines = "\n".join(f"- {convert_measurements(str(i))}" for i in items)
+            name = (g.get("name") or "").strip().rstrip(":")
+            blocks.append(f"**{name}**\n\n{lines}" if name else lines)
+        if blocks:
+            return "\n\n".join(blocks)
+    flat = ai_result.get("recipe_ingredients") or []
+    return "\n".join(f"- {convert_measurements(str(i))}" for i in flat)
+
+
+def _instructions_md(ai_result: dict) -> str:
+    """Method as Markdown — grouped under their section titles when present (numbering restarts
+    per named group). Step bold lead-ins (e.g. '**Confit the garlic.** Place the cloves…') are
+    preserved from the structured data; that per-step bolding is what makes the method readable
+    instead of a wall of numbered prose."""
+    groups = ai_result.get("recipe_instruction_groups")
+    if groups:
+        blocks = []
+        for g in groups:
+            steps = g.get("steps") or []
+            if not steps:
+                continue
+            lines = "\n".join(
+                f"{idx + 1}. {convert_measurements(str(s))}" for idx, s in enumerate(steps)
+            )
+            name = (g.get("name") or "").strip().rstrip(":")
+            blocks.append(f"**{name}**\n\n{lines}" if name else lines)
+        if blocks:
+            return "\n\n".join(blocks)
+    flat = ai_result.get("recipe_instructions") or []
+    return "\n".join(f"{idx + 1}. {convert_measurements(str(s))}" for idx, s in enumerate(flat))
+
+
+def _recipe_inner_md(ai_result: dict) -> str:
+    """Recipe content (meta line, grouped ingredients, grouped method, notes) as plain Markdown,
+    without a heading or callout wrapper."""
     servings = (ai_result.get("recipe_servings") or "").strip()
     time_str = (ai_result.get("recipe_time") or "").strip()
     notes = (ai_result.get("recipe_notes") or "").strip()
 
-    inner = []
-    if servings or time_str:
-        meta = " · ".join(filter(None, [servings, time_str]))
-        inner.append(f"*{meta}*\n")
-    if ingredients:
-        ing_lines = "\n".join(f"- {convert_measurements(str(i))}" for i in ingredients)
-        inner.append(f"### Ingredients\n\n{ing_lines}\n")
-    if instructions:
-        step_lines = "\n".join(
-            f"{idx + 1}. {convert_measurements(str(step))}" for idx, step in enumerate(instructions)
-        )
-        inner.append(f"### Instructions\n\n{step_lines}\n")
+    parts = []
+    meta = " · ".join(filter(None, [servings, time_str]))
+    if meta:
+        parts.append(f"*{meta}*")
+    ing = _ingredients_md(ai_result)
+    if ing:
+        parts.append("**🧺 Ingredients**\n\n" + ing)
+    method = _instructions_md(ai_result)
+    if method:
+        parts.append("**🍳 Method**\n\n" + method)
     if notes:
-        inner.append(f"### Notes\n\n{convert_measurements(notes)}\n")
-
-    label = _nutrition_label(ai_result.get("nutrition"))
-    if label:
-        inner.append(label)
-
-    return "\n".join(inner)
+        parts.append("**📝 Notes**\n\n" + convert_measurements(notes))
+    return "\n\n".join(parts)
 
 
 def _recipe_section(ai_result: dict) -> str:
-    body = _recipe_body(ai_result)
-    if body:
-        return "## Recipe\n\n" + body
-    return "## Recipe\n\n*(Ingredients and instructions — see sources below)*\n"
+    """The styled Recipe section: a foldable '🍽️ Recipe' callout (same callout styling as the
+    Summary and Caption sections so the section change is obvious at a glance) holding the
+    grouped ingredients and method. The AI nutrition label — raw HTML that doesn't render
+    cleanly inside a callout — is appended just beneath it."""
+    inner = _recipe_inner_md(ai_result)
+    if inner:
+        callout = "> [!example]+ 🍽️ Recipe\n" + _blockquote(inner) + "\n"
+    else:
+        callout = "> [!example]+ 🍽️ Recipe\n> *(Ingredients and instructions — see sources below)*\n"
+    label = _nutrition_label(ai_result.get("nutrition"))
+    if label:
+        return callout + "\n" + label + "\n"
+    return callout
 
 
 def _link_label(url: str) -> str:
@@ -1003,60 +1054,62 @@ def _followed_page_reproduction(content: ExtractedContent) -> str:
     url = m.get("followed_recipe_url") or ""
     host = urllib.parse.urlparse(url).netloc.lstrip("www.") if url else ""
     header = "### 📄 Full recipe page" + (f" — {host}" if host else "")
-    return f"{header}\n\n{md}\n"
+    source_line = (
+        f"*Reproduced from {_link_label(url)} so the recipe survives if the original post or "
+        "page is taken down.*\n\n"
+    ) if url else ""
+    return f"{header}\n\n{source_line}{md}\n"
 
 
 def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
-    """Dedicated, clearly-labeled section for recipes that live behind a 'link in bio' /
-    'recipe on my profile' pointer. Shows the accurate structured recipe when we got it, a
-    faithful reproduction of the source page (text + images + formatting), the source link,
-    or an explicit 'could not extract' message when the follow failed."""
+    """Provenance for recipes that live behind a 'link in bio' / 'recipe on my profile'
+    pointer: a styled callout crediting the off-site source, followed by a faithful
+    reproduction of that page (text + localized images + formatting). The extracted recipe
+    itself is rendered as its own styled '🍽️ Recipe' section ABOVE this one, so this section is
+    purely the source credit and the full-page copy — never the recipe again."""
     if not has_offsite_recipe_context(content):
         return ""
     m = content.metadata or {}
     url = m.get("followed_recipe_url")
     hint = m.get("followed_recipe_hint")
-    heading = "## 🔗 Recipe from Bio / Off-Site Link"
-    recipe_body = _recipe_body(ai_result)
     page = _followed_page_reproduction(content)
+    has_recipe = bool(
+        ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions")
+        or ai_result.get("recipe_ingredient_groups")
+    )
+    title = "🔗 Recipe from Bio / Off-Site Link"
 
     if url:
-        if recipe_body:
+        if has_recipe:
+            tail = " The full source page is reproduced below." if page else ""
             banner = (
-                "> [!success]- Followed the poster's bio / off-site link\n"
-                f"> The recipe below was automatically extracted from {_link_label(url)}. "
-                "The full source page is reproduced beneath it.\n"
-            ) if page else (
-                "> [!success]- Followed the poster's bio / off-site link\n"
-                f"> The recipe below was automatically extracted from {_link_label(url)}.\n"
+                f"> [!success]- {title}\n"
+                f"> The recipe above was extracted automatically from {_link_label(url)}.{tail}\n"
             )
-            parts = [heading, "", banner, "", recipe_body]
         elif page:
-            parts = [
-                heading, "",
-                f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not "
-                "parse a clean structured recipe from it — the full source page is reproduced "
-                "below so nothing is lost.\n",
-            ]
+            banner = (
+                f"> [!warning]- {title}\n"
+                f"> I followed the off-site link ({_link_label(url)}) but could not parse a clean "
+                "structured recipe from it — the full source page is reproduced below so nothing "
+                "is lost.\n"
+            )
         else:
-            parts = [
-                heading, "",
-                f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not "
-                "find a structured recipe on that page — open it directly to check.\n",
-            ]
-        if page:
-            parts += ["", page]
-        return "\n".join(parts).rstrip() + "\n"
+            banner = (
+                f"> [!warning] {title}\n"
+                f"> I followed the off-site link ({_link_label(url)}) but could not find a "
+                "structured recipe on that page — open it directly to check.\n"
+            )
+        return banner + ("\n" + page if page else "")
     if hint:
         return (
-            f"{heading}\n\n"
-            "> [!warning] This post points to an off-site recipe, but I could not open it "
-            f"automatically. Try the link the poster shared: {_link_label(hint)}\n"
+            f"> [!warning] {title}\n"
+            "> This post points to an off-site recipe, but I could not open it automatically. "
+            f"Try the link the poster shared: {_link_label(hint)}\n"
         )
     return (
-        f"{heading}\n\n"
-        "> [!warning] This post points to an off-site recipe (\"link in bio\"), but I could not "
-        "locate or extract the recipe automatically.\n"
+        f"> [!warning] {title}\n"
+        "> This post points to an off-site recipe (\"link in bio\"), but I could not locate or "
+        "extract the recipe automatically.\n"
     )
 
 

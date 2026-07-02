@@ -10,6 +10,9 @@ Design constraints:
 - Original text is never replaced — only annotated — so nothing is lost or mis-rounded away.
 - Idempotent: a quantity already followed by a parenthetical (e.g. the source recipe wrote
   "180°C (356°F)", or this ran once already) is skipped via a ``(?!\\s*\\()`` lookahead.
+- A quantity that is itself the tail of a parenthetical the author already wrote — e.g.
+  "¼ cup (60 ml)" — is likewise skipped (lookahead also rejects a following ``)``), so we
+  never nest a conversion inside the author's own equivalent: "¼ cup (60 ml (≈0.3 cups))".
 - Deliberately conservative about ambiguous tokens. Bare "C" is NOT treated as Celsius
   (US recipes abbreviate *cup* as "C" — "1 C sugar"); Celsius requires the ° symbol, the
   word, or a 3-digit oven-temp magnitude. Bare lowercase "l" is not treated as litres
@@ -70,7 +73,9 @@ def _len_mm(mm: float) -> str:
 
 
 _NUM = r"(\d+(?:\.\d+)?)"
-_NOT_ALREADY_CONVERTED = r"(?!\s*\()"  # skip if a parenthetical already follows
+_NOT_ALREADY_CONVERTED = r"(?!\s*[()])"  # skip if a parenthetical already follows, or if this
+#                                          quantity is the tail of one ("¼ cup (60 ml)") — either
+#                                          way, annotating it would nest parens.
 
 # Each rule: (compiled pattern with one numeric capture group, converter(value) -> annotation).
 # Order matters only in that longer units (kg, ml) must be tried before their substrings; the
