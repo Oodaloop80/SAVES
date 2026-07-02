@@ -314,7 +314,10 @@ def build_user_prompt(
         )
 
     meta_lines = []
-    skip_keys = ("possible_paywall", "embedded_article_url", "youtube_description")
+    skip_keys = (
+        "possible_paywall", "embedded_article_url", "youtube_description",
+        "followed_recipe_markdown", "followed_recipe_hint",
+    )
     for k, v in (content.metadata or {}).items():
         if v is not None and k not in skip_keys:
             meta_lines.append(f"  {k}: {v}")
@@ -331,6 +334,17 @@ def build_user_prompt(
         parts.append(
             "Embedded YouTube video description (often the full recipe / ingredients / "
             f"instructions / links):\n{yt_desc[:6000]}"
+        )
+
+    # The post pointed off-site for the recipe and we followed the bio/profile link; this is
+    # the extracted destination page, very likely the full recipe the caption refers to.
+    followed = (content.metadata or {}).get("followed_recipe_markdown")
+    if followed:
+        src = (content.metadata or {}).get("followed_recipe_url", "")
+        parts.append(
+            "Recipe followed from the poster's bio/profile link"
+            f"{f' ({src})' if src else ''} — extract the ingredients and instructions from "
+            f"it (these belong in the recipe_* fields):\n{followed[:6000]}"
         )
 
     if transcript:

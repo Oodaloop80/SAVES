@@ -355,6 +355,11 @@ def _metadata_section(content: ExtractedContent, saved_date: str) -> str:
             yt_stats.append(_format_duration(m["youtube_duration"]))
         if yt_stats:
             lines.append(f"> - **YouTube Stats:** {' · '.join(yt_stats)}")
+    recipe_src = m.get("followed_recipe_url") or m.get("followed_recipe_hint")
+    if recipe_src:
+        host = urllib.parse.urlparse(recipe_src).netloc.lstrip("www.") or "source"
+        label = "Recipe source" if m.get("followed_recipe_url") else "Recipe likely at"
+        lines.append(f"> - **{label}:** [{host}]({recipe_src})")
     lines.append(f"> - **Saved:** {saved_date}")
     return "> [!info]- Sources & Metadata\n" + "\n".join(lines) + "\n"
 

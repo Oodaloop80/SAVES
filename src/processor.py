@@ -8,6 +8,7 @@ from src.discord_bot.approval import new_pending
 from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
+from src.extractors.profile_recipe import follow_profile_recipe
 from src.media.downloader import abs_to_obsidian_embed, download_media, localize_article_images
 from src.media.transcriber import is_audio_video, transcribe
 from src.media.vision import prepare_images_for_claude
@@ -91,6 +92,17 @@ async def _process_one(
 
     # 1b. Enrich with embedded cross-platform media (e.g. a YouTube video in a Reddit post)
     content = await enrich_embedded_media(content, config)
+
+    # 1c. If a food post points the reader off-site for the recipe ("recipe in bio" /
+    # "full recipe on my profile"), best-effort follow that link, extract the recipe, and
+    # record a direct link. Wrapped in its own timeout so a slow profile/aggregator page
+    # can't stall the serial queue; fully non-fatal so any miss leaves the post as-is.
+    if config.get("processing", {}).get("follow_profile_recipes", True):
+        try:
+            async with asyncio.timeout(extract_timeout):
+                content = await follow_profile_recipe(content, config)
+        except Exception as e:
+            logger.warning(f"Profile-recipe follow failed (non-fatal): {e}")
 
     # 2. Build preferences hint for this source
     source_key = get_source_key(platform, content.metadata or {}, content.author)

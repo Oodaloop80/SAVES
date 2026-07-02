@@ -20,6 +20,7 @@ processing:
   retry_attempts: 3            # used by the remote-transcription retry (utils/retry.py)
   retry_delay_seconds: 30      # base backoff for that retry (exponential: 30s, 60s, …)
   skip_duplicates: true
+  follow_profile_recipes: true  # "recipe in bio" posts: follow the bio link to the real recipe
   extract_timeout_seconds: 180  # hard cap on a single extractor.extract() await
 
 media:
