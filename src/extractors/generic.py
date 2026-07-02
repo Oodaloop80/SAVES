@@ -30,13 +30,51 @@ class GenericExtractor(BaseExtractor):
         from readability import Document
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-first-run",
+                    "--no-service-autorun",
+                    "--password-store=basic",
+                ],
+            )
+            context = await browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1920, "height": 1080},
+                locale="en-US",
+                timezone_id="America/New_York",
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            )
+            # Mask the automation flag that Cloudflare and other bot-detection scripts check.
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+            page = await context.new_page()
             wait = "networkidle" if self.wait_network_idle else "load"
             try:
                 await page.goto(url, wait_until=wait, timeout=self.timeout)
             except Exception:
                 await page.wait_for_timeout(3000)
+
+            # If Cloudflare's JS challenge is still running ("Just a moment..."), wait up
+            # to 15 s for it to resolve before capturing the page.
+            try:
+                current_title = (await page.title()).lower()
+                if "just a moment" in current_title or "checking your browser" in current_title:
+                    logger.info("Cloudflare challenge detected — waiting up to 15s for resolution")
+                    await page.wait_for_function(
+                        "() => !document.title.toLowerCase().includes('just a moment') "
+                        "     && !document.title.toLowerCase().includes('checking your browser')",
+                        timeout=15000,
+                    )
+                    await page.wait_for_timeout(2000)
+            except Exception:
+                pass  # If the wait times out, proceed anyway and capture what we got
 
             if self.auto_click_banners:
                 for sel in COOKIE_BANNER_SELECTORS:
@@ -154,6 +192,38 @@ class GenericExtractor(BaseExtractor):
                 except Exception:
                     pass
 
+            # Collect article-content images directly from the live DOM. Trafilatura often
+            # prunes images inside wrappers whose class names match its UI-junk heuristics
+            # (e.g. "expandable", "lazy-container"). Querying the rendered page's article/main
+            # selectors captures them before trafilatura can discard them.
+            playwright_article_images: list[str] = []
+            try:
+                playwright_article_images = await page.evaluate("""
+                    () => {
+                        const selectors = [
+                            'article img', 'main img', '[role="main"] img',
+                            '.article img', '.article-body img', '.article-content img',
+                            '.post-content img', '.entry-content img', '.story-content img',
+                            '[class*="article-body"] img', '[class*="article-content"] img',
+                            '[class*="post-content"] img', '[class*="story-body"] img',
+                        ];
+                        const seen = new Set();
+                        const imgs = [];
+                        for (const sel of selectors) {
+                            for (const img of document.querySelectorAll(sel)) {
+                                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                                if (src.startsWith('http') && !seen.has(src)) {
+                                    seen.add(src);
+                                    imgs.push(src);
+                                }
+                            }
+                        }
+                        return imgs.slice(0, 30);
+                    }
+                """)
+            except Exception:
+                pass
+
             await browser.close()
 
         # Diagnostic: how many <img> tags carry a real http(s) src after lazy-resolution.
@@ -183,6 +253,26 @@ class GenericExtractor(BaseExtractor):
                 article_markdown = f"![]({hero})\n\n{article_markdown}"
             logger.info("generic extractor: trafilatura produced %d inline image(s) in markdown",
                         article_markdown.count("!["))
+
+            # Supplement: inject any article images that trafilatura pruned. Compare the
+            # Playwright-extracted set against what's already in the markdown; append missing
+            # ones at the end of the article body so the localizer can archive them too.
+            if playwright_article_images:
+                already = set(re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', article_markdown))
+                to_inject = [u for u in playwright_article_images if u not in already]
+                # Filter obvious non-content images by URL fragment
+                _junk = ('logo', 'icon', 'avatar', 'pixel', 'tracking', 'badge',
+                         'button', 'sprite', 'placeholder', 'blank', 'spacer',
+                         '1x1', 'svg+xml')
+                to_inject = [u for u in to_inject
+                             if not any(j in u.lower() for j in _junk)]
+                if to_inject:
+                    injected_md = "\n\n".join(f"![]({u})" for u in to_inject[:15])
+                    article_markdown = article_markdown + "\n\n" + injected_md
+                    logger.info(
+                        "generic extractor: supplemented %d image(s) not captured by trafilatura",
+                        len(to_inject),
+                    )
             clean_text = _markdown_to_text(article_markdown)
         else:
             doc = Document(html)

@@ -133,13 +133,16 @@ async def _process_one(
             transcript = await transcribe(audio_candidates[0], config)
 
     # 5. Prepare vision data (images + video keyframes) for non-YouTube platforms.
-    # Skip generic web pages: the article text is already extracted as Markdown, so OCR'ing
-    # the page's images (logos, screenshots) just adds a noisy "Text from Images" section.
+    # Skip generic web pages (article text already extracted as Markdown) and regular YouTube
+    # (uses captions). YouTube Shorts are the exception: they rarely have captions and often
+    # have burned-in text that only frame OCR can read.
+    is_yt_short = platform == "youtube" and bool(content.metadata.get("is_short"))
     image_blocks: list[dict] = []
-    if media_paths_abs and platform not in ("youtube", "generic"):
+    if media_paths_abs and (platform not in ("youtube", "generic") or is_yt_short):
         try:
             image_blocks = await asyncio.to_thread(
-                prepare_images_for_claude, media_paths_abs, platform, config
+                prepare_images_for_claude, media_paths_abs, platform, config,
+                force_vision=is_yt_short,
             )
             if image_blocks:
                 logger.info(f"Vision: prepared {len(image_blocks)} image block(s) for {url}")

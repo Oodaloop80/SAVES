@@ -55,6 +55,20 @@ class YouTubeExtractor(BaseExtractor):
             captions = self._read_captions(tmpdir)
             chapters = self._parse_chapters(info, url)
 
+            # yt-dlp normalises /shorts/ID → watch?v=ID in webpage_url.
+            # Obsidian's YouTube embed only recognises the watch?v= form, so we store
+            # the canonical URL and use it in the formatter. Shorts also need the video
+            # downloaded for frame extraction (no captions on short clips), so we pass
+            # the canonical URL as the media URL instead of the thumbnail.
+            canonical_url = info.get("webpage_url") or url
+            is_short = "/shorts/" in url
+
+            if is_short:
+                # Shorts: download the video for frame OCR (they rarely have captions).
+                media_urls = [canonical_url]
+            else:
+                media_urls = [info["thumbnail"]] if info.get("thumbnail") else []
+
             return ExtractedContent(
                 url=url,
                 platform="youtube",
@@ -68,8 +82,10 @@ class YouTubeExtractor(BaseExtractor):
                     "like_count": info.get("like_count"),
                     "channel_id": info.get("channel_id"),
                     "video_id": info.get("id"),
+                    "canonical_url": canonical_url,
+                    "is_short": is_short,
                 },
-                media_urls=[info["thumbnail"]] if info.get("thumbnail") else [],
+                media_urls=media_urls,
                 captions=captions,
                 chapters=chapters,
             )

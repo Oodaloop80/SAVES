@@ -580,8 +580,11 @@ def _chapters_block(content: ExtractedContent) -> str:
 
 def _render_youtube_video(ai_result, content, media_paths, transcript, collapse):
     saved_date = date.today().strftime("%Y-%m-%d")
+    # Use yt-dlp's canonical watch?v= URL — Obsidian only embeds YouTube in that form,
+    # not /shorts/ URLs. canonical_url is stored by the extractor for every video.
+    embed_url = (content.metadata or {}).get("canonical_url") or content.url
     parts = [
-        f"![{ai_result.get('title', '')}]({content.url})\n",
+        f"![{ai_result.get('title', '')}]({embed_url})\n",
         _chapters_block(content),
         _summary_section(ai_result),
         _takeaways_section(ai_result),

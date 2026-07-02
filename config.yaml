@@ -45,9 +45,9 @@ vision:
   skip_platforms: []              # Platforms to exclude (youtube always skipped automatically)
 
 ai:
-  model: "claude-opus-4-8"
+  model: "claude-sonnet-4-6"  # production analysis model (A/B verdict 2026-07-01: Sonnet ≈ Opus at 1/2 cost)
   max_tokens: 8192          # room for full multi-slide image_text OCR + all JSON fields
-  temperature: 0.3          # kept: opus-4-8 rejects it (handled+cached); sonnet-4-6 accepts it
+  temperature: 0.3          # sonnet-4-6 accepts temperature (unlike opus-4-8, which 400'd + was auto-stripped)
   effort: "medium"          # thinking depth for analysis + local fact-check (low|medium|high).
                             # medium is the cost/quality sweet spot. Auto-skipped for the Haiku
                             # OCR stage (Haiku 4.5 rejects effort) and not sent to the web-search
@@ -69,6 +69,9 @@ platforms:
     delay_seconds: 1.5
     cookie_expiry_days: 21
     cookie_warning_days_ahead: 7
+    # TikTok defaults to H.265/HEVC which Obsidian/Electron can't play. Prefer H.264 (avc1),
+    # fall back to any mp4, then anything available.
+    video_quality: "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[ext=mp4][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best"
   facebook:
     delay_seconds: 7.0
     cookie_expiry_days: 30

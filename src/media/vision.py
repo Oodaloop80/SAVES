@@ -24,17 +24,19 @@ def prepare_images_for_claude(
     media_paths: list[str],
     platform: str,
     config: dict,
+    force_vision: bool = False,
 ) -> list[dict]:
     """
     Returns up to max_images Claude API image content blocks.
-    YouTube is always skipped (uses captions instead).
-    Videos → extract evenly-spaced keyframes.
+    YouTube is skipped by default (uses captions); pass force_vision=True for Shorts,
+    which rarely have captions and benefit from frame OCR.
+    Videos → scene-change keyframes tiled into montages.
     Images → base64-encode directly.
     """
     vcfg = config.get("vision", {})
     if not vcfg.get("enabled", True):
         return []
-    if platform == "youtube":
+    if platform == "youtube" and not force_vision:
         return []
 
     skip_platforms = vcfg.get("skip_platforms", [])

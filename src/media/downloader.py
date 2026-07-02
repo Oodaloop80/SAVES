@@ -35,7 +35,12 @@ async def download_media(
 
     mcfg = config.get("media", {})
     max_size_mb = mcfg.get("max_video_size_mb", 500)
-    video_quality = mcfg.get("video_quality", "bestvideo[height<=1080]+bestaudio/best")
+    # Platform-specific quality strings take precedence (e.g. TikTok forces H.264 to avoid
+    # HEVC which Obsidian/Electron Chromium can't play).
+    video_quality = (
+        config.get("platforms", {}).get(platform, {}).get("video_quality")
+        or mcfg.get("video_quality", "bestvideo[height<=1080]+bestaudio/best")
+    )
 
     embed_paths = []
     cookies_path = os.path.join(cookies_dir, f"{platform}.txt")

@@ -58,12 +58,15 @@ otherwise → web_generic.
 Whenever the content contains a recipe — regardless of note_type (this includes
 instagram_reel, tiktok_video, reddit_video, reddit_text, youtube_video, web_recipe, etc.)
 — extract the complete recipe from ALL available sources: transcript, caption/body text,
-image-slide text, and OP comments/replies. Populate:
+image-slide text (in `image_text`), and OP comments/replies. Populate ALL of these fields:
 - recipe_ingredients: list of ingredient strings (e.g. ["2 cups flour", "1 tsp salt"]).
   If multiple component groups exist (e.g. sauce, dough, filling), prefix each group's
   items with a label like "**For the sauce:**" as a standalone list entry.
-- recipe_instructions: list of step strings, plain prose without leading numbers
-  (the formatter adds them). Each step should be a complete sentence or two.
+- recipe_instructions: REQUIRED when steps are present. List every step as a separate
+  string in order. Pull steps from EVERY source — transcript, image slides, caption,
+  comments. If the creator explains how to cook something, those are instructions: extract
+  them all. Plain prose without leading numbers (the formatter adds them). Each step
+  should be a complete sentence or two. Do NOT collapse multiple steps into one.
 - recipe_servings: serving-size string (e.g. "Serves 4", "Makes 12 cookies"), or null.
 - recipe_time: combined time string (e.g. "Prep: 15 min · Cook: 45 min · Total: 1 hr"),
   or null if not mentioned.
