@@ -383,6 +383,9 @@ async def follow_profile_recipe(content: ExtractedContent, config: dict) -> Extr
         return content
 
     logger.info("Detected off-site recipe pointer in %s post — attempting to follow bio link", content.platform)
+    # Flag the detection so the note always renders the "Recipe from Bio/Link" section — even
+    # if every fetch below fails, the reader should see that this post pointed off-site.
+    content.metadata["offsite_recipe_detected"] = True
     keywords = extract_dish_keywords(content.title, content.body_text)
 
     # A caption often names the destination directly — either a pasted URL or a domain

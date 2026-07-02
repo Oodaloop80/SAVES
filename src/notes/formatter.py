@@ -111,8 +111,15 @@ def format_note(
     # web_recipe renderer handles recipe, image_text, and transcript itself.
     # For all other note types, inject Recipe and image_text sections when present.
     recipe_type = note_type in ("web_recipe", "recipe")
-    if not recipe_type and (ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions")):
+    has_recipe_fields = bool(ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions"))
+    # A 'recipe in bio' post gets its own provenance section that holds the extracted recipe;
+    # when it does, don't also emit the generic '## Recipe' (would duplicate the ingredients).
+    bio_section = "" if recipe_type else _bio_recipe_section(ai_result, content)
+    bio_owns_recipe = bool(bio_section) and bool((content.metadata or {}).get("followed_recipe_url")) and has_recipe_fields
+    if not recipe_type and has_recipe_fields and not bio_owns_recipe:
         inserts.append(_recipe_section(ai_result))
+    if bio_section:
+        inserts.append(bio_section)
     if image_text and not recipe_type:
         inserts.append(_image_text_section(image_text))
     if fc_inline:
@@ -931,7 +938,9 @@ def _nutrition_label(nutrition: dict | None) -> str:
     )
 
 
-def _recipe_section(ai_result: dict) -> str:
+def _recipe_body(ai_result: dict) -> str:
+    """The inner recipe content (times, ingredients, instructions, notes, nutrition label)
+    without a heading, so it can be placed under either '## Recipe' or the bio-link section."""
     ingredients = ai_result.get("recipe_ingredients") or []
     instructions = ai_result.get("recipe_instructions") or []
     servings = (ai_result.get("recipe_servings") or "").strip()
@@ -957,9 +966,67 @@ def _recipe_section(ai_result: dict) -> str:
     if label:
         inner.append(label)
 
-    if inner:
-        return "## Recipe\n\n" + "\n".join(inner)
+    return "\n".join(inner)
+
+
+def _recipe_section(ai_result: dict) -> str:
+    body = _recipe_body(ai_result)
+    if body:
+        return "## Recipe\n\n" + body
     return "## Recipe\n\n*(Ingredients and instructions — see sources below)*\n"
+
+
+def _link_label(url: str) -> str:
+    """Render a URL as a [host](url) markdown link."""
+    try:
+        host = urllib.parse.urlparse(url).netloc.lstrip("www.")
+    except Exception:
+        host = ""
+    return f"[{host or url}]({url})"
+
+
+def has_offsite_recipe_context(content: ExtractedContent) -> bool:
+    """True when this post pointed off-site for its recipe (so a bio-link section is warranted)."""
+    m = content.metadata or {}
+    return bool(m.get("offsite_recipe_detected") or m.get("followed_recipe_url")
+                or m.get("followed_recipe_hint"))
+
+
+def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
+    """Dedicated, clearly-labeled section for recipes that live behind a 'link in bio' /
+    'recipe on my profile' pointer. Shows the extracted recipe when we got it, the source
+    link, or an explicit 'could not extract' message when the follow failed."""
+    if not has_offsite_recipe_context(content):
+        return ""
+    m = content.metadata or {}
+    url = m.get("followed_recipe_url")
+    hint = m.get("followed_recipe_hint")
+    heading = "## 🔗 Recipe from Bio / Off-Site Link"
+    recipe_body = _recipe_body(ai_result)
+
+    if url and recipe_body:
+        banner = (
+            "> [!success]- Followed the poster's bio / off-site link\n"
+            f"> The recipe below was automatically extracted from {_link_label(url)}.\n"
+        )
+        return f"{heading}\n\n{banner}\n{recipe_body}"
+    if url:
+        return (
+            f"{heading}\n\n"
+            f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not find a "
+            "structured recipe on that page — open it directly to check.\n"
+        )
+    if hint:
+        return (
+            f"{heading}\n\n"
+            "> [!warning] This post points to an off-site recipe, but I could not open it "
+            f"automatically. Try the link the poster shared: {_link_label(hint)}\n"
+        )
+    return (
+        f"{heading}\n\n"
+        "> [!warning] This post points to an off-site recipe (\"link in bio\"), but I could not "
+        "locate or extract the recipe automatically.\n"
+    )
 
 
 def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
