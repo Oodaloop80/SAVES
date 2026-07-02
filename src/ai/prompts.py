@@ -316,7 +316,8 @@ def build_user_prompt(
     meta_lines = []
     skip_keys = (
         "possible_paywall", "embedded_article_url", "youtube_description",
-        "followed_recipe_markdown", "followed_recipe_hint",
+        "followed_recipe_markdown", "followed_recipe_hint", "followed_recipe_article_markdown",
+        "followed_recipe_data", "followed_recipe_title", "recipe_data",
     )
     for k, v in (content.metadata or {}).items():
         if v is not None and k not in skip_keys:
@@ -336,15 +337,36 @@ def build_user_prompt(
             f"instructions / links):\n{yt_desc[:6000]}"
         )
 
+    # Authoritative structured recipe pulled from the destination page's schema.org Recipe
+    # JSON-LD (exact ingredient quantities + every step, as the author entered them). Present
+    # for both directly-pasted recipe pages and followed bio recipes. This is the most reliable
+    # source — prefer it over transcribing the article body.
+    rdata = (content.metadata or {}).get("followed_recipe_data") or (content.metadata or {}).get("recipe_data")
+    if rdata:
+        from src.utils.recipe_data import format_recipe_data_for_prompt
+        src = (content.metadata or {}).get("followed_recipe_url", "") or content.url
+        parts.append(
+            "STRUCTURED RECIPE from the page's schema.org metadata"
+            f"{f' ({src})' if src else ''} — this is the AUTHORITATIVE source. Populate the "
+            "recipe_* fields from it: use these EXACT ingredients with their EXACT quantities "
+            "and ALL of these steps in order, transcribed faithfully (do NOT omit, merge, "
+            "reorder, or approximate). Translate wording to English only if it is in another "
+            "language, keeping the numeric measurements exactly as written:\n"
+            + format_recipe_data_for_prompt(rdata)
+        )
+
     # The post pointed off-site for the recipe and we followed the bio/profile link; this is
-    # the extracted destination page, very likely the full recipe the caption refers to.
+    # the extracted destination page. When there's no JSON-LD it's the primary recipe source;
+    # when there IS, it's supplementary context (chef notes, tips, story) — so cap it smaller.
     followed = (content.metadata or {}).get("followed_recipe_markdown")
     if followed:
         src = (content.metadata or {}).get("followed_recipe_url", "")
+        cap = 4000 if rdata else 12000
         parts.append(
-            "Recipe followed from the poster's bio/profile link"
+            "Full page followed from the poster's bio/profile link"
             f"{f' ({src})' if src else ''} — extract the ingredients and instructions from "
-            f"it (these belong in the recipe_* fields):\n{followed[:6000]}"
+            "it (these belong in the recipe_* fields), plus any tips/notes/servings/times:\n"
+            f"{followed[:cap]}"
         )
 
     if transcript:

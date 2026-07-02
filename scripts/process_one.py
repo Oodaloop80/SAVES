@@ -38,6 +38,7 @@ from src.media.transcriber import is_audio_video, transcribe  # noqa: E402
 from src.media.vision import prepare_images_for_claude  # noqa: E402
 from src.notes.file_manager import write_note  # noqa: E402
 from src.notes.formatter import format_note  # noqa: E402
+from src.utils.recipe_data import apply_structured_recipe  # noqa: E402
 from src.utils.url_parser import detect_platform, normalize_url  # noqa: E402
 from src.utils.vault_scanner import scan_saves_folders  # noqa: E402
 
@@ -104,6 +105,13 @@ async def run(url: str, dry_run: bool = False, deep: bool = False):
         await localize_article_images(content, platform, media_root, vault_root)
         print("  Localized inline article images into the vault")
 
+    if content.metadata.get("followed_recipe_article_markdown"):
+        await localize_article_images(
+            content, platform, media_root, vault_root,
+            md_key="followed_recipe_article_markdown",
+        )
+        print("  Localized followed-recipe page images into the vault")
+
     transcript = None
     if content.captions:
         transcript = content.captions
@@ -136,6 +144,11 @@ async def run(url: str, dry_run: bool = False, deep: bool = False):
         image_blocks=image_blocks or None,
         existing_folders=existing_folders,
     )
+    ai_result = apply_structured_recipe(ai_result, content)
+    if content.metadata.get("followed_recipe_data"):
+        rd = content.metadata["followed_recipe_data"]
+        print(f"  Applied schema.org recipe: {len(rd.get('ingredients') or [])} ingredient(s), "
+              f"{len(rd.get('instructions') or [])} step(s)")
     print(f"  Note type: {ai_result.get('note_type')}")
     print(f"  Folder: {ai_result.get('folder_path')}")
     print(f"  Tags ({len(ai_result.get('tags', []))}): {', '.join(ai_result.get('tags', []))}")

@@ -424,11 +424,14 @@ async def follow_profile_recipe(content: ExtractedContent, config: dict) -> Extr
         chosen = pool[0][0]
         logger.info("No keyword match among bio links; following primary link %s and descending", chosen)
 
-    # Follow the chosen recipe URL through the generic extractor.
-    md = await _extract_markdown(chosen, config)
-    if md is None:
+    # Follow the chosen recipe URL through the generic extractor. Capture the FULL article
+    # (structured markdown with inline images + any schema.org Recipe JSON-LD), not just text,
+    # so the page can be reproduced in the note and the recipe extracted accurately.
+    art = await _extract_article(chosen, config)
+    if art is None:
         content.metadata["followed_recipe_hint"] = chosen
         return content
+    md = _article_text(art)
 
     # A bio link often lands on a site root / index that lists posts rather than the recipe
     # itself (e.g. "drveganblog.com" → homepage). When the landing page is thin or is a
@@ -437,18 +440,33 @@ async def follow_profile_recipe(content: ExtractedContent, config: dict) -> Extr
     if not is_aggregator(chosen) and (len(md.strip()) < _THIN_MARKDOWN_CHARS or _is_site_root(chosen)):
         deeper = await _descend_to_recipe(chosen, keywords, config)
         if deeper and deeper.rstrip("/") != chosen.rstrip("/"):
-            deeper_md = await _extract_markdown(deeper, config)
-            if deeper_md and len(deeper_md.strip()) > len(md.strip()):
+            deeper_art = await _extract_article(deeper, config)
+            deeper_md = _article_text(deeper_art) if deeper_art else ""
+            if deeper_art and len(deeper_md.strip()) > len(md.strip()):
                 logger.info("Descended from %s → recipe page %s (%d chars)", chosen, deeper, len(deeper_md))
-                chosen, md = deeper, deeper_md
+                chosen, art, md = deeper, deeper_art, deeper_md
 
     if not md.strip():
         content.metadata["followed_recipe_hint"] = chosen
         return content
 
+    art_meta = art.metadata or {}
     content.metadata["followed_recipe_url"] = clean_url(chosen)
-    content.metadata["followed_recipe_markdown"] = md[:8000]
-    logger.info("Followed bio recipe: %s (%d chars extracted)", clean_url(chosen), len(md))
+    # Text for Claude's recipe extraction (fallback / surrounding notes when there's no JSON-LD).
+    content.metadata["followed_recipe_markdown"] = md[:12000]
+    # Structured markdown (headings, formatting, inline image URLs) to reproduce the page in
+    # the note — the images get downloaded + embedded by the article-image localizer.
+    if art_meta.get("article_markdown"):
+        content.metadata["followed_recipe_article_markdown"] = art_meta["article_markdown"]
+    # Authoritative schema.org Recipe (exact ingredients/quantities/steps), if the page has it.
+    if art_meta.get("recipe_data"):
+        content.metadata["followed_recipe_data"] = art_meta["recipe_data"]
+    if art.title:
+        content.metadata["followed_recipe_title"] = art.title
+    logger.info(
+        "Followed bio recipe: %s (%d chars, %sstructured recipe)",
+        clean_url(chosen), len(md), "with " if art_meta.get("recipe_data") else "no ",
+    )
     return content
 
 
@@ -463,15 +481,22 @@ def _is_site_root(url: str) -> bool:
     return path.strip("/") == ""
 
 
-async def _extract_markdown(url: str, config: dict) -> str | None:
-    """Run the generic extractor and return its markdown/body text, or None on failure."""
+async def _extract_article(url: str, config: dict) -> ExtractedContent | None:
+    """Run the generic (web-clipper) extractor and return its full ExtractedContent — the
+    structured article markdown, inline images, and any schema.org Recipe JSON-LD — or None."""
     try:
         from src.extractors.generic import GenericExtractor
-        result = await GenericExtractor(config).extract(url)
+        return await GenericExtractor(config).extract(url)
     except Exception as e:
         logger.info("Failed to extract %s: %s", url, e)
         return None
-    return (result.metadata or {}).get("article_markdown") or result.body_text or ""
+
+
+def _article_text(art: ExtractedContent | None) -> str:
+    """The article's Markdown (preferred) or plain body text, for length checks + Claude."""
+    if art is None:
+        return ""
+    return (art.metadata or {}).get("article_markdown") or art.body_text or ""
 
 
 async def _descend_to_recipe(page_url: str, keywords: list[str], config: dict) -> str | None:

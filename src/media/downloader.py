@@ -195,14 +195,16 @@ _MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(\s*(https?://[^)\s]+)(?:\s+[^)]*)?\)'
 
 
 async def localize_article_images(
-    content, platform: str, media_root: str, vault_root: str
+    content, platform: str, media_root: str, vault_root: str,
+    md_key: str = "article_markdown",
 ) -> None:
-    """Download the inline images referenced in content.metadata['article_markdown'] and
-    rewrite the Markdown to embed the LOCAL copies, so the note survives the source article
-    being taken down. Images that fail to download keep their original remote URL (still
-    renders while the article is live). Mutates content.metadata in place; no-op when there
-    is no article markdown or no images."""
-    md = (content.metadata or {}).get("article_markdown")
+    """Download the inline images referenced in content.metadata[md_key] and rewrite the
+    Markdown to embed the LOCAL copies, so the note survives the source article being taken
+    down. Images that fail to download keep their original remote URL (still renders while the
+    article is live). Mutates content.metadata in place; no-op when there is no such markdown
+    or no images. `md_key` lets the same machinery localize a followed off-site recipe page
+    (`followed_recipe_article_markdown`) as well as a directly-pasted article."""
+    md = (content.metadata or {}).get(md_key)
     if not md:
         return
 
@@ -238,8 +240,9 @@ async def localize_article_images(
             return m.group(0)  # download failed — leave the remote link in place
         return f"\n```EmbedRelativeTo\nmedia://{embed}\n```\n"
 
-    content.metadata["article_markdown"] = _MD_IMAGE_RE.sub(_repl, md)
-    logger.info("Localized %d/%d article image(s) into the vault", len(url_to_embed), len(urls))
+    content.metadata[md_key] = _MD_IMAGE_RE.sub(_repl, md)
+    logger.info("Localized %d/%d article image(s) into the vault (%s)",
+                len(url_to_embed), len(urls), md_key)
 
 
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:

@@ -2,6 +2,7 @@ import logging
 import re
 
 from src.extractors.base import BaseExtractor, ExtractedContent
+from src.utils.recipe_data import extract_recipe_jsonld
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,11 @@ class GenericExtractor(BaseExtractor):
 
         meta = _extract_metadata(html, url)
 
+        # schema.org Recipe JSON-LD: the exact ingredient list + steps the author entered.
+        # Far more reliable than scraping the rendered body (which buries the recipe under a
+        # long story preamble). Benefits direct recipe-page pastes and followed bio recipes.
+        recipe_data = extract_recipe_jsonld(html)
+
         return ExtractedContent(
             url=url,
             platform="generic",
@@ -241,6 +247,7 @@ class GenericExtractor(BaseExtractor):
             body_text=clean_text,
             metadata={
                 "article_markdown": article_markdown or None,
+                "recipe_data": recipe_data,
                 "og_description": og.get("og:description") or meta.get("description"),
                 "published_time": og.get("article:published_time") or meta.get("date"),
                 # Surfaced into the note's frontmatter `posted:` line.

@@ -992,10 +992,25 @@ def has_offsite_recipe_context(content: ExtractedContent) -> bool:
                 or m.get("followed_recipe_hint"))
 
 
+def _followed_page_reproduction(content: ExtractedContent) -> str:
+    """Reproduce the followed off-site page in the note like a web-clipper paste — its
+    structured Markdown (headings, formatting) with images already localized into the vault.
+    Rendered under a clear heading beneath the structured recipe. Empty when there's no page."""
+    m = content.metadata or {}
+    md = (m.get("followed_recipe_article_markdown") or "").strip()
+    if not md:
+        return ""
+    url = m.get("followed_recipe_url") or ""
+    host = urllib.parse.urlparse(url).netloc.lstrip("www.") if url else ""
+    header = "### 📄 Full recipe page" + (f" — {host}" if host else "")
+    return f"{header}\n\n{md}\n"
+
+
 def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
     """Dedicated, clearly-labeled section for recipes that live behind a 'link in bio' /
-    'recipe on my profile' pointer. Shows the extracted recipe when we got it, the source
-    link, or an explicit 'could not extract' message when the follow failed."""
+    'recipe on my profile' pointer. Shows the accurate structured recipe when we got it, a
+    faithful reproduction of the source page (text + images + formatting), the source link,
+    or an explicit 'could not extract' message when the follow failed."""
     if not has_offsite_recipe_context(content):
         return ""
     m = content.metadata or {}
@@ -1003,19 +1018,35 @@ def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
     hint = m.get("followed_recipe_hint")
     heading = "## 🔗 Recipe from Bio / Off-Site Link"
     recipe_body = _recipe_body(ai_result)
+    page = _followed_page_reproduction(content)
 
-    if url and recipe_body:
-        banner = (
-            "> [!success]- Followed the poster's bio / off-site link\n"
-            f"> The recipe below was automatically extracted from {_link_label(url)}.\n"
-        )
-        return f"{heading}\n\n{banner}\n{recipe_body}"
     if url:
-        return (
-            f"{heading}\n\n"
-            f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not find a "
-            "structured recipe on that page — open it directly to check.\n"
-        )
+        if recipe_body:
+            banner = (
+                "> [!success]- Followed the poster's bio / off-site link\n"
+                f"> The recipe below was automatically extracted from {_link_label(url)}. "
+                "The full source page is reproduced beneath it.\n"
+            ) if page else (
+                "> [!success]- Followed the poster's bio / off-site link\n"
+                f"> The recipe below was automatically extracted from {_link_label(url)}.\n"
+            )
+            parts = [heading, "", banner, "", recipe_body]
+        elif page:
+            parts = [
+                heading, "",
+                f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not "
+                "parse a clean structured recipe from it — the full source page is reproduced "
+                "below so nothing is lost.\n",
+            ]
+        else:
+            parts = [
+                heading, "",
+                f"> [!warning] I followed the off-site link ({_link_label(url)}) but could not "
+                "find a structured recipe on that page — open it directly to check.\n",
+            ]
+        if page:
+            parts += ["", page]
+        return "\n".join(parts).rstrip() + "\n"
     if hint:
         return (
             f"{heading}\n\n"

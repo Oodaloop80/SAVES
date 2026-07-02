@@ -14,6 +14,7 @@ from src.media.transcriber import is_audio_video, transcribe
 from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key
+from src.utils.recipe_data import apply_structured_recipe
 from src.utils.url_parser import detect_platform, normalize_url
 from src.utils.vault_scanner import scan_saves_folders
 
@@ -135,6 +136,17 @@ async def _process_one(
         except Exception as e:
             logger.warning(f"Article image localization failed (non-fatal): {e}")
 
+    # 3c. A followed "recipe in bio" page is reproduced in the note like a web-clipper paste;
+    # localize its inline images too so the pictures are archived alongside the reel.
+    if content.metadata.get("followed_recipe_article_markdown"):
+        try:
+            await localize_article_images(
+                content, platform, media_root, vault_root,
+                md_key="followed_recipe_article_markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Followed-recipe image localization failed (non-fatal): {e}")
+
     # 4. Transcribe
     transcript = None
     if content.captions:
@@ -175,6 +187,10 @@ async def _process_one(
         await send_alert(bot, alert_channel, f"Claude API failed for {url}: {e}")
         state.mark_failed(url, f"AI failed: {e}")
         return
+
+    # Backfill recipe_* fields from the page's authoritative schema.org Recipe data (exact
+    # quantities + every step), so accuracy doesn't hinge on the model transcribing a long page.
+    ai_result = apply_structured_recipe(ai_result, content)
 
     # 7. Fact-check (health/political/finance) and travel location check in parallel.
     # The automatic pass is LOCAL ONLY (allow_web_search=False) — it surfaces the cheap,
