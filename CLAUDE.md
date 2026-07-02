@@ -185,6 +185,36 @@ All types include YAML frontmatter: title, source_url, platform, saved_date, aut
 section is automatically injected before the `---` separator. This handles Instagram Reels,
 TikTok videos, or Reddit posts that contain recipes.
 
+**Recipe enhancements (in `_recipe_section` / `formatter.py`):**
+- **Nutrition label.** Claude estimates per-serving macros/micros into a `nutrition` JSON
+  field; `_nutrition_label()` renders an FDA-style HTML Nutrition Facts panel (Obsidian
+  renders the HTML). %DV is computed *deterministically* in the formatter from FDA reference
+  Daily Values (`_DAILY_VALUES`), not by the model. Carries an "AI estimate — not verified"
+  disclaimer.
+- **Unit conversion.** `src/utils/units.py` `convert_measurements()` annotates recipe text with
+  imperial/Fahrenheit equivalents in parentheses (°C→°F, g→oz, kg→lb, ml→tsp/tbsp/cups,
+  L→cups, cm/mm→in). Deterministic + idempotent; never replaces the original. Conservative:
+  bare "C" is never Celsius (US "1 C" = a cup), bare lowercase "l" is never litres. Claude is
+  instructed to keep original units so the math isn't doubled.
+- **English translation block.** `translation` / `source_language` JSON fields render as a
+  collapsible `> [!info]- 🌐 English Translation` callout at the top of the note (all note
+  types) when the source isn't English. Recipe fields stay in English so they're usable.
+
+**Off-site recipe following (`src/extractors/profile_recipe.py`, processor step 1c):** food
+posts that say "recipe in bio" / "full recipe on my profile" carry no recipe in the caption.
+Best-effort (behind `processing.follow_profile_recipes`, default on, own timeout, non-fatal):
+detects the off-site pointer, resolves the poster's bio link (Playwright + platform cookies,
+or a URL pasted in the caption), unwraps `l.instagram.com`/`l.facebook.com` redirects, scores
+Linktree/Beacons/Stan-style aggregator links against the dish keywords, follows the best match
+through the generic extractor, feeds it to Claude, and records a **Recipe source** link in the
+note's metadata. Deterministic core is unit-tested; the Playwright fetch needs live iteration.
+
+**Duplicate detection (`queue_manager.py` + `main.py`):** `enqueue_from_file()` returns
+already-saved URLs (matched via normalized-URL `ProcessingState.is_done`) instead of silently
+skipping; `main.py`'s `scan_inbox()` posts a `send_duplicate_notice()` to `#SAVES-logs` and
+clears the line from the inbox — so no tokens are spent reprocessing. Behind
+`processing.skip_duplicates` (default on).
+
 ---
 
 ## Discord Bot Buttons
