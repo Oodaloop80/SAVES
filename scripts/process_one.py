@@ -28,6 +28,7 @@ from src.config import load_config  # noqa: E402
 from src.credentials import load_credentials  # noqa: E402
 from src.extractors import get_extractor  # noqa: E402
 from src.extractors.enrich import enrich_embedded_media  # noqa: E402
+from src.extractors.profile_recipe import follow_profile_recipe  # noqa: E402
 from src.media.downloader import (  # noqa: E402
     abs_to_obsidian_embed,
     download_media,
@@ -53,6 +54,17 @@ async def run(url: str, dry_run: bool = False, deep: bool = False):
     print("Extracting content...")
     content = await extractor.extract(url)
     content = await enrich_embedded_media(content, config)
+
+    # Follow "recipe in bio / on my profile" pointers to the off-site recipe (Feature 4).
+    if config.get("processing", {}).get("follow_profile_recipes", True):
+        content = await follow_profile_recipe(content, config)
+        if content.metadata.get("followed_recipe_url"):
+            print(f"  Followed off-site recipe: {content.metadata['followed_recipe_url']} "
+                  f"({len(content.metadata.get('followed_recipe_markdown', ''))} chars extracted)")
+        elif content.metadata.get("followed_recipe_hint"):
+            print(f"  Off-site recipe pointer found but not resolved to a page; hint: "
+                  f"{content.metadata['followed_recipe_hint']}")
+
     if content.metadata.get("youtube_url"):
         print(f"  Enriched with embedded YouTube: {content.metadata['youtube_url']}")
         if content.metadata.get("youtube_channel"):

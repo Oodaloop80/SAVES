@@ -21,6 +21,7 @@ parsing and scoring) are deterministic and unit-tested.
 import html as _html
 import logging
 import re
+import unicodedata
 import urllib.parse
 
 from src.extractors.base import ExtractedContent
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 # ── detection ────────────────────────────────────────────────────────
 _RECIPE_INTENT = re.compile(
     r"\b(recipe|receta|recipes|ingredient|instructions?|how\s+to\s+make|full\s+method|"
-    r"printable\s+recipe|get\s+the\s+recipe|written\s+recipe)\b",
+    r"printable\s+recipe|get\s+the\s+recipe|written\s+recipe|"
+    # cooking/baking cues so posts that describe a dish without the literal word "recipe"
+    # (but still point off-site) qualify, e.g. "ready to bake … dough mix, link in bio":
+    r"bake[sd]?|baking|dough|roast(?:ed)?|grill(?:ed)?|marina(?:de|te)|simmer|knead|"
+    r"preheat|batter|frosting|proof(?:ed|ing)?)\b",
     re.I,
 )
 _REDIRECT_INTENT = re.compile(
@@ -67,7 +72,18 @@ _STOPWORDS = {
     "how", "new", "best", "easy", "quick", "our", "out", "now", "all", "see", "check",
     "tap", "click", "watch", "follow", "save", "saved", "today", "day", "week", "part",
     "ingredients", "instructions", "written", "printable", "comment", "comments",
+    "blog", "dot", "com", "net", "org", "www", "http", "https", "url", "website", "site",
 }
+
+
+def normalize_caption(text: str | None) -> str:
+    """Fold Instagram/TikTok 'fancy font' Unicode (mathematical bold/italic/sans-serif,
+    fullwidth, etc.) down to plain letters so the regexes match. Food captions constantly
+    render "𝐅𝐔𝐋𝐋 𝐑𝐄𝐂𝐈𝐏𝐄 𝐎𝐍 𝐌𝐘 𝐁𝐋𝐎𝐆" with U+1D400-block glyphs that are NOT ASCII 'r','e'…;
+    NFKC compatibility normalization maps them back to ASCII (emoji are left untouched)."""
+    if not text:
+        return text or ""
+    return unicodedata.normalize("NFKC", text)
 
 
 def wants_offsite_recipe(text: str | None) -> bool:
@@ -76,6 +92,7 @@ def wants_offsite_recipe(text: str | None) -> bool:
     ordinary captions that merely say 'link in bio'."""
     if not text:
         return False
+    text = normalize_caption(text)
     return bool(_RECIPE_INTENT.search(text) and _REDIRECT_INTENT.search(text))
 
 
@@ -86,6 +103,7 @@ def extract_dish_keywords(*texts: str | None, limit: int = 8) -> list[str]:
     for text in texts:
         if not text:
             continue
+        text = normalize_caption(text)
         for tok in re.findall(r"[a-zA-Z][a-zA-Z'\-]{2,}", text.lower()):
             tok = tok.strip("-'")
             if len(tok) < 3 or tok in _STOPWORDS or tok in seen:
@@ -106,6 +124,26 @@ def _host(url: str) -> str:
 def is_aggregator(url: str) -> bool:
     host = _host(url)
     return any(host == h or host.endswith("." + h) for h in _AGGREGATOR_HOSTS)
+
+
+_TRACKING_PARAMS = {
+    "fbclid", "gclid", "mc_cid", "mc_eid", "igshid", "igsh", "aem", "_aem", "ref", "ref_src",
+}
+
+
+def clean_url(url: str) -> str:
+    """Strip tracking cruft (utm_*, fbclid, igshid, …) so the stored 'Recipe source' link is tidy."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return url
+    if not parsed.query:
+        return url
+    kept = [
+        (k, v) for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if not k.lower().startswith("utm_") and k.lower() not in _TRACKING_PARAMS
+    ]
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(kept)))
 
 
 def decode_redirect(url: str) -> str:
@@ -340,82 +378,156 @@ async def follow_profile_recipe(content: ExtractedContent, config: dict) -> Extr
     real recipe and attach it. Always returns content (unchanged on any miss/failure)."""
     if content.platform not in ("instagram", "tiktok", "facebook"):
         return content
-    caption = " ".join(filter(None, [content.title, content.body_text]))
+    caption = normalize_caption(" ".join(filter(None, [content.title, content.body_text])))
     if not wants_offsite_recipe(caption):
         return content
 
     logger.info("Detected off-site recipe pointer in %s post — attempting to follow bio link", content.platform)
     keywords = extract_dish_keywords(content.title, content.body_text)
 
-    # A caption sometimes pastes the destination URL directly — prefer that over scraping.
-    direct = external_candidates(parse_links_from_text(caption))
+    # A caption often names the destination directly — either a pasted URL or a domain
+    # spelled out to dodge link detection ("Drveganblog dot com"). Prefer that over scraping.
+    direct = external_candidates(parse_links_from_text(caption) + reconstruct_spelled_urls(caption))
     bio_links = direct or await _resolve_bio_links(content, config)
     if not bio_links:
         logger.info("No usable bio link found for %s", content.url)
         return content
 
-    # Split into aggregator pages vs. links that could be the recipe directly.
+    # Build one candidate pool of followable links. If the bio link is an aggregator
+    # (Linktree/Beacons/…), pull its listed links into the pool too.
     aggregators = [(u, a) for (u, a) in bio_links if is_aggregator(u)]
-    directish = [(u, a) for (u, a) in bio_links if not is_aggregator(u)]
-
-    chosen: str | None = None
-    # Prefer a strong direct match among non-aggregator bio links.
-    best_direct = pick_best_link(directish, keywords, min_score=1.0)
-    if best_direct:
-        chosen = best_direct[0]
-    elif len(directish) == 1 and not aggregators:
-        chosen = directish[0][0]  # single off-site link, no aggregator — follow it
-
-    # Otherwise dig into the first aggregator page and pick the best-matching recipe link.
-    if not chosen and aggregators:
+    pool = [(u, a) for (u, a) in bio_links if not is_aggregator(u)]
+    if aggregators:
         agg_url = aggregators[0][0]
         try:
             agg_html, agg_final = await _render_html(agg_url, config)
-            agg_links = parse_links(agg_html, base_url=agg_final)
-            best = pick_best_link(agg_links, keywords, exclude_hosts={_host(agg_url)}, min_score=1.0)
-            if best:
-                chosen = best[0]
-                logger.info("Aggregator %s → chose %s (score %.1f)", agg_url, chosen, best[1])
+            pool += external_candidates(parse_links(agg_html, base_url=agg_final),
+                                        exclude_hosts={_host(agg_url)})
         except Exception as e:
             logger.info("Aggregator fetch failed for %s: %s", agg_url, e)
 
-    if not chosen:
-        # Record the bio link as a hint even though we couldn't pin down the recipe.
+    if not pool:
         content.metadata["followed_recipe_hint"] = bio_links[0][0]
-        logger.info("Could not pin down the exact recipe link; recorded bio hint %s", bio_links[0][0])
+        logger.info("No followable off-site link; recorded bio hint %s", bio_links[0][0])
         return content
 
+    # Prefer a link whose text/slug matches the dish; otherwise follow the primary bio/site
+    # link and let the descend step below try to locate the dish page inside it.
+    best = pick_best_link(pool, keywords, min_score=1.0)
+    if best:
+        chosen = best[0]
+        logger.info("Chose recipe link %s (score %.1f)", chosen, best[1])
+    else:
+        chosen = pool[0][0]
+        logger.info("No keyword match among bio links; following primary link %s and descending", chosen)
+
     # Follow the chosen recipe URL through the generic extractor.
-    try:
-        from src.extractors.generic import GenericExtractor
-        recipe_content = await GenericExtractor(config).extract(chosen)
-    except Exception as e:
-        logger.info("Failed to extract followed recipe %s: %s", chosen, e)
+    md = await _extract_markdown(chosen, config)
+    if md is None:
         content.metadata["followed_recipe_hint"] = chosen
         return content
 
-    md = (recipe_content.metadata or {}).get("article_markdown") or recipe_content.body_text or ""
+    # A bio link often lands on a site root / index that lists posts rather than the recipe
+    # itself (e.g. "drveganblog.com" → homepage). When the landing page is thin or is a
+    # domain root and isn't already an aggregator we handled above, descend one level by
+    # scoring the page's own links against the dish and following the best match.
+    if not is_aggregator(chosen) and (len(md.strip()) < _THIN_MARKDOWN_CHARS or _is_site_root(chosen)):
+        deeper = await _descend_to_recipe(chosen, keywords, config)
+        if deeper and deeper.rstrip("/") != chosen.rstrip("/"):
+            deeper_md = await _extract_markdown(deeper, config)
+            if deeper_md and len(deeper_md.strip()) > len(md.strip()):
+                logger.info("Descended from %s → recipe page %s (%d chars)", chosen, deeper, len(deeper_md))
+                chosen, md = deeper, deeper_md
+
     if not md.strip():
         content.metadata["followed_recipe_hint"] = chosen
         return content
 
-    content.metadata["followed_recipe_url"] = chosen
+    content.metadata["followed_recipe_url"] = clean_url(chosen)
     content.metadata["followed_recipe_markdown"] = md[:8000]
-    logger.info("Followed bio recipe: %s (%d chars extracted)", chosen, len(md))
+    logger.info("Followed bio recipe: %s (%d chars extracted)", clean_url(chosen), len(md))
     return content
 
 
+_THIN_MARKDOWN_CHARS = 400
+
+
+def _is_site_root(url: str) -> bool:
+    try:
+        path = urllib.parse.urlparse(url).path
+    except Exception:
+        return False
+    return path.strip("/") == ""
+
+
+async def _extract_markdown(url: str, config: dict) -> str | None:
+    """Run the generic extractor and return its markdown/body text, or None on failure."""
+    try:
+        from src.extractors.generic import GenericExtractor
+        result = await GenericExtractor(config).extract(url)
+    except Exception as e:
+        logger.info("Failed to extract %s: %s", url, e)
+        return None
+    return (result.metadata or {}).get("article_markdown") or result.body_text or ""
+
+
+async def _descend_to_recipe(page_url: str, keywords: list[str], config: dict) -> str | None:
+    """Given a listing/index page, find the link that best matches the dish. Prefers links
+    on the same site (a blog's own recipe post) and falls back to a strong off-site match."""
+    try:
+        html_text, final_url = await _render_html(page_url, config)
+    except Exception as e:
+        logger.info("Descend fetch failed for %s: %s", page_url, e)
+        return None
+    links = parse_links(html_text, base_url=final_url)
+    host = _host(final_url)
+    internal = [
+        (u, a) for (u, a) in links
+        if _host(u) == host and u.rstrip("/") != final_url.rstrip("/")
+        and not any(bad in u.lower() for bad in _NEGATIVE_HOSTS)
+    ]
+    best = (
+        pick_best_link(internal, keywords, min_score=1.0)
+        or pick_best_link(links, keywords, exclude_hosts={host}, min_score=1.5)
+    )
+    return best[0] if best else None
+
+
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s)\]\"'<>]+", re.I)
+# Spelled-out domains that dodge Instagram's link detection, e.g. "Drveganblog dot com"
+# or "mysite . com". Requires a plausible TLD so ordinary "…and dot the i's" text is skipped.
+_SPELLED_URL_RE = re.compile(
+    r"\b([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\s*(?:dot|\.)\s*"
+    r"(com|net|org|io|co|blog|shop|store|kitchen|recipes?|food|us|uk|ca|au|eu)\b",
+    re.I,
+)
 
 
 def parse_links_from_text(text: str | None) -> list[tuple[str, str]]:
     """Find bare URLs pasted into caption text, returned in the (url, anchor) shape."""
     if not text:
         return []
+    text = normalize_caption(text)
     out, seen = [], set()
     for m in _URL_IN_TEXT_RE.finditer(text):
         u = decode_redirect(m.group(0).rstrip(".,;"))
         if u not in seen:
             seen.add(u)
             out.append((u, ""))
+    return out
+
+
+def reconstruct_spelled_urls(text: str | None) -> list[tuple[str, str]]:
+    """Rebuild domains a poster spelled out to evade link detection ("Drveganblog dot com"
+    → https://drveganblog.com). Returned in the (url, anchor) shape as extra candidates."""
+    if not text:
+        return []
+    text = normalize_caption(text)
+    out, seen = [], set()
+    for m in _SPELLED_URL_RE.finditer(text):
+        host = f"{m.group(1).lower()}.{m.group(2).lower()}"
+        url = "https://" + host
+        if host not in seen:
+            seen.add(host)
+            out.append((url, ""))
     return out
