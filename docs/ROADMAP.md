@@ -75,8 +75,9 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       Discord "🔍 Deep fact-check" button (health 6 / finance 3 / political 1). Code + view
       logic done and unit-verified; live Discord button click still to be tested in Phase 4.
 - [x] **A/B Opus vs Sonnet** analysis: `scripts/ab_compare.py` writes two labeled notes to the
-      DEV vault for review. First run (L-theanine): identical routing, comparable tags (Sonnet
-      a bit more verbose). Verdict pending Bora's Obsidian review across more saves.
+      DEV vault for review. **Verdict (2026-07-01): Sonnet wins** — across many test saves Sonnet
+      matched Opus on routing/quality at ~half the cost. `ai.model` set to `claude-sonnet-4-6`.
+      Sonnet accepts `temperature`, so the param stays (no more auto-stripped 400 on each call).
 - [ ] `effort: medium` on Opus analysis + Sonnet fact-check; drop the rejected `temperature`
       param on Opus (currently wastes one 400'd request per process) — untapped, big lever
 - [ ] Cache the travel-location check (`verifier.py`) — zero-risk quick win

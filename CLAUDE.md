@@ -143,7 +143,7 @@ vision:
   frame_grid: 2                          # Tile grid size: 2 = 2×2 montage (4 frames per image block)
 
 ai:
-  model: "claude-opus-4-8"               # Main analysis model (text-only when ocr_model set)
+  model: "claude-sonnet-4-6"             # Main analysis model (A/B verdict: Sonnet ≈ Opus at ~½ cost)
 
 fact_checking:
   model: "claude-sonnet-4-6"             # Cheaper model for fact-checking
@@ -308,7 +308,7 @@ flow is the next stage to test in full.
 
 **Model routing (as configured):**
 - Stage 1 (vision): `claude-haiku-4-5` reads all image slides / video frames → OCR text
-- Stage 2 (analysis): `claude-opus-4-8` analyzes OCR text (no images → cheaper)
+- Stage 2 (analysis): `claude-sonnet-4-6` analyzes OCR text (no images → cheaper)
 - Stage 3 (fact-check, health/finance posts): `claude-sonnet-4-6` with web search
 
 **Vision skip:** `generic` platform (web articles) and `youtube` are skipped for vision.

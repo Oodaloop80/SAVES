@@ -192,38 +192,6 @@ class GenericExtractor(BaseExtractor):
                 except Exception:
                     pass
 
-            # Collect article-content images directly from the live DOM. Trafilatura often
-            # prunes images inside wrappers whose class names match its UI-junk heuristics
-            # (e.g. "expandable", "lazy-container"). Querying the rendered page's article/main
-            # selectors captures them before trafilatura can discard them.
-            playwright_article_images: list[str] = []
-            try:
-                playwright_article_images = await page.evaluate("""
-                    () => {
-                        const selectors = [
-                            'article img', 'main img', '[role="main"] img',
-                            '.article img', '.article-body img', '.article-content img',
-                            '.post-content img', '.entry-content img', '.story-content img',
-                            '[class*="article-body"] img', '[class*="article-content"] img',
-                            '[class*="post-content"] img', '[class*="story-body"] img',
-                        ];
-                        const seen = new Set();
-                        const imgs = [];
-                        for (const sel of selectors) {
-                            for (const img of document.querySelectorAll(sel)) {
-                                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
-                                if (src.startsWith('http') && !seen.has(src)) {
-                                    seen.add(src);
-                                    imgs.push(src);
-                                }
-                            }
-                        }
-                        return imgs.slice(0, 30);
-                    }
-                """)
-            except Exception:
-                pass
-
             await browser.close()
 
         # Diagnostic: how many <img> tags carry a real http(s) src after lazy-resolution.
@@ -243,21 +211,7 @@ class GenericExtractor(BaseExtractor):
         media_urls = []
         if article_markdown:
             article_markdown = _normalize_markdown(article_markdown)
-
-            # If trafilatura got very few images despite the page having many (i.e. its pruning
-            # rules are too aggressive for this site), retry with favor_recall=True which trades
-            # some precision for better content coverage including inline images.
-            traf_images = article_markdown.count("![")
-            if traf_images < 2 and http_imgs >= 3:
-                recall_md = _extract_markdown(html, url, favor_recall=True)
-                if recall_md:
-                    recall_md = _normalize_markdown(recall_md)
-                    if recall_md.count("![") > traf_images:
-                        logger.info(
-                            "generic extractor: favor_recall retry improved images %d→%d",
-                            traf_images, recall_md.count("!["),
-                        )
-                        article_markdown = recall_md
+            article_markdown = _trim_trailing_chrome(article_markdown)
 
             # Lead the article body with the feature image (og:image), routed through the
             # SAME local-image pipeline as the inline images (downloaded + embedded by the
@@ -269,30 +223,6 @@ class GenericExtractor(BaseExtractor):
                 article_markdown = f"![]({hero})\n\n{article_markdown}"
             logger.info("generic extractor: trafilatura produced %d inline image(s) in markdown",
                         article_markdown.count("!["))
-
-            # Supplement: inject article images that trafilatura pruned entirely. Compare the
-            # Playwright-extracted set against what's already in the markdown; append missing
-            # ones at the end so the localizer can archive them too.
-            # Dedup uses base URLs (path only, no query params) because CDN URLs often differ
-            # only in query params (width=, quality=, fit=) for the same underlying image.
-            if playwright_article_images:
-                already_raw = set(re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', article_markdown))
-                already_bases = {u.split('?')[0].split('#')[0] for u in already_raw}
-                _junk = ('logo', 'icon', 'avatar', 'pixel', 'tracking', 'badge',
-                         'button', 'sprite', 'placeholder', 'blank', 'spacer',
-                         '1x1', 'svg+xml')
-                to_inject = [
-                    u for u in playwright_article_images
-                    if u.split('?')[0].split('#')[0] not in already_bases
-                    and not any(j in u.lower() for j in _junk)
-                ]
-                if to_inject:
-                    injected_md = "\n\n".join(f"![]({u})" for u in to_inject[:15])
-                    article_markdown = article_markdown + "\n\n" + injected_md
-                    logger.info(
-                        "generic extractor: supplemented %d image(s) not captured by trafilatura",
-                        len(to_inject),
-                    )
             clean_text = _markdown_to_text(article_markdown)
         else:
             doc = Document(html)
@@ -322,10 +252,17 @@ class GenericExtractor(BaseExtractor):
         )
 
 
-def _extract_markdown(html: str, url: str, favor_recall: bool = False) -> str | None:
+def _extract_markdown(html: str, url: str) -> str | None:
     """Extract the main article content as Markdown using trafilatura. Returns None on
-    failure so the caller can fall back to readability. Pass favor_recall=True for a
-    second pass on sites where trafilatura's default pruning misses too many images."""
+    failure so the caller can fall back to readability.
+
+    Uses trafilatura's default (precision-favoring) mode deliberately: it places inline
+    images at their correct positions AND excludes site chrome. On listicles (e.g. a
+    25-cocktail recipe roundup) it keeps every content image; on text-heavy articles that
+    inline related-article thumbnails, product widgets, and comment avatars inside the
+    article container (e.g. Future plc sites like Tom's Guide), precision mode correctly
+    prunes that junk. An earlier favor_recall/DOM-supplement approach was removed because it
+    dragged that chrome in and appended images out of position."""
     try:
         import trafilatura
         md = trafilatura.extract(
@@ -335,7 +272,6 @@ def _extract_markdown(html: str, url: str, favor_recall: bool = False) -> str | 
             include_images=True,
             include_formatting=True,
             url=url,
-            favor_recall=favor_recall,
         )
         return md.strip() if md and md.strip() else None
     except Exception:
@@ -360,6 +296,37 @@ def _extract_metadata(html: str, url: str) -> dict:
 
 
 _LIST_ITEM_RE = re.compile(r'(?:[-*+]\s|\d+[.)]\s)')
+
+# Heading text that marks the end of real article content on most sites: reader comments,
+# newsletter/subscribe prompts, and "related/more" link farms. Matched only against Markdown
+# HEADING lines — real article bodies almost never use these exact phrases as headings, so
+# this trims trailing site chrome (e.g. Future plc's "Join the Conversation" / "All Comments")
+# without touching listicle section headings like "## Negroni".
+_TRAILING_CHROME_RE = re.compile(
+    r"^\s*#{1,6}\s*("
+    r"join the conversation|all comments|comments|leave a (comment|reply)|post a comment|"
+    r"related( articles| stories| posts| reading| content| topics)?|"
+    r"more (from|stories|on|to explore)|you might( also)? like|recommended( for you)?|"
+    r"most popular|trending( now)?|sign up|subscribe|newsletter|follow us"
+    r")\s*$",
+    re.I,
+)
+
+# Don't trim if the chrome heading appears before this many characters of article body —
+# guards against nuking a genuinely short article whose first heading happens to match.
+_MIN_KEEP_CHARS = 400
+
+
+def _trim_trailing_chrome(md: str) -> str:
+    """Cut the article at the first comment/subscribe/related-links heading once enough real
+    body has accumulated, so trailing site chrome trafilatura leaves in doesn't reach the note."""
+    lines = md.splitlines()
+    offset = 0
+    for i, line in enumerate(lines):
+        if _TRAILING_CHROME_RE.match(line) and offset >= _MIN_KEEP_CHARS:
+            return "\n".join(lines[:i]).rstrip()
+        offset += len(line) + 1
+    return md
 
 
 def _normalize_markdown(md: str) -> str:

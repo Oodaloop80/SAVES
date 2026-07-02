@@ -70,8 +70,11 @@ platforms:
     cookie_expiry_days: 21
     cookie_warning_days_ahead: 7
     # TikTok streams are MUXED (single audio+video file), so bestvideo+bestaudio selectors
-    # don't match. Target muxed H.264 directly. Falls back through 720p then best available.
-    video_quality: "best[vcodec=h264][height<=1080]/best[vcodec^=avc1][height<=1080]/best[height<=720]/best"
+    # don't match. Target muxed H.264 directly (Obsidian/Electron can't decode H.265/bytevc1).
+    # No height cap: TikTok is PORTRAIT, so its 720p stream is 720x1280 — a height<=1080 cap
+    # would wrongly exclude it (1280>1080) and fall back to 540p. TikTok's H.264 tops out at
+    # 720p anyway (1080p is H.265-only), so "best H.264" is the right target.
+    video_quality: "best[vcodec=h264]/best[vcodec^=avc1]/best[height<=720]/best"
   facebook:
     delay_seconds: 7.0
     cookie_expiry_days: 30

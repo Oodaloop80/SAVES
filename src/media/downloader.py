@@ -134,6 +134,12 @@ def _yt_dlp_download(
         f"--max-filesize={max_size_mb}M",
         "--no-warnings",
         "--no-playlist",
+        # Restrict filenames to ASCII, no spaces, no shell/URL-special chars. The note embeds
+        # each file as `media://<relpath>`, and a '#' in the name (TikTok/IG titles carry the
+        # caption's hashtags) is parsed as a URI fragment — the embed then points at a path
+        # that doesn't exist and the video silently won't play. This makes every downloaded
+        # filename safe for the media:// URI.
+        "--restrict-filenames",
         "--print", "after_move:filepath",  # print the final muxed file path to stdout
         "--no-simulate",                   # ...but still download
         "-o", os.path.join(save_dir, "%(title).80s.%(ext)s"),
