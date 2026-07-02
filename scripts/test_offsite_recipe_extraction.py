@@ -13,6 +13,11 @@ the note like a direct web-clipper paste.
 import os
 import sys
 
+# Emit UTF-8 so the emoji in note output don't crash on Windows' cp1252 console.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.extractors.base import ExtractedContent  # noqa: E402
@@ -252,7 +257,12 @@ def test_full_page_reproduced_in_note():
     # The Recipe section comes BEFORE the bio/off-site provenance section.
     check(note.index(RECIPE_CALLOUT) < note.index(BIO_TITLE),
           "styled Recipe section is ordered before the bio / off-site link section")
-    check("### 📄 Full recipe page" in note, "source page is reproduced under its own heading")
+    check("## 📄 Full Web Clipping" in note,
+          "source page is reproduced as its own clearly-delineated (##) section")
+    check("> [!info] 📎 Reproduced in full from" in note,
+          "reproduction carries a source-attribution callout")
+    check("#### Notes from the chef" in note,
+          "the page's own headings are demoted so they nest under the section header")
     check("media://instagram/drveganblog-hero.jpg" in note,
           "the page's image survives into the reproduced page")
     check("Notes from the chef" in note, "the page's formatting/sections are preserved")
@@ -306,7 +316,7 @@ def test_page_reproduced_even_without_structured_recipe():
         "followed_recipe_article_markdown": article_md,
     }
     note = format_note(ai, _content(meta), [], None, CFG)
-    check("### 📄 Full recipe page" in note,
+    check("## 📄 Full Web Clipping" in note,
           "page still reproduced when no structured recipe could be parsed")
     check("could not parse a clean structured recipe" in note,
           "honest banner when the page had no machine-readable recipe")

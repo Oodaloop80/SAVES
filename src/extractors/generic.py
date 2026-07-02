@@ -259,17 +259,50 @@ class GenericExtractor(BaseExtractor):
         )
 
 
-def _extract_markdown(html: str, url: str) -> str | None:
-    """Extract the main article content as Markdown using trafilatura. Returns None on
-    failure so the caller can fall back to readability.
+# Below this many characters we treat a Readability extraction as a "miss" (e.g. a paywalled or
+# JS-only page it couldn't isolate) and fall back to trafilatura.
+_READABILITY_MIN_CHARS = 400
 
-    Uses trafilatura's default (precision-favoring) mode deliberately: it places inline
-    images at their correct positions AND excludes site chrome. On listicles (e.g. a
-    25-cocktail recipe roundup) it keeps every content image; on text-heavy articles that
-    inline related-article thumbnails, product widgets, and comment avatars inside the
-    article container (e.g. Future plc sites like Tom's Guide), precision mode correctly
-    prunes that junk. An earlier favor_recall/DOM-supplement approach was removed because it
-    dragged that chrome in and appended images out of position."""
+
+def _extract_markdown(html: str, url: str) -> str | None:
+    """Extract the main article content as clean Markdown, mimicking the Obsidian Web Clipper.
+
+    Primary path = Mozilla Readability (isolate the main article, drop nav/ads/chrome) + our
+    lxml Turndown-style serializer (``utils.html_to_markdown``) — the exact stack the Web
+    Clipper uses. It emits faithful `#`..`######` headings, bold run-ins with correct spacing,
+    intact links, lists, and lazy-resolved images, and promotes FAQ accordion titles to
+    headings. trafilatura (precision mode) is kept as a fallback for pages Readability
+    under-extracts. Returns None only if both converters come up empty."""
+    read_md = _readability_markdown(html, url)
+    traf_md = _trafilatura_markdown(html, url)
+    if read_md and len(read_md) >= _READABILITY_MIN_CHARS:
+        # Guard against Readability under-extraction (e.g. a listicle where it grabbed only the
+        # intro): if trafilatura found substantially more content, trust trafilatura instead.
+        if traf_md and len(traf_md) > len(read_md) * 1.8:
+            return traf_md
+        return read_md
+    return traf_md or read_md or None
+
+
+def _readability_markdown(html: str, url: str) -> str | None:
+    """Readability isolates the article; ``html_to_markdown`` serializes it Web-Clipper-style."""
+    try:
+        from readability import Document
+
+        from src.utils.html_to_markdown import html_to_markdown
+
+        summary = Document(html).summary(html_partial=True)
+        md = html_to_markdown(summary)
+        return md if md and md.strip() else None
+    except Exception:
+        logger.debug("readability+serializer markdown extraction failed", exc_info=True)
+        return None
+
+
+def _trafilatura_markdown(html: str, url: str) -> str | None:
+    """Fallback converter. trafilatura's default (precision-favoring) mode excludes site chrome
+    and places inline images correctly; on listicles it keeps every content image. Used when
+    Readability under-extracts."""
     try:
         import trafilatura
         md = trafilatura.extract(

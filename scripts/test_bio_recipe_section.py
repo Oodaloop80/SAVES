@@ -17,6 +17,11 @@ recipe as the same styled '🍽️ Recipe' callout with no bio section.
 import os
 import sys
 
+# Emit UTF-8 so the emoji in note output don't crash on Windows' cp1252 console.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.extractors.base import ExtractedContent  # noqa: E402

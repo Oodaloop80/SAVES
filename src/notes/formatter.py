@@ -1043,22 +1043,59 @@ def has_offsite_recipe_context(content: ExtractedContent) -> bool:
                 or m.get("followed_recipe_hint"))
 
 
+def _strip_leading_title(md: str) -> str:
+    """Drop the article's own top-level ``# Title`` line — it's redundant with the note's
+    frontmatter title and the section header the reproduction sits under."""
+    lines = md.splitlines()
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            continue
+        if re.match(r"^#\s+\S", ln):  # first non-empty line is an H1
+            return "\n".join(lines[:i] + lines[i + 1:]).lstrip("\n")
+        break
+    return md
+
+
+def _demote_headings(md: str, by: int = 1) -> str:
+    """Increase the level of every ATX heading by ``by`` (capped at h6) so a reproduced page's
+    own headings nest *under* the section header above them instead of competing with it.
+    Respects fenced code blocks."""
+    out, in_fence = [], False
+    for ln in md.splitlines():
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        if not in_fence:
+            mt = re.match(r"^(#{1,6})(\s)", ln)
+            if mt:
+                level = min(len(mt.group(1)) + by, 6)
+                ln = "#" * level + ln[len(mt.group(1)):]
+        out.append(ln)
+    return "\n".join(out)
+
+
 def _followed_page_reproduction(content: ExtractedContent) -> str:
-    """Reproduce the followed off-site page in the note like a web-clipper paste — its
-    structured Markdown (headings, formatting) with images already localized into the vault.
-    Rendered under a clear heading beneath the structured recipe. Empty when there's no page."""
+    """Reproduce the followed off-site page in the note as its own clearly-delineated section —
+    a Web-Clipper-style clipping of the page's structured Markdown (faithful headings,
+    bold/links/lists) with images already localized into the vault. Set off by a rule and a
+    prominent section header, with the page's own headings demoted so they nest under it.
+    Empty when there's no page."""
     m = content.metadata or {}
     md = (m.get("followed_recipe_article_markdown") or "").strip()
     if not md:
         return ""
+    md = _demote_headings(_strip_leading_title(md), by=1)
     url = m.get("followed_recipe_url") or ""
-    host = urllib.parse.urlparse(url).netloc.lstrip("www.") if url else ""
-    header = "### 📄 Full recipe page" + (f" — {host}" if host else "")
-    source_line = (
-        f"*Reproduced from {_link_label(url)} so the recipe survives if the original post or "
-        "page is taken down.*\n\n"
+    host = urllib.parse.urlparse(url).netloc if url else ""
+    if host.startswith("www."):
+        host = host[4:]
+    header = "## 📄 Full Web Clipping" + (f" — {host}" if host else "")
+    attribution = (
+        f"> [!info] 📎 Reproduced in full from {_link_label(url)} so the recipe survives if the "
+        "original post or page is taken down.\n\n"
     ) if url else ""
-    return f"{header}\n\n{source_line}{md}\n"
+    return f"---\n\n{header}\n\n{attribution}{md}\n"
 
 
 def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
