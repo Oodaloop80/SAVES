@@ -122,9 +122,14 @@ def _strip_vtt(text: str) -> str:
     lines = text.splitlines()
     out = []
     for line in lines:
-        if re.match(r'^\d{2}:\d{2}', line) or line.startswith("WEBVTT") or line.strip() == "":
+        # Skip blank lines, WEBVTT header, timestamp lines, and VTT header fields
+        # (Kind: captions, Language: en, etc. that appear at the top of the file).
+        if (not line.strip()
+                or line.startswith("WEBVTT")
+                or re.match(r'^\d{2}:\d{2}', line)
+                or re.match(r'^[A-Za-z\-]+:\s', line)):  # "Kind: ...", "Language: ...", etc.
             continue
-        # Remove VTT tags
+        # Remove VTT inline tags (<c>, <00:00:01.000>, etc.)
         clean = re.sub(r'<[^>]+>', '', line)
         if clean.strip():
             out.append(clean.strip())

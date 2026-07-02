@@ -69,9 +69,9 @@ platforms:
     delay_seconds: 1.5
     cookie_expiry_days: 21
     cookie_warning_days_ahead: 7
-    # TikTok defaults to H.265/HEVC which Obsidian/Electron can't play. Prefer H.264 (avc1),
-    # fall back to any mp4, then anything available.
-    video_quality: "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[ext=mp4][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best"
+    # TikTok streams are MUXED (single audio+video file), so bestvideo+bestaudio selectors
+    # don't match. Target muxed H.264 directly. Falls back through 720p then best available.
+    video_quality: "best[vcodec=h264][height<=1080]/best[vcodec^=avc1][height<=1080]/best[height<=720]/best"
   facebook:
     delay_seconds: 7.0
     cookie_expiry_days: 30

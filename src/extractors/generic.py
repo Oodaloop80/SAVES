@@ -243,6 +243,22 @@ class GenericExtractor(BaseExtractor):
         media_urls = []
         if article_markdown:
             article_markdown = _normalize_markdown(article_markdown)
+
+            # If trafilatura got very few images despite the page having many (i.e. its pruning
+            # rules are too aggressive for this site), retry with favor_recall=True which trades
+            # some precision for better content coverage including inline images.
+            traf_images = article_markdown.count("![")
+            if traf_images < 2 and http_imgs >= 3:
+                recall_md = _extract_markdown(html, url, favor_recall=True)
+                if recall_md:
+                    recall_md = _normalize_markdown(recall_md)
+                    if recall_md.count("![") > traf_images:
+                        logger.info(
+                            "generic extractor: favor_recall retry improved images %d→%d",
+                            traf_images, recall_md.count("!["),
+                        )
+                        article_markdown = recall_md
+
             # Lead the article body with the feature image (og:image), routed through the
             # SAME local-image pipeline as the inline images (downloaded + embedded by the
             # localizer) so the title picture is archived too. Skip if it's already present
@@ -254,18 +270,22 @@ class GenericExtractor(BaseExtractor):
             logger.info("generic extractor: trafilatura produced %d inline image(s) in markdown",
                         article_markdown.count("!["))
 
-            # Supplement: inject any article images that trafilatura pruned. Compare the
+            # Supplement: inject article images that trafilatura pruned entirely. Compare the
             # Playwright-extracted set against what's already in the markdown; append missing
-            # ones at the end of the article body so the localizer can archive them too.
+            # ones at the end so the localizer can archive them too.
+            # Dedup uses base URLs (path only, no query params) because CDN URLs often differ
+            # only in query params (width=, quality=, fit=) for the same underlying image.
             if playwright_article_images:
-                already = set(re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', article_markdown))
-                to_inject = [u for u in playwright_article_images if u not in already]
-                # Filter obvious non-content images by URL fragment
+                already_raw = set(re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', article_markdown))
+                already_bases = {u.split('?')[0].split('#')[0] for u in already_raw}
                 _junk = ('logo', 'icon', 'avatar', 'pixel', 'tracking', 'badge',
                          'button', 'sprite', 'placeholder', 'blank', 'spacer',
                          '1x1', 'svg+xml')
-                to_inject = [u for u in to_inject
-                             if not any(j in u.lower() for j in _junk)]
+                to_inject = [
+                    u for u in playwright_article_images
+                    if u.split('?')[0].split('#')[0] not in already_bases
+                    and not any(j in u.lower() for j in _junk)
+                ]
                 if to_inject:
                     injected_md = "\n\n".join(f"![]({u})" for u in to_inject[:15])
                     article_markdown = article_markdown + "\n\n" + injected_md
@@ -302,14 +322,12 @@ class GenericExtractor(BaseExtractor):
         )
 
 
-def _extract_markdown(html: str, url: str) -> str | None:
+def _extract_markdown(html: str, url: str, favor_recall: bool = False) -> str | None:
     """Extract the main article content as Markdown using trafilatura. Returns None on
-    failure so the caller can fall back to readability."""
+    failure so the caller can fall back to readability. Pass favor_recall=True for a
+    second pass on sites where trafilatura's default pruning misses too many images."""
     try:
         import trafilatura
-        # Default precision/recall balance: on real articles this captures the full body
-        # cleanly. (favor_recall is deliberately NOT set — it can duplicate paragraphs on
-        # some pages, which hurts readability more than the marginal extra recall helps.)
         md = trafilatura.extract(
             html,
             output_format="markdown",
@@ -317,6 +335,7 @@ def _extract_markdown(html: str, url: str) -> str | None:
             include_images=True,
             include_formatting=True,
             url=url,
+            favor_recall=favor_recall,
         )
         return md.strip() if md and md.strip() else None
     except Exception:
