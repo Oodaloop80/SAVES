@@ -44,6 +44,15 @@ _REDIRECT_INTENT = re.compile(
     r"tap\s*the\s*link|link\s*below\s*my|👆|👇|☝️|🔗)",
     re.I,
 )
+# The literal recipe words (a subset of _RECIPE_INTENT, minus the loose cooking cues like
+# "bake"/"dough"). A caption that names a website off-site is only treated as a recipe pointer
+# when this stronger wording is present, so an ordinary cooking post that merely mentions some
+# domain ("baked these on my sony.com camera") doesn't get followed.
+_STRONG_RECIPE_INTENT = re.compile(
+    r"\b(recipe|receta|recipes|ingredient|instructions?|how\s+to\s+make|full\s+method|"
+    r"printable\s+recipe|get\s+the\s+recipe|written\s+recipe)\b",
+    re.I,
+)
 
 # Link-aggregator / bio-link hosts: a page LISTING several links rather than a recipe itself.
 _AGGREGATOR_HOSTS = {
@@ -86,14 +95,33 @@ def normalize_caption(text: str | None) -> str:
     return unicodedata.normalize("NFKC", text)
 
 
+def _caption_offsite_links(text: str) -> list[tuple[str, str]]:
+    """Followable off-platform destinations named directly in the caption — a pasted URL or a
+    domain written with a dot/"dot" ("lilsipper.com", "drveganblog dot com") — with social,
+    store, and the poster's own platform hosts filtered out. Shared by detection here and the
+    `direct` candidate pool in follow_profile_recipe, so both agree on what counts as a pointer."""
+    return external_candidates(parse_links_from_text(text) + reconstruct_spelled_urls(text))
+
+
 def wants_offsite_recipe(text: str | None) -> bool:
-    """True when a caption both talks about a recipe AND points the reader off-site to get
-    it (bio link, profile, link tree …). Requires both signals to avoid false positives on
-    ordinary captions that merely say 'link in bio'."""
+    """True when a caption talks about a recipe AND points the reader off-site to get it.
+
+    A caption points off-site in one of two ways:
+      * bio/profile phrasing ("recipe in bio", "on my profile", 🔗) — ``_REDIRECT_INTENT``; or
+      * it names an explicit off-platform destination ("full recipe on lilsipper.com"). That
+        second path is only honoured together with the literal recipe words
+        (``_STRONG_RECIPE_INTENT``), so a stray domain in an ordinary cooking post ("baked on my
+        sony.com camera") doesn't trigger a follow.
+    Requiring a recipe signal AND a redirect signal avoids false positives on captions that merely
+    say 'link in bio' with no recipe, or that name a website with no recipe intent."""
     if not text:
         return False
     text = normalize_caption(text)
-    return bool(_RECIPE_INTENT.search(text) and _REDIRECT_INTENT.search(text))
+    if not _RECIPE_INTENT.search(text):
+        return False
+    if _REDIRECT_INTENT.search(text):
+        return True
+    return bool(_STRONG_RECIPE_INTENT.search(text) and _caption_offsite_links(text))
 
 
 def extract_dish_keywords(*texts: str | None, limit: int = 8) -> list[str]:
@@ -390,7 +418,7 @@ async def follow_profile_recipe(content: ExtractedContent, config: dict) -> Extr
 
     # A caption often names the destination directly — either a pasted URL or a domain
     # spelled out to dodge link detection ("Drveganblog dot com"). Prefer that over scraping.
-    direct = external_candidates(parse_links_from_text(caption) + reconstruct_spelled_urls(caption))
+    direct = _caption_offsite_links(caption)
     bio_links = direct or await _resolve_bio_links(content, config)
     if not bio_links:
         logger.info("No usable bio link found for %s", content.url)
