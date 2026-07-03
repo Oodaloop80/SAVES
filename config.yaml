@@ -67,10 +67,12 @@ platforms:
     cookie_warning_days_ahead: 7
   tiktok:
     no_watermark: true
-    # Fetch the creator's real formatted caption (Markdown headers, * bullets, blank lines)
-    # from TikTok's customtdk/item endpoint instead of yt-dlp's flattened/reworded paraphrase.
-    # Best-effort + non-fatal: falls back to the yt-dlp description if the endpoint is down.
-    use_tdk_caption: true
+    # Reconstruct the creator's verbatim caption (section headers on their own line, bullet lists,
+    # blank lines between sections) from the video page's rehydration `itemStruct.contents[]`
+    # instead of yt-dlp's flattened `description` (which strips every hard line break). Best-effort
+    # + non-fatal: falls back to the yt-dlp description with line breaks heuristically restored.
+    # (Legacy name `use_tdk_caption` is still honoured for back-compat.)
+    use_rich_caption: true
     delay_seconds: 1.5
     cookie_expiry_days: 21
     cookie_warning_days_ahead: 7

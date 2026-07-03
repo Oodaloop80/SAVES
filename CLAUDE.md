@@ -269,32 +269,40 @@ auto-captions. Vision is skipped for YouTube (only thumbnail available).
 Cookie expiry is monitored — alerts sent to `#SAVES-alerts` when approaching expiry.
 Export cookies from browser using "Get cookies.txt LOCALLY" extension.
 
-**TikTok caption (real formatted text vs yt-dlp's paraphrase):** yt-dlp's `description` — and
-the `desc` embedded in TikTok's page JSON — is NOT the creator's caption. TikTok's web layer
-serves a header-stripped, reworded paraphrase there: `**Step 2: Build the Base**` becomes
-`STEP 2: BUILD THE BASE`, `**Tips for Success:** * **Seafood Texture:** …` collapses to a plain
-`Tips: …`, `*` bullets vanish, and the author's newlines are flattened into runs of 2+ spaces.
-The creator's *actual* formatted caption (the text shown in the app's expanded "…more" overlay —
-Markdown headers, `*` bullet lists, blank lines between sections) lives only in TikTok's SEO
-metadata endpoint: `GET https://www.tiktok.com/api/customtdk/item/?itemId={id}&…`, field
-`itemCustomTDK.article` (with `itemCustomTDK.keywords` appended as a trailing `Keywords:` line).
-So `tiktok.fetch_tdk_caption()` fetches that (a plain cookies GET — no signed anti-bot tokens
-needed) and `_extract_sync` prefers it for `body_text`. Best-effort + fully non-fatal behind
-`platforms.tiktok.use_tdk_caption` (default on): on any network error / non-200 / missing field
-— **or an HTTP 200 whose `article` is empty** (TikTok doesn't generate a rich SEO article for
-every video) — it falls back to `restore_caption_linebreaks(description)`. The `article` carries
-real `\n`/`\n\n`, so when present it renders line-for-line in the Caption callout.
+**TikTok caption (verbatim, line-preserved):** yt-dlp's `description` — and the flat
+`itemStruct.desc` in TikTok's page JSON — is the creator's caption with **every hard line break
+stripped**: the title, `Ingredients`, each `For the …` section header, and every bullet get glued
+onto one run of text (some breaks survive only as no-break spaces `U+00A0`). The blank lines and
+per-line structure you see in the app's expanded "…more" overlay are simply not in that string,
+so they can't be reconstructed from it reliably. **They are, however, in the page's rehydration
+JSON.** `__UNIVERSAL_DATA_FOR_REHYDRATION__ → __DEFAULT_SCOPE__ → webapp.video-detail → itemInfo
+→ itemStruct → contents[]` is the caption split into the exact lines the app renders — one array
+element `{"desc": "<line>", "textExtra": […]}` per line, with **empty `desc` entries standing in
+for the blank lines** the author typed between sections. So `tiktok.fetch_contents_caption(url)`
+GETs the video page (a plain cookies request — no signed anti-bot tokens, no headless browser;
+the blob is server-rendered into the HTML), pulls `contents[]`, and `caption_from_contents()`
+joins it (trimming each line's stray trailing space, dropping only leading/trailing blank lines)
+into `body_text` — line-for-line and paragraph-for-paragraph identical to the app. `_extract_sync`
+prefers this. Behind `platforms.tiktok.use_rich_caption` (default on; legacy name
+`use_tdk_caption` still honoured).
 
-`restore_caption_linebreaks()` (the fallback) restores the three ways TikTok flattens an
-author's hard newlines, but only when the description has no real newlines of its own: (1) **runs
-of 2+ ordinary spaces** (the common case); (2) **no-break spaces `U+00A0`** — TikTok sometimes
-preserves a break as an `\xa0`, so any nbsp-bearing whitespace run becomes a newline; (3)
-**dash-bullet lists** — a `- item` list flattened onto one line, where each `" -<char>"` starts
-a bullet (only fired when ≥3 such markers prove it's really a list, so an incidental prose dash
-is left alone; internal hyphens like `smoke-point`/`Center-cut` have no preceding space and are
-never split). Idempotent; a break TikTok collapsed all the way to a single ordinary space with
-no dash after it (e.g. after a colon-header like `INGREDIENTS:`) is indistinguishable from a word
-gap and stays glued.
+> Do **not** use TikTok's `customtdk/item` `itemCustomTDK.article` for the caption. It *looks*
+> nicely formatted but is a machine-**reworded SEO rewrite** — it invents a marketing intro,
+> rephrases the section headers (`INGREDIENTS:` → `**Ingredients for the Seafood:**`), and is an
+> empty string for many videos. `contents[]` is the literal caption and is present whenever the
+> video-detail page loads. (An earlier revision used the TDK endpoint; it was replaced.)
+
+`restore_caption_linebreaks()` is the **fallback** (used only when the rehydration blob is
+unavailable and we fall back to the flattened yt-dlp `description`). It restores the three ways
+TikTok flattens an author's hard newlines, but only when the description has no real newlines of
+its own: (1) **runs of 2+ ordinary spaces** (the common case); (2) **no-break spaces `U+00A0`** —
+any nbsp-bearing whitespace run becomes a newline; (3) **dash-bullet lists** — a `- item` list
+flattened onto one line, where each `" -<char>"` starts a bullet (only fired when ≥3 such markers
+prove it's really a list, so an incidental prose dash is left alone; internal hyphens like
+`smoke-point`/`Center-cut` have no preceding space and are never split). Idempotent; a break
+TikTok collapsed all the way to a single ordinary space with no dash after it (e.g. after a
+colon-header like `INGREDIENTS:`) is indistinguishable from a word gap and stays glued — which is
+exactly why `contents[]` (not this fallback) is the primary source.
 
 **Generic web (articles):** Uses trafilatura (not readability) to extract structured Markdown
 with headings, links, and inline images. All inline images are downloaded locally via

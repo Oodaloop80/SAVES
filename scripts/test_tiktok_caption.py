@@ -2,22 +2,24 @@
 
 Two mechanisms keep a TikTok caption looking like the real post:
 
-1. `fetch_tdk_caption` pulls the creator's *formatted* caption (Markdown headers, `*` bullets,
-   blank lines) from TikTok's `customtdk/item` endpoint — the text shown in the app's expanded
-   "...more" caption. This is preferred over yt-dlp's `description`, which TikTok's web layer
-   serves as a header-stripped, reworded paraphrase. Network call is mocked here.
-2. `restore_caption_linebreaks` is the fallback: when the TDK endpoint is unavailable and we
-   fall back to yt-dlp's `description`, it turns the runs of 2+ spaces (TikTok's flattened
-   newlines) back into line breaks so the caption isn't one wall of text.
+1. `caption_from_contents` reconstructs the creator's *verbatim* caption from the video page's
+   `itemStruct.contents[]` — one array element per rendered line, with empty `desc` entries for
+   the blank lines between sections. This is the literal caption the app shows in its expanded
+   "...more" overlay (section headers on their own line, bullet lists, blank-line paragraph
+   breaks) and is preferred over yt-dlp's `description`, which TikTok's web layer serves with
+   every hard line break stripped. Pure function — fed a fixture array here, no network.
+2. `restore_caption_linebreaks` is the fallback: when the rehydration blob is unavailable and we
+   fall back to yt-dlp's `description`, it turns the flattening artifacts (runs of 2+ spaces,
+   no-break spaces, dash-bullet lists) back into line breaks so the caption isn't one wall of
+   text.
 
-Pure logic + mocked HTTP — no live network / yt-dlp.
+Pure logic — no live network / yt-dlp.
 
 Run: python scripts/test_tiktok_caption.py
 Exits non-zero on the first failed assertion.
 """
 import os
 import sys
-from unittest.mock import patch
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -28,21 +30,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.extractors.base import ExtractedContent  # noqa: E402
 from src.extractors.tiktok import (  # noqa: E402
     _item_id_from_url,
-    fetch_tdk_caption,
+    caption_from_contents,
     restore_caption_linebreaks,
 )
 from src.notes.formatter import format_note  # noqa: E402
-
-
-class _FakeResponse:
-    """Minimal stand-in for a requests.Response."""
-
-    def __init__(self, status_code, payload):
-        self.status_code = status_code
-        self._payload = payload
-
-    def json(self):
-        return self._payload
 
 _checks = 0
 
@@ -176,26 +167,28 @@ def test_new_signals_idempotent():
           "restoring an already-restored caption changes nothing (has real newlines)")
 
 
-# --- TDK (formatted-caption) endpoint ---------------------------------------------------------
+# --- contents[] (verbatim, line-preserved caption) --------------------------------------------
 
-# A trimmed copy of a real customtdk/item response for the seafood-stew video.
-_TDK_PAYLOAD = {
-    "itemCustomTDK": {
-        "article": (
-            "Indulge in a luxurious creamy seafood stew.\n\n"
-            "**Ingredients for the Seafood:**\n"
-            "* 300 g shrimp, peeled and deveined\n"
-            "* 2 tablespoons olive oil\n\n"
-            "**Tips for Success:**\n"
-            "* **Seafood Texture:** Cook seafood just until tender to maintain a juicy texture.\n"
-            "* **Gluten-Free:** This recipe is naturally gluten-free."
-        ),
-        "keywords": ["creamy seafood stew recipe", " shrimp lobster stew", " easy seafood stew"],
-        "desc": "Learn how to make a creamy seafood stew.",
-        "title": "Creamy Seafood Stew Recipe",
-    },
-    "statusCode": 0,
-}
+# A faithful slice of the real ``itemStruct.contents`` for the Beef Wellington video
+# (@anasofiafehn/7446182438218337567): one element per rendered line, empty ``desc`` = blank line,
+# and a couple of lines carry the stray trailing space TikTok pads them with (``button) `` and
+# the hashtag line). Reconstructing this must reproduce the app's caption exactly.
+WELLINGTON_CONTENTS = [
+    {"desc": "BEEF WELLINGTON \U0001f52a\U0001f344‍\U0001f7eb First time cooking in my new kitchen!!", "textExtra": []},
+    {"desc": "", "textExtra": []},
+    {"desc": "Ingredients", "textExtra": []},
+    {"desc": "", "textExtra": []},
+    {"desc": "For the mushroom duxelles", "textExtra": []},
+    {"desc": "-3 tbsp olive oil", "textExtra": []},
+    {"desc": "-4 cups of assorted mushrooms (cremini, porcini, portobello, button) ", "textExtra": []},
+    {"desc": "-½ tsp salt", "textExtra": []},
+    {"desc": "", "textExtra": []},
+    {"desc": "For the savory chive crêpes", "textExtra": []},
+    {"desc": "-2 eggs", "textExtra": []},
+    {"desc": "-Butter (to grease pan) or non-stick cooking spray", "textExtra": []},
+    {"desc": "", "textExtra": []},
+    {"desc": "#cooking #recipe #beefwellington #holiday ", "textExtra": []},
+]
 
 
 def test_item_id_from_url():
@@ -207,51 +200,63 @@ def test_item_id_from_url():
     check(_item_id_from_url("") is None, "empty url -> None")
 
 
-def test_fetch_tdk_success_prefers_article_and_appends_keywords():
-    with patch("src.extractors.tiktok.requests.get",
-               return_value=_FakeResponse(200, _TDK_PAYLOAD)):
-        out = fetch_tdk_caption("7620630606224968990", referer="https://tiktok.com/x")
-    check(out is not None, "success returns a caption string")
-    check("**Tips for Success:**" in out, "bold section header preserved verbatim")
-    check("* **Seafood Texture:**" in out, "nested bold bullet preserved verbatim")
-    check("\n\n**Ingredients for the Seafood:**" in out, "blank line before section preserved")
-    check(out.rstrip().startswith("Indulge"), "article body used as the caption")
-    check("Keywords: creamy seafood stew recipe, shrimp lobster stew, easy seafood stew" in out,
-          "keywords list appended as a trailing comma-joined line (stripped)")
+def test_contents_reconstructs_exact_caption():
+    cap = caption_from_contents(WELLINGTON_CONTENTS)
+    lines = cap.split("\n")
+    check(lines[0] == "BEEF WELLINGTON \U0001f52a\U0001f344‍\U0001f7eb First time cooking in my new kitchen!!",
+          "title on its own line 1 (not glued to 'Ingredients')")
+    check(lines[1] == "", "blank line after the title (empty contents element preserved)")
+    check(lines[2] == "Ingredients", "'Ingredients' on its own line")
+    check(lines[3] == "", "blank line after 'Ingredients'")
+    check(lines[4] == "For the mushroom duxelles", "first section header on its own line")
+    check("For the savory chive crêpes" in lines, "second section header present on its own line")
+    check(lines[-1] == "#cooking #recipe #beefwellington #holiday",
+          "hashtags on their own final line, trailing space trimmed")
 
 
-def test_fetch_tdk_non_200_returns_none():
-    with patch("src.extractors.tiktok.requests.get",
-               return_value=_FakeResponse(403, {})):
-        check(fetch_tdk_caption("123") is None, "non-200 status -> None (fall back to yt-dlp)")
+def test_contents_trims_trailing_space_and_keeps_blanks():
+    cap = caption_from_contents(WELLINGTON_CONTENTS)
+    check("button) \n" not in cap and "button)\n" in cap,
+          "stray trailing space on a bullet is trimmed")
+    check("\n\n" in cap, "blank lines between sections are kept as empty lines")
+    check(not cap.startswith("\n") and not cap.endswith("\n"),
+          "no leading or trailing blank lines")
+    # Each of the 4 blank lines between content lines survives round-trip.
+    check(cap.count("\n\n") == 4, f"exactly 4 section breaks preserved (got {cap.count(chr(10)+chr(10))})")
 
 
-def test_fetch_tdk_missing_or_short_article_returns_none():
-    with patch("src.extractors.tiktok.requests.get",
-               return_value=_FakeResponse(200, {"itemCustomTDK": {"keywords": ["x"]}})):
-        check(fetch_tdk_caption("123") is None, "missing article -> None")
-    with patch("src.extractors.tiktok.requests.get",
-               return_value=_FakeResponse(200, {"itemCustomTDK": {"article": "too short"}})):
-        check(fetch_tdk_caption("123") is None, "trivially short article -> None")
+def test_contents_guards_return_none():
+    check(caption_from_contents(None) is None, "None -> None")
+    check(caption_from_contents([]) is None, "empty list -> None")
+    check(caption_from_contents("nope") is None, "non-list -> None")
+    check(caption_from_contents([{"desc": "only one reasonably long single caption line here"}]) is None,
+          "single element -> None (not a multi-line caption)")
+    check(caption_from_contents([{"desc": ""}, {"desc": ""}]) is None, "all-blank -> None")
+    check(caption_from_contents([{"desc": "short"}, {"desc": "x"}]) is None,
+          "too-short reconstruction -> None")
+    check(caption_from_contents([{"no_desc_key": 1}, {"desc": "the other line is long enough here"}]) is None,
+          "element missing 'desc' is treated as blank (no crash), and lone real line -> None")
 
 
-def test_fetch_tdk_network_error_and_bad_id_are_nonfatal():
-    check(fetch_tdk_caption("") is None, "empty item_id -> None without any request")
-    with patch("src.extractors.tiktok.requests.get", side_effect=RuntimeError("boom")):
-        check(fetch_tdk_caption("123") is None, "request exception is swallowed -> None")
-
-
-def test_fetch_tdk_no_keywords_still_returns_article():
-    payload = {"itemCustomTDK": {"article": _TDK_PAYLOAD["itemCustomTDK"]["article"]}}
-    with patch("src.extractors.tiktok.requests.get",
-               return_value=_FakeResponse(200, payload)):
-        out = fetch_tdk_caption("123")
-    check(out is not None and "Keywords:" not in out,
-          "article without keywords -> caption returned, no trailing Keywords line")
+def test_contents_formatter_renders_blank_lines_in_caption():
+    cap = caption_from_contents(WELLINGTON_CONTENTS)
+    content = ExtractedContent(
+        url="https://www.tiktok.com/@anasofiafehn/video/7446182438218337567",
+        platform="tiktok", title="Beef Wellington", author="anasofiafehn",
+        body_text=cap, metadata={},
+    )
+    ai = {"note_type": "tiktok_video", "title": "Beef Wellington", "summary": "s", "tags": ["x"]}
+    note = format_note(ai, content, [], None, {"notes": {}})
+    check("> Ingredients" in note, "'Ingredients' rendered on its own quoted line")
+    check("> For the mushroom duxelles" in note, "section header on its own quoted line")
+    check("> #cooking #recipe #beefwellington #holiday" in note, "hashtag line rendered")
+    # A blank line inside the callout is a bare quoted line ("> ") between two content lines.
+    check(">\n> Ingredients" in note or "> \n> Ingredients" in note,
+          "blank line before 'Ingredients' preserved as an empty quoted line in the Caption box")
 
 
 def main():
-    print("TikTok caption fidelity checks (TDK endpoint + line-break fallback)")
+    print("TikTok caption fidelity checks (contents[] reconstruction + line-break fallback)")
     for fn in (
         test_runs_become_line_breaks,
         test_within_line_single_spaces_preserved,
@@ -262,11 +267,10 @@ def main():
         test_dash_bullets_below_threshold_left_alone,
         test_new_signals_idempotent,
         test_item_id_from_url,
-        test_fetch_tdk_success_prefers_article_and_appends_keywords,
-        test_fetch_tdk_non_200_returns_none,
-        test_fetch_tdk_missing_or_short_article_returns_none,
-        test_fetch_tdk_network_error_and_bad_id_are_nonfatal,
-        test_fetch_tdk_no_keywords_still_returns_article,
+        test_contents_reconstructs_exact_caption,
+        test_contents_trims_trailing_space_and_keeps_blanks,
+        test_contents_guards_return_none,
+        test_contents_formatter_renders_blank_lines_in_caption,
     ):
         print(f"\n[{fn.__name__}]")
         fn()
