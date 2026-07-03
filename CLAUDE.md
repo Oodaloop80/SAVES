@@ -209,7 +209,10 @@ TikTok videos, or Reddit posts that contain recipes.
   Caption-bearing renderers (Instagram reel/post, TikTok, Facebook video) place it directly
   **above the Caption** box, with the **Full Transcript** box moved directly **below** the
   Caption; every other note type gets the translation at the note top (a `not in body` guard in
-  `format_note` prevents a duplicate). Recipe fields stay in English so they're usable.
+  `format_note` prevents a duplicate). The translation **mirrors the original's line structure**
+  (the prompt forbids reflowing a stacked list into a paragraph; the renderer keeps every line
+  break) so it reads line-for-line beside the caption. Recipe fields stay in English so they're
+  usable.
 
 **Off-site recipe following (`src/extractors/profile_recipe.py`, processor step 1c):** food
 posts that say "recipe in bio" / "full recipe on my profile" carry no recipe in the caption.

@@ -155,10 +155,13 @@ transcript — NOT the UI chrome).
 - Set "source_language" to the English name of that language (e.g. "Spanish", "Japanese",
   "English").
 - When source_language is NOT English, set "translation" to a faithful, COMPLETE English
-  translation of the main textual content — the caption/body and any on-screen/slide text —
-  formatted with light Markdown (short paragraphs; a bulleted list is fine). Translate
-  meaning accurately; do not summarize or omit. When the content is already English, set
-  "translation" to null.
+  translation of the main textual content — the caption/body and any on-screen/slide text.
+  MIRROR THE ORIGINAL'S LAYOUT: preserve the same line breaks, blank lines, ordering, and any
+  labels/headings the author used, so the translation reads line-for-line in parallel with the
+  source. If the original puts each ingredient or item on its own line, keep each on its own
+  line — do NOT merge lines into a paragraph or turn a stacked list into comma-separated prose.
+  Translate meaning accurately; do not summarize, reorder, or omit. When the content is already
+  English, set "translation" to null.
 - Recipe fields (recipe_ingredients, recipe_instructions, recipe_notes, the *_groups and their
   section titles, etc.) must ALWAYS be written in English so the recipe is directly usable —
   translate them if the source is another language (keep the numeric measurements/units as

@@ -84,6 +84,21 @@ def test_non_caption_type_keeps_translation_at_top():
     check(note.count("🌐 English Translation") == 1, "no duplicate translation for non-caption types")
 
 
+def test_translation_preserves_line_structure():
+    # The prompt tells the model to mirror the source layout; the renderer must then KEEP those
+    # line breaks so a stacked ingredient list stays stacked (parallel to the original caption),
+    # not collapse into one quoted line.
+    ai = {
+        "note_type": "instagram_reel", "title": "T", "summary": "s", "tags": ["x"],
+        "translation": "**Ingredients**\n\n625 g flour\n1 tbsp semolina\n1 tbsp vinegar",
+        "source_language": "Turkish",
+    }
+    note = format_note(ai, _content(), [], None, CFG)
+    check("> 625 g flour\n> 1 tbsp semolina\n> 1 tbsp vinegar" in note,
+          "each translated ingredient line stays on its own quoted line")
+    check("> **Ingredients**" in note, "author's labels are preserved on their own line")
+
+
 def test_bio_callout_expanded():
     ai = {
         "note_type": "instagram_reel", "title": "T", "summary": "s", "tags": ["pasta"],
@@ -105,6 +120,7 @@ def main():
         test_reel_english_has_no_translation_but_transcript_below_caption,
         test_tiktok_and_facebook_same_layout,
         test_non_caption_type_keeps_translation_at_top,
+        test_translation_preserves_line_structure,
         test_bio_callout_expanded,
     ):
         print(f"\n[{fn.__name__}]")
