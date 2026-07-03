@@ -204,9 +204,12 @@ TikTok videos, or Reddit posts that contain recipes.
   L→cups, cm/mm→in). Deterministic + idempotent; never replaces the original. Conservative:
   bare "C" is never Celsius (US "1 C" = a cup), bare lowercase "l" is never litres. Claude is
   instructed to keep original units so the math isn't doubled.
-- **English translation block.** `translation` / `source_language` JSON fields render as a
-  collapsible `> [!info]- 🌐 English Translation` callout at the top of the note (all note
-  types) when the source isn't English. Recipe fields stay in English so they're usable.
+- **English translation block.** `translation` / `source_language` JSON fields render as an
+  expanded-by-default `> [!info]+ 🌐 English Translation` callout when the source isn't English.
+  Caption-bearing renderers (Instagram reel/post, TikTok, Facebook video) place it directly
+  **above the Caption** box, with the **Full Transcript** box moved directly **below** the
+  Caption; every other note type gets the translation at the note top (a `not in body` guard in
+  `format_note` prevents a duplicate). Recipe fields stay in English so they're usable.
 
 **Off-site recipe following (`src/extractors/profile_recipe.py`, processor step 1c):** food
 posts that say "recipe in bio" / "full recipe on my profile" carry no recipe in the caption.

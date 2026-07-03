@@ -81,11 +81,6 @@ def format_note(
         ):
             parts.append(_location_callout(location_check_result))
 
-    # English translation of non-English content, right at the top (collapsed by default).
-    translation_block = _translation_section(ai_result)
-    if translation_block:
-        parts.append(translation_block)
-
     renderer = _RENDERERS.get(note_type, _render_web_generic)
     body = renderer(ai_result, content, media_paths, transcript, collapse_transcript)
 
@@ -96,6 +91,13 @@ def format_note(
         embeds = _media_embeds(media_paths)
         if embeds:
             body = embeds + "\n" + body
+
+    # English translation of non-English content. Caption-bearing renderers place it inline just
+    # above the caption; every other note type gets it at the note top. The `not in body` guard
+    # avoids a duplicate when the renderer already emitted it.
+    translation_block = _translation_section(ai_result)
+    if translation_block and translation_block not in body:
+        parts.append(translation_block)
 
     # Inject supplemental sections (image text + fact-check + location) before the --- separator.
     image_text = (ai_result.get("image_text") or "").strip()
@@ -299,15 +301,16 @@ def _takeaways_section(ai_result: dict) -> str:
 
 
 def _translation_section(ai_result: dict) -> str:
-    """Collapsible English-translation callout, shown only when the source content is in
-    another language (Claude fills `translation` and leaves it null for English)."""
+    """Expanded-by-default English-translation callout, shown only when the source content is in
+    another language (Claude fills `translation` and leaves it null for English). Caption-bearing
+    renderers place it just above the caption; every other note type gets it at the note top."""
     translation = (ai_result.get("translation") or "").strip()
     if not translation:
         return ""
     lang = (ai_result.get("source_language") or "").strip()
     suffix = f" (from {lang})" if lang and lang.lower() != "english" else ""
     quoted = "\n".join(f"> {line}" for line in translation.splitlines())
-    return f"> [!info]- 🌐 English Translation{suffix}\n{quoted}\n"
+    return f"> [!info]+ 🌐 English Translation{suffix}\n{quoted}\n"
 
 
 def _author_link(content: ExtractedContent) -> str:
@@ -679,12 +682,13 @@ def _render_instagram_reel(ai_result, content, media_paths, transcript, collapse
     parts = [
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
-        _transcript_block(transcript, collapse),
+        _translation_section(ai_result),
     ]
     if caption:
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
+        _transcript_block(transcript, collapse),
         _summary_section(ai_result),
         "---",
         _metadata_section(content, saved_date),
@@ -698,6 +702,7 @@ def _render_instagram_post(ai_result, content, media_paths, transcript, collapse
     parts = [
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
+        _translation_section(ai_result),
     ]
     if caption:
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
@@ -716,12 +721,13 @@ def _render_tiktok_video(ai_result, content, media_paths, transcript, collapse):
     parts = [
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
-        _transcript_block(transcript, collapse),
+        _translation_section(ai_result),
     ]
     if caption:
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
+        _transcript_block(transcript, collapse),
         _summary_section(ai_result),
         "---",
         _metadata_section(content, saved_date),
@@ -735,12 +741,13 @@ def _render_facebook_video(ai_result, content, media_paths, transcript, collapse
     parts = [
         _media_embeds(media_paths),
         _no_media_warning(media_paths),
-        _transcript_block(transcript, collapse),
+        _translation_section(ai_result),
     ]
     if caption:
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         parts.append(f"> [!quote] Caption\n{quoted}\n")
     parts += [
+        _transcript_block(transcript, collapse),
         _summary_section(ai_result),
         "---",
         _metadata_section(content, saved_date),
@@ -1146,12 +1153,12 @@ def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
         if has_recipe:
             tail = " The full source page is reproduced below." if page else ""
             banner = (
-                f"> [!success]- {title}\n"
+                f"> [!success]+ {title}\n"
                 f"> The recipe above was extracted automatically from {_link_label(url)}.{tail}\n"
             )
         elif page:
             banner = (
-                f"> [!warning]- {title}\n"
+                f"> [!warning]+ {title}\n"
                 f"> I followed the off-site link ({_link_label(url)}) but could not parse a clean "
                 "structured recipe from it — the full source page is reproduced below so nothing "
                 "is lost.\n"
