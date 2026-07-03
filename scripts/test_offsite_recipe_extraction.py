@@ -323,6 +323,34 @@ def test_page_reproduced_even_without_structured_recipe():
     check("Body text with no schema.org recipe." in note, "the followed page body is included")
 
 
+def test_reproduction_strips_page_title_under_hero_image():
+    # The image localizer prepends the feature image (an EmbedRelativeTo fence) BEFORE the page's
+    # own "# Title". The reproduction must still strip that title (redundant with the note title
+    # and the section header) and demote the page's sections so they nest under the ## header,
+    # rather than leaving a "## Title" competing with "## 📄 Full Web Clipping".
+    article_md = (
+        "```EmbedRelativeTo\nmedia://instagram/hero.jpg\n```\n\n"
+        "# Creamy Garlic Confit Pasta\n\n"
+        "Intro paragraph.\n\n"
+        "## Why You Will Love It\n\nBecause garlic.\n\n"
+        "### The Confit\n\nLow and slow.\n"
+    )
+    ai = {"note_type": "instagram_reel", "title": "Creamy Garlic Confit Pasta",
+          "summary": "x", "tags": ["pasta"]}
+    meta = {
+        "offsite_recipe_detected": True,
+        "followed_recipe_url": "https://drveganblog.com/garlic-confit-pasta/",
+        "followed_recipe_article_markdown": article_md,
+    }
+    note = format_note(ai, _content(meta), [], None, CFG)
+    check("## 📄 Full Web Clipping" in note, "clipping section header present")
+    check("media://instagram/hero.jpg" in note, "hero feature image retained in the clipping")
+    check("## Creamy Garlic Confit Pasta" not in note,
+          "the page's own title does not survive as an h2 competing with the section header")
+    check("### Why You Will Love It" in note, "page h2 section demoted to h3 (nests under clipping)")
+    check("#### The Confit" in note, "page h3 subsection demoted to h4")
+
+
 def main():
     print("Off-site recipe extraction + reproduction checks")
     for fn in (
@@ -338,6 +366,7 @@ def main():
         test_wprm_groups_rendered_in_note,
         test_full_page_reproduced_in_note,
         test_page_reproduced_even_without_structured_recipe,
+        test_reproduction_strips_page_title_under_hero_image,
     ):
         print(f"\n[{fn.__name__}]")
         fn()

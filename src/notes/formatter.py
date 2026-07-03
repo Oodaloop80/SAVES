@@ -1044,13 +1044,27 @@ def has_offsite_recipe_context(content: ExtractedContent) -> bool:
 
 
 def _strip_leading_title(md: str) -> str:
-    """Drop the article's own top-level ``# Title`` line — it's redundant with the note's
-    frontmatter title and the section header the reproduction sits under."""
+    """Drop the reproduced page's own top-level ``# Title`` — it's redundant with the note's
+    frontmatter title and the ``## Full Web Clipping`` header the reproduction sits under. Skips
+    any leading hero image / embed block first, since the image localizer prepends the feature
+    image (an ``EmbedRelativeTo`` fence) ahead of the title."""
     lines = md.splitlines()
-    for i, ln in enumerate(lines):
-        if not ln.strip():
+    i, n = 0, len(lines)
+    while i < n:
+        s = lines[i].strip()
+        if not s:
+            i += 1
             continue
-        if re.match(r"^#\s+\S", ln):  # first non-empty line is an H1
+        if s.startswith("```"):  # a fenced block, e.g. the localized hero EmbedRelativeTo image
+            i += 1
+            while i < n and not lines[i].strip().startswith("```"):
+                i += 1
+            i += 1  # consume the closing fence
+            continue
+        if s.startswith("!["):  # a leading Markdown image
+            i += 1
+            continue
+        if re.match(r"^#\s+\S", lines[i]):  # first real content line is an H1 -> drop it
             return "\n".join(lines[:i] + lines[i + 1:]).lstrip("\n")
         break
     return md
