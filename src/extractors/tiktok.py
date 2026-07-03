@@ -101,27 +101,44 @@ def fetch_tdk_caption(
         return None
 
 
+# A dash bullet in a flattened caption: a space, a hyphen, then a non-space that is not another
+# hyphen -- e.g. " -3 tbsp", " -½ tsp", " -Freshly". Internal hyphens ("smoke-point",
+# "non-stick", "Center-cut") have no preceding space and never match, and " - " (spaces on both
+# sides, a prose dash) doesn't match either because the char after the hyphen must be non-space.
+_DASH_BULLET = re.compile(r"(?<=\S) -(?=[^\s-])")
+
+
 def restore_caption_linebreaks(text: str) -> str:
     """Restore the line breaks TikTok strips from a video's caption.
 
-    TikTok's metadata ``description`` (what yt-dlp returns) flattens the author's hard line
-    breaks: every newline they typed comes back as a run of 2+ spaces (typically three), while
-    ordinary word gaps stay single spaces. The caption therefore arrives as one wall of text —
-    each ingredient and step glued onto the last. When the description carries no real newlines
-    but does contain multi-space runs, treat each run as the line break TikTok ate and restore
-    it, so the caption renders with its original per-line structure.
+    TikTok's metadata ``description`` (what yt-dlp returns, used only as the fallback when the
+    richer TDK caption is unavailable) flattens the author's hard line breaks. Three artifacts of
+    that flattening are recoverable, and this restores each of them when — and only when — the
+    description carries no real newlines of its own:
+
+    * **Runs of 2+ ordinary spaces** — the common case; each run was a newline the author typed.
+    * **No-break spaces (U+00A0)** — TikTok sometimes preserves a hard break as an ``\\xa0``
+      instead (often padded with an ordinary space). Normal typing never puts a no-break space
+      between words, so any nbsp-bearing whitespace run is treated as a line break.
+    * **Dash bullet lists** — a ``- item`` list flattened onto one line, where every `` -<char>``
+      begins a bullet. Only restored when several such markers are present (i.e. it really is a
+      list), so an incidental `` -word`` dash in prose is left alone.
 
     Conservative and idempotent: a no-op when real newlines are already present (nothing was
-    flattened) or when there are no multi-space runs to interpret. Note that a break TikTok
-    collapsed all the way to a single space (it does this after some colon-terminated header
-    lines) is indistinguishable from a word gap and is intentionally left alone.
+    flattened). A break TikTok collapsed all the way to a single ordinary space with no dash
+    bullet after it (it does this after some colon-terminated headers) is indistinguishable from
+    a word gap and is intentionally left glued.
     """
-    if not text or "\n" in text:
-        return text or ""
-    if not re.search(r" {2,}", text):
+    if not text:
+        return ""
+    if "\n" in text:
         return text
-    segments = (seg.strip() for seg in re.split(r" {2,}", text))
-    return "\n".join(seg for seg in segments if seg)
+    restored = re.sub(r"[ \t]*\xa0[ \t\xa0]*", "\n", text)  # no-break-space breaks
+    restored = re.sub(r" {2,}", "\n", restored)             # multi-space breaks
+    if len(_DASH_BULLET.findall(restored)) >= 3:            # a real dash-bullet list
+        restored = _DASH_BULLET.sub("\n-", restored)
+    lines = [ln.strip() for ln in restored.split("\n")]
+    return "\n".join(ln for ln in lines if ln) or text
 
 
 class TikTokExtractor(BaseExtractor):

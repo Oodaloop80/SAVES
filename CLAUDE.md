@@ -281,10 +281,20 @@ metadata endpoint: `GET https://www.tiktok.com/api/customtdk/item/?itemId={id}&�
 So `tiktok.fetch_tdk_caption()` fetches that (a plain cookies GET — no signed anti-bot tokens
 needed) and `_extract_sync` prefers it for `body_text`. Best-effort + fully non-fatal behind
 `platforms.tiktok.use_tdk_caption` (default on): on any network error / non-200 / missing field
-it falls back to `restore_caption_linebreaks(description)`, which turns the paraphrase's
-multi-space runs back into newlines (idempotent; no-op when real newlines are present; a break
-TikTok collapsed to a single space after a colon-header like `INGREDIENTS:` stays glued). The
-`article` already carries real `\n`/`\n\n`, so it renders line-for-line in the Caption callout.
+— **or an HTTP 200 whose `article` is empty** (TikTok doesn't generate a rich SEO article for
+every video) — it falls back to `restore_caption_linebreaks(description)`. The `article` carries
+real `\n`/`\n\n`, so when present it renders line-for-line in the Caption callout.
+
+`restore_caption_linebreaks()` (the fallback) restores the three ways TikTok flattens an
+author's hard newlines, but only when the description has no real newlines of its own: (1) **runs
+of 2+ ordinary spaces** (the common case); (2) **no-break spaces `U+00A0`** — TikTok sometimes
+preserves a break as an `\xa0`, so any nbsp-bearing whitespace run becomes a newline; (3)
+**dash-bullet lists** — a `- item` list flattened onto one line, where each `" -<char>"` starts
+a bullet (only fired when ≥3 such markers prove it's really a list, so an incidental prose dash
+is left alone; internal hyphens like `smoke-point`/`Center-cut` have no preceding space and are
+never split). Idempotent; a break TikTok collapsed all the way to a single ordinary space with
+no dash after it (e.g. after a colon-header like `INGREDIENTS:`) is indistinguishable from a word
+gap and stays glued.
 
 **Generic web (articles):** Uses trafilatura (not readability) to extract structured Markdown
 with headings, links, and inline images. All inline images are downloaded locally via

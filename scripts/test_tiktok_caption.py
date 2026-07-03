@@ -115,6 +115,67 @@ def test_formatter_renders_caption_multiline():
     check(note.count("> ") >= 6, "Caption box is no longer a single wall-of-text line")
 
 
+# --- fallback: no-break-space and dash-bullet flattening --------------------------------------
+
+# The real yt-dlp description for the Beef Wellington video (@anasofiafehn/7446182438218337567):
+# its TDK article was empty, so this fallback is the only path. There are NO runs of 2+ ordinary
+# spaces here — TikTok flattened this author's breaks into no-break spaces (\xa0, at section
+# boundaries) and dash bullets (" -item"), which the old 2+-space-only logic couldn't see.
+WELLINGTON = (
+    "BEEF WELLINGTON \U0001f52a\U0001f344‍\U0001f7eb First time cooking in my new "
+    "kitchen!! Ingredients For the mushroom duxelles -3 tbsp olive oil -4 cups of assorted "
+    "mushrooms (some great options: cremini, porcini, portobello, chanterelles, button)\xa0 "
+    "-½ tsp salt -Freshly ground black pepper\xa0 -2 to 3 tablespoons fresh thyme\xa0 "
+    "For the savory chive crêpes -2 eggs -1 cup flour -¼ tsp salt -1 cup whole milk "
+    "-2 tablespoons chives (adjust to preference) -Butter (to grease pan) or non-stick cooking "
+    "spray\xa0 For the rest of the Wellington fixings:\xa0 -Center-cut beef tenderloin\xa0 "
+    "-Salt and black pepper -1 tbsp avocado oil (or other high smoke-point oil) -3 tbsp Dijon "
+    "mustard -6 slices prosciutto\xa0 -1 to 2 sheets of puff pastry (thawed if frozen)\xa0 "
+    "-3 egg yolks #cooking #recipe #beefwellington #holiday "
+)
+
+
+def test_nbsp_becomes_line_break():
+    out = restore_caption_linebreaks("Section one\xa0 Section two\xa0-item three")
+    lines = out.split("\n")
+    check(lines == ["Section one", "Section two", "-item three"],
+          f"no-break spaces (\\xa0) restore as line breaks (got {lines!r})")
+    plain = "five\xa0grams of salt in one\xa0cup"  # nbsp used as a word joiner, still split
+    check("\n" in restore_caption_linebreaks(plain), "any nbsp is treated as a break (fallback path)")
+
+
+def test_dash_bullets_become_lines():
+    out = restore_caption_linebreaks(WELLINGTON)
+    lines = out.split("\n")
+    check("-3 tbsp olive oil" in lines, "first dash-bullet ingredient on its own line")
+    check("-½ tsp salt" in lines, "'-½ tsp salt' split from the previous ingredient")
+    check("For the savory chive crêpes" in lines,
+          "nbsp-delimited section header on its own line")
+    check("For the rest of the Wellington fixings:" in lines, "second section header on its own line")
+    check("-Center-cut beef tenderloin" in lines,
+          "internal hyphen in 'Center-cut' is NOT split (no space before it)")
+    check("-1 tbsp avocado oil (or other high smoke-point oil)" in lines,
+          "'smoke-point' internal hyphen is NOT split")
+    check(not any(" -" in ln for ln in lines),
+          "no dash bullet is left glued mid-line after restoring")
+    check(lines[-1] == "-3 egg yolks #cooking #recipe #beefwellington #holiday",
+          "trailing hashtags stay with the final ingredient (no signal to split them)")
+    check(len(lines) == 21, f"the flattened wall becomes 21 structured lines (got {len(lines)})")
+
+
+def test_dash_bullets_below_threshold_left_alone():
+    # Fewer than 3 " -word" markers => an incidental prose dash, not a list. Do not split.
+    prose = "Loved this recipe -so quick and the crust -wow"
+    check(restore_caption_linebreaks(prose) == prose,
+          "1-2 dash markers in prose are left glued (not a bullet list)")
+
+
+def test_new_signals_idempotent():
+    once = restore_caption_linebreaks(WELLINGTON)
+    check(restore_caption_linebreaks(once) == once,
+          "restoring an already-restored caption changes nothing (has real newlines)")
+
+
 # --- TDK (formatted-caption) endpoint ---------------------------------------------------------
 
 # A trimmed copy of a real customtdk/item response for the seafood-stew video.
@@ -196,6 +257,10 @@ def main():
         test_within_line_single_spaces_preserved,
         test_idempotent_and_noops,
         test_formatter_renders_caption_multiline,
+        test_nbsp_becomes_line_break,
+        test_dash_bullets_become_lines,
+        test_dash_bullets_below_threshold_left_alone,
+        test_new_signals_idempotent,
         test_item_id_from_url,
         test_fetch_tdk_success_prefers_article_and_appends_keywords,
         test_fetch_tdk_non_200_returns_none,
