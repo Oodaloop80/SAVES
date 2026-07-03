@@ -269,6 +269,15 @@ auto-captions. Vision is skipped for YouTube (only thumbnail available).
 Cookie expiry is monitored — alerts sent to `#SAVES-alerts` when approaching expiry.
 Export cookies from browser using "Get cookies.txt LOCALLY" extension.
 
+**TikTok caption line breaks:** TikTok's metadata `description` (what yt-dlp returns) flattens the
+author's hard newlines into runs of 2+ spaces (typically three), while normal word gaps stay
+single spaces — so a recipe caption arrives as one wall of text. `tiktok.restore_caption_linebreaks()`
+turns those multi-space runs back into newlines when the description carries no real newlines,
+restoring the per-line structure before it reaches Claude, recipe parsing, and the note. Idempotent
+and a no-op when real newlines are already present. A break TikTok collapsed all the way to a
+single space (it does this after some colon-terminated header lines like `INGREDIENTS:`) is
+indistinguishable from a word gap and is left glued.
+
 **Generic web (articles):** Uses trafilatura (not readability) to extract structured Markdown
 with headings, links, and inline images. All inline images are downloaded locally via
 `localize_article_images()` and rewritten to `EmbedRelativeTo` blocks so notes survive the

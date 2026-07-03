@@ -1,10 +1,34 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 import tempfile
 
 from src.extractors.base import BaseExtractor, ExtractedContent
+
+
+def restore_caption_linebreaks(text: str) -> str:
+    """Restore the line breaks TikTok strips from a video's caption.
+
+    TikTok's metadata ``description`` (what yt-dlp returns) flattens the author's hard line
+    breaks: every newline they typed comes back as a run of 2+ spaces (typically three), while
+    ordinary word gaps stay single spaces. The caption therefore arrives as one wall of text —
+    each ingredient and step glued onto the last. When the description carries no real newlines
+    but does contain multi-space runs, treat each run as the line break TikTok ate and restore
+    it, so the caption renders with its original per-line structure.
+
+    Conservative and idempotent: a no-op when real newlines are already present (nothing was
+    flattened) or when there are no multi-space runs to interpret. Note that a break TikTok
+    collapsed all the way to a single space (it does this after some colon-terminated header
+    lines) is indistinguishable from a word gap and is intentionally left alone.
+    """
+    if not text or "\n" in text:
+        return text or ""
+    if not re.search(r" {2,}", text):
+        return text
+    segments = (seg.strip() for seg in re.split(r" {2,}", text))
+    return "\n".join(seg for seg in segments if seg)
 
 
 class TikTokExtractor(BaseExtractor):
@@ -47,13 +71,14 @@ class TikTokExtractor(BaseExtractor):
 
         captions = self._read_auto_captions(info)
         hashtags = [t.get("name", "") for t in info.get("tags", []) if t.get("name")]
+        description = restore_caption_linebreaks(info.get("description", ""))
 
         return ExtractedContent(
             url=url,
             platform="tiktok",
-            title=info.get("title") or info.get("description", "")[:80],
+            title=info.get("title") or description[:80],
             author=info.get("uploader") or info.get("creator"),
-            body_text=info.get("description", ""),
+            body_text=description,
             metadata={
                 "like_count": info.get("like_count"),
                 "view_count": info.get("view_count"),
