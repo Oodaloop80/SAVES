@@ -268,6 +268,70 @@ def _flatten_groups(groups, key) -> list:
     return out
 
 
+# schema.org NutritionInformation → our internal nutrition-label keys. schema.org carries the
+# core macros only — it has NO potassium, omegas, added sugars, or micro-vitamins — which is
+# exactly why the model still supplements the gaps rather than being replaced by this. See
+# apply_structured_recipe() and the prompt's Nutrition section.
+_NUTRITION_FIELD_MAP = {
+    "calories": "calories",
+    "proteinContent": "protein",
+    "fatContent": "total_fat",
+    "saturatedFatContent": "saturated_fat",
+    "transFatContent": "trans_fat",
+    "cholesterolContent": "cholesterol",
+    "sodiumContent": "sodium",
+    "carbohydrateContent": "total_carbs",
+    "fiberContent": "dietary_fiber",
+    "sugarContent": "total_sugars",
+}
+_NUTRITION_UNIT_WORDS = {
+    "g": "g", "gram": "g", "grams": "g", "gm": "g", "gms": "g",
+    "mg": "mg", "milligram": "mg", "milligrams": "mg",
+    "mcg": "mcg", "ug": "mcg", "µg": "mcg", "microgram": "mcg", "micrograms": "mcg",
+    "kg": "kg",
+}
+
+
+def _normalize_nutrition_amount(raw, key: str) -> str | None:
+    """schema.org nutrition values arrive as '240 calories', '9 grams', '480 milligrams', or a
+    bare number. Normalize to the '<n> <short-unit>' form the label parser and %DV math expect
+    ('9 g', '480 mg', '240 kcal'). Returns None when there's no number to render."""
+    s = _clean_text(raw).replace(",", "")
+    if not s:
+        return None
+    m = re.match(r"\s*([\d.]+)\s*([a-zA-Zµ]*)", s)
+    if not m:
+        return None
+    num = m.group(1).strip(".")
+    if not num:
+        return None
+    if key == "calories":
+        return f"{num} kcal"
+    short = _NUTRITION_UNIT_WORDS.get(m.group(2).lower())
+    if not short:  # source gave a bare number — apply the nutrient's conventional unit
+        short = "mg" if key in ("sodium", "cholesterol") else "g"
+    return f"{num} {short}"
+
+
+def _parse_nutrition(node: dict) -> dict | None:
+    """Pull the source's published per-serving nutrition (schema.org NutritionInformation) into
+    our label keys. This is the AUTHORITATIVE floor the model supplements — never the whole
+    picture, since schema.org omits omegas, potassium, added sugars, and micro-vitamins."""
+    n = node.get("nutrition")
+    if not isinstance(n, dict):
+        return None
+    out: dict[str, str] = {}
+    for schema_key, our_key in _NUTRITION_FIELD_MAP.items():
+        if n.get(schema_key) is not None:
+            v = _normalize_nutrition_amount(n.get(schema_key), our_key)
+            if v:
+                out[our_key] = v
+    ss = _clean_text(n.get("servingSize"))
+    if ss:
+        out["serving_size"] = ss
+    return out or None
+
+
 def extract_recipe_jsonld(html: str) -> dict | None:
     """Find the page's recipe (schema.org JSON-LD + WPRM grouping) and normalize it. Prefers
     the grouped WPRM lists (they carry the section titles and readable bold step lead-ins) and
@@ -296,6 +360,7 @@ def extract_recipe_jsonld(html: str) -> dict | None:
         "prep_time": iso8601_duration_to_human(node.get("prepTime")),
         "cook_time": iso8601_duration_to_human(node.get("cookTime")),
         "total_time": iso8601_duration_to_human(node.get("totalTime")),
+        "nutrition": _parse_nutrition(node),
     }
     bits = []
     if data["prep_time"]:
@@ -346,6 +411,23 @@ def format_recipe_data_for_prompt(data: dict, limit: int = 8000) -> str:
         lines.append("Instructions:")
         lines += [f"{n}. {s}" for n, s in enumerate(data["instructions"], 1)]
 
+    nut = data.get("nutrition")
+    if nut:
+        lines.append(
+            "Published nutrition per serving (from the source — AUTHORITATIVE: keep these EXACT "
+            "values and ADD any nutrients the source omits — e.g. omega-3/6, added sugars, "
+            "potassium, key vitamins & minerals — using your own estimate):"
+        )
+        for k, lbl in (
+            ("serving_size", "Serving size"), ("calories", "Calories"), ("protein", "Protein"),
+            ("total_fat", "Total fat"), ("saturated_fat", "Saturated fat"),
+            ("trans_fat", "Trans fat"), ("cholesterol", "Cholesterol"), ("sodium", "Sodium"),
+            ("total_carbs", "Total carbohydrate"), ("dietary_fiber", "Dietary fiber"),
+            ("total_sugars", "Total sugars"),
+        ):
+            if nut.get(k):
+                lines.append(f"  - {lbl}: {nut[k]}")
+
     return "\n".join(lines)[:limit]
 
 
@@ -385,4 +467,21 @@ def apply_structured_recipe(ai_result: dict, content) -> dict:
         ai_result["recipe_servings"] = data["yield"]
     if not ai_result.get("recipe_time") and data.get("time_str"):
         ai_result["recipe_time"] = data["time_str"]
+
+    # Nutrition: the source's published macros are authoritative and language-independent (grams
+    # are grams), so merge them over the model's estimate regardless of `is_english`. The model
+    # keeps whatever the source omitted (omegas, potassium, added sugars, vitamins) — the source
+    # is the floor, not the ceiling. Record which keys came from the source so the label can
+    # caption it honestly ("published … supplemented with estimates").
+    src_nut = data.get("nutrition")
+    if src_nut:
+        merged = dict(ai_result.get("nutrition") or {})
+        source_keys = []
+        for k, v in src_nut.items():
+            if v:
+                merged[k] = v
+                source_keys.append(k)
+        if source_keys:
+            merged["_source_keys"] = sorted(source_keys)
+        ai_result["nutrition"] = merged
     return ai_result

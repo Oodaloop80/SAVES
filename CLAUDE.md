@@ -189,8 +189,16 @@ TikTok videos, or Reddit posts that contain recipes.
 - **Nutrition label.** Claude estimates per-serving macros/micros into a `nutrition` JSON
   field; `_nutrition_label()` renders an FDA-style HTML Nutrition Facts panel (Obsidian
   renders the HTML). %DV is computed *deterministically* in the formatter from FDA reference
-  Daily Values (`_DAILY_VALUES`), not by the model. Carries an "AI estimate — not verified"
-  disclaimer.
+  Daily Values (`_DAILY_VALUES`), not by the model.
+  **Source nutrition is a floor, not a replacement.** When the recipe page publishes its own
+  per-serving nutrition (schema.org `NutritionInformation`), `recipe_data._parse_nutrition()`
+  extracts it, `format_recipe_data_for_prompt()` hands it to Claude as authoritative, and
+  `apply_structured_recipe()` then re-asserts those exact numbers over Claude's estimate while
+  KEEPING the nutrients the source omitted (omega-3/6, added sugars, potassium, vitamins —
+  schema.org carries none of those). The overridden keys are recorded in the private
+  `_source_keys`, which flips the disclaimer from "🤖 AI estimate" to "📋 published by the
+  source, supplemented with 🤖 AI estimates". Nutrition merges regardless of source language
+  (grams are grams), unlike the English-only ingredient/instruction override.
 - **Unit conversion.** `src/utils/units.py` `convert_measurements()` annotates recipe text with
   imperial/Fahrenheit equivalents in parentheses (°C→°F, g→oz, kg→lb, ml→tsp/tbsp/cups,
   L→cups, cm/mm→in). Deterministic + idempotent; never replaces the original. Conservative:

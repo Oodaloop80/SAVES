@@ -113,6 +113,13 @@ label-accurate. Compute every amount PER SERVING (divide totals by your best est
 the number of servings). Express each value as a string INCLUDING its unit. Use null only
 when you genuinely cannot estimate a field; provide every macro you reasonably can.
 
+When the user prompt includes a "Published nutrition per serving" block from the source, those
+values are AUTHORITATIVE: copy each one VERBATIM into the matching nutrition field (do NOT
+recompute, re-round, or "correct" them), then SUPPLEMENT — add the nutrients the source did not
+list (commonly omega_3, omega_6, added_sugars, potassium, and notable vitamins/minerals under
+"micros") using your USDA-based estimate. The goal is the source's real numbers PLUS the gaps
+you can fill, not a replacement of them.
+
 "nutrition": {
   "serving_size": "amount per serving, e.g. '1 cup (240 g)' or '2 tacos'",
   "servings": <integer number of servings the recipe yields>,

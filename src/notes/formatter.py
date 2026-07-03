@@ -110,7 +110,8 @@ def format_note(
     inserts = []
     # web_recipe renderer handles recipe, image_text, and transcript itself. For all other note
     # types, inject the styled '🍽️ Recipe' section first (always its own section), then the
-    # bio / off-site provenance + full-page reproduction, then image_text.
+    # post's own '📄 Text from Images' OCR, and finally the off-site bio / full-page reproduction
+    # LAST — it's external blog content, so it belongs below the reel's own extracted material.
     recipe_type = note_type in ("web_recipe", "recipe")
     has_recipe_fields = bool(
         ai_result.get("recipe_ingredients") or ai_result.get("recipe_instructions")
@@ -118,11 +119,11 @@ def format_note(
     )
     if not recipe_type and has_recipe_fields:
         inserts.append(_recipe_section(ai_result))
+    if image_text and not recipe_type:
+        inserts.append(_image_text_section(image_text))
     bio_section = "" if recipe_type else _bio_recipe_section(ai_result, content)
     if bio_section:
         inserts.append(bio_section)
-    if image_text and not recipe_type:
-        inserts.append(_image_text_section(image_text))
     if fc_inline:
         sec = _fact_check_note_section(fc_inline)
         if sec:
@@ -810,8 +811,10 @@ def _dv_percent(key: str, value) -> str:
 
 def _nutrition_label(nutrition: dict | None) -> str:
     """Render an FDA-style Nutrition Facts panel (HTML — Obsidian renders it on desktop and
-    mobile) from Claude's per-serving estimate. Returns '' when no nutrition data is present.
-    Amounts come from the model; %DV is computed here from the FDA reference values."""
+    mobile) from the per-serving nutrition. Returns '' when no nutrition data is present.
+    Amounts come from the model, or from the source's published values where it had them (see
+    apply_structured_recipe — those keys are listed in `_source_keys`, which flips the caption
+    to a "published + supplemented" disclaimer). %DV is computed here from the FDA references."""
     if not isinstance(nutrition, dict) or not nutrition:
         return ""
 
@@ -932,9 +935,18 @@ def _nutrition_label(nutrition: dict | None) -> str:
     caveat = val("notes")
     caveat_line = f"\n*{caveat}*\n" if caveat else ""
 
+    if nutrition.get("_source_keys"):
+        disclaimer = (
+            "*📋 Per-serving values published by the source, supplemented with 🤖 AI estimates "
+            "for nutrients it didn't list (e.g. omegas, vitamins). Approximate.*"
+        )
+    else:
+        disclaimer = (
+            "*🤖 AI estimate from the recipe — approximate, not a verified nutrition analysis.*"
+        )
     return (
         "### Nutrition Facts\n\n"
-        "*🤖 AI estimate from the recipe — approximate, not a verified nutrition analysis.*\n"
+        f"{disclaimer}\n"
         f"{times_line}\n{table}\n{caveat_line}"
     )
 
