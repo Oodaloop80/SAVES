@@ -16,6 +16,24 @@ def _slug(text: str, max_len: int = 40) -> str:
     return s[:max_len] or "media"
 
 
+def _source_subdir(author: str, title: str, source_url: str) -> str:
+    """A unique per-source subdirectory so two different posts never collide on one filename.
+
+    yt-dlp derives the output filename from the video's title, and several platforms —
+    Facebook reels especially — return a generic title like ``Video`` for *every* clip.
+    Without a per-source directory every such download resolves to the same path
+    (``facebook/Video.mp4``); yt-dlp then reports the file "already downloaded" and skips it,
+    so the note ends up embedding — *and transcribing, and OCR-ing* — whichever clip happened
+    to land there first. Keying the directory on the source URL guarantees each post its own
+    folder. Re-saving the same URL reuses the folder (idempotent), and the "newest file in
+    save_dir" fallback in :func:`_yt_dlp_download` is now scoped to a single post, so it can no
+    longer return a stranger's video.
+    """
+    digest = hashlib.md5((source_url or title or "").encode()).hexdigest()[:10]
+    base = _slug(author, max_len=24) if author and author.lower() != "unknown" else ""
+    return f"{base}-{digest}" if base else digest
+
+
 async def download_media(
     platform: str,
     author: str,
@@ -30,7 +48,9 @@ async def download_media(
     if not media_urls:
         return []
 
-    save_dir = os.path.join(media_root, platform)
+    # Each post gets its own subdirectory (see _source_subdir) so posts with an identical or
+    # generic title (Facebook reels are all "Video") can't overwrite / alias each other's media.
+    save_dir = os.path.join(media_root, platform, _source_subdir(author, title, source_url))
     os.makedirs(save_dir, exist_ok=True)
 
     mcfg = config.get("media", {})
