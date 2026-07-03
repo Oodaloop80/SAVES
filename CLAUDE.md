@@ -269,14 +269,22 @@ auto-captions. Vision is skipped for YouTube (only thumbnail available).
 Cookie expiry is monitored — alerts sent to `#SAVES-alerts` when approaching expiry.
 Export cookies from browser using "Get cookies.txt LOCALLY" extension.
 
-**TikTok caption line breaks:** TikTok's metadata `description` (what yt-dlp returns) flattens the
-author's hard newlines into runs of 2+ spaces (typically three), while normal word gaps stay
-single spaces — so a recipe caption arrives as one wall of text. `tiktok.restore_caption_linebreaks()`
-turns those multi-space runs back into newlines when the description carries no real newlines,
-restoring the per-line structure before it reaches Claude, recipe parsing, and the note. Idempotent
-and a no-op when real newlines are already present. A break TikTok collapsed all the way to a
-single space (it does this after some colon-terminated header lines like `INGREDIENTS:`) is
-indistinguishable from a word gap and is left glued.
+**TikTok caption (real formatted text vs yt-dlp's paraphrase):** yt-dlp's `description` — and
+the `desc` embedded in TikTok's page JSON — is NOT the creator's caption. TikTok's web layer
+serves a header-stripped, reworded paraphrase there: `**Step 2: Build the Base**` becomes
+`STEP 2: BUILD THE BASE`, `**Tips for Success:** * **Seafood Texture:** …` collapses to a plain
+`Tips: …`, `*` bullets vanish, and the author's newlines are flattened into runs of 2+ spaces.
+The creator's *actual* formatted caption (the text shown in the app's expanded "…more" overlay —
+Markdown headers, `*` bullet lists, blank lines between sections) lives only in TikTok's SEO
+metadata endpoint: `GET https://www.tiktok.com/api/customtdk/item/?itemId={id}&…`, field
+`itemCustomTDK.article` (with `itemCustomTDK.keywords` appended as a trailing `Keywords:` line).
+So `tiktok.fetch_tdk_caption()` fetches that (a plain cookies GET — no signed anti-bot tokens
+needed) and `_extract_sync` prefers it for `body_text`. Best-effort + fully non-fatal behind
+`platforms.tiktok.use_tdk_caption` (default on): on any network error / non-200 / missing field
+it falls back to `restore_caption_linebreaks(description)`, which turns the paraphrase's
+multi-space runs back into newlines (idempotent; no-op when real newlines are present; a break
+TikTok collapsed to a single space after a colon-header like `INGREDIENTS:` stays glued). The
+`article` already carries real `\n`/`\n\n`, so it renders line-for-line in the Caption callout.
 
 **Generic web (articles):** Uses trafilatura (not readability) to extract structured Markdown
 with headings, links, and inline images. All inline images are downloaded locally via

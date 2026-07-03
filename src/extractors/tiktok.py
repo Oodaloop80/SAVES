@@ -1,11 +1,104 @@
 import asyncio
+import http.cookiejar
 import json
+import logging
 import os
 import re
 import subprocess
 import tempfile
 
+import requests
+
 from src.extractors.base import BaseExtractor, ExtractedContent
+
+logger = logging.getLogger(__name__)
+
+# TikTok's SEO metadata endpoint. yt-dlp's ``description`` is a flattened, reworded paraphrase
+# of the caption (section headers upper-cased, ``**bold**``/``*`` markdown stripped, wording
+# changed — e.g. "**Tips for Success:**" becomes "Tips:"). This endpoint instead returns
+# ``itemCustomTDK.article`` — the caption exactly as it renders in the app's expanded-caption
+# ("...more") overlay: Markdown section headers, bullet lists, blank lines between sections.
+# That is what the user actually sees on the post, so we prefer it when present.
+_TDK_ENDPOINT = "https://www.tiktok.com/api/customtdk/item/"
+_TDK_PARAMS = {
+    "aid": "1988",
+    "app_language": "en",
+    "app_name": "tiktok_web",
+    "channel": "tiktok_web",
+    "device_platform": "web_pc",
+    "os": "windows",
+    "region": "US",
+    "priority_region": "US",
+    "from_page": "video",
+}
+_TDK_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+def _item_id_from_url(url: str) -> str | None:
+    """Pull the numeric item id out of a TikTok video/photo URL."""
+    m = re.search(r"/(?:video|photo)/(\d+)", url or "")
+    return m.group(1) if m else None
+
+
+def fetch_tdk_caption(
+    item_id: str,
+    referer: str | None = None,
+    cookies_path: str | None = None,
+    timeout: int = 10,
+) -> str | None:
+    """Fetch the creator's full formatted caption from TikTok's ``customtdk/item`` endpoint.
+
+    Returns ``itemCustomTDK.article`` — the caption with its original ``**bold**`` headers,
+    ``*`` bullet lists, and blank-line paragraph breaks intact — with the SEO ``keywords`` list
+    appended as a trailing ``Keywords:`` line (both are shown together in the app's expanded
+    caption). This is materially better than yt-dlp's ``description``, which TikTok's web layer
+    serves as a header-stripped, reworded paraphrase.
+
+    Best-effort and fully non-fatal: returns ``None`` on any network error, non-200, missing
+    field, or trivially short article, so the caller falls back to the yt-dlp description. A
+    plain GET with the site cookies is enough — the endpoint needs no signed anti-bot tokens.
+    """
+    if not item_id:
+        return None
+    try:
+        headers = {
+            "User-Agent": _TDK_UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": referer or f"https://www.tiktok.com/@/video/{item_id}",
+        }
+        jar = None
+        if cookies_path and os.path.exists(cookies_path):
+            try:
+                jar = http.cookiejar.MozillaCookieJar(cookies_path)
+                jar.load(ignore_discard=True, ignore_expires=True)
+            except Exception:
+                jar = None
+        resp = requests.get(
+            _TDK_ENDPOINT,
+            params=dict(_TDK_PARAMS, itemId=item_id),
+            headers=headers,
+            cookies=jar,
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return None
+        tdk = (resp.json() or {}).get("itemCustomTDK") or {}
+        article = (tdk.get("article") or "").strip()
+        if len(article) < 30:  # empty / placeholder — not worth overriding the description
+            return None
+        keywords = tdk.get("keywords") or []
+        if isinstance(keywords, list):
+            kw = ", ".join(k.strip() for k in keywords if isinstance(k, str) and k.strip())
+            if kw:
+                article = f"{article}\n\nKeywords: {kw}"
+        return article
+    except Exception as e:
+        logger.debug("TDK caption fetch failed for item %s: %s", item_id, e)
+        return None
 
 
 def restore_caption_linebreaks(text: str) -> str:
@@ -36,6 +129,7 @@ class TikTokExtractor(BaseExtractor):
         self.config = config
         pcfg = config.get("platforms", {}).get("tiktok", {})
         self.no_watermark = pcfg.get("no_watermark", True)
+        self.use_tdk_caption = pcfg.get("use_tdk_caption", True)
         self.cookies_dir = config.get("paths", {}).get("cookies_dir", "cookies")
 
     def can_handle(self, url: str) -> bool:
@@ -71,7 +165,15 @@ class TikTokExtractor(BaseExtractor):
 
         captions = self._read_auto_captions(info)
         hashtags = [t.get("name", "") for t in info.get("tags", []) if t.get("name")]
-        description = restore_caption_linebreaks(info.get("description", ""))
+
+        # Prefer the creator's real formatted caption from TikTok's TDK endpoint; fall back to
+        # the yt-dlp description (paraphrased/flattened) with line breaks restored.
+        description = None
+        if self.use_tdk_caption:
+            item_id = info.get("id") or _item_id_from_url(url)
+            description = fetch_tdk_caption(item_id, referer=url, cookies_path=cookies_path)
+        if not description:
+            description = restore_caption_linebreaks(info.get("description", ""))
 
         return ExtractedContent(
             url=url,

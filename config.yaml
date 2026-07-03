@@ -67,6 +67,10 @@ platforms:
     cookie_warning_days_ahead: 7
   tiktok:
     no_watermark: true
+    # Fetch the creator's real formatted caption (Markdown headers, * bullets, blank lines)
+    # from TikTok's customtdk/item endpoint instead of yt-dlp's flattened/reworded paraphrase.
+    # Best-effort + non-fatal: falls back to the yt-dlp description if the endpoint is down.
+    use_tdk_caption: true
     delay_seconds: 1.5
     cookie_expiry_days: 21
     cookie_warning_days_ahead: 7
