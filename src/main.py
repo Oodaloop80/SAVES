@@ -3,6 +3,10 @@ import logging
 import os
 import sys
 
+# Allow `python src\main.py` from the repo root on bare-metal dev: put the repo root on
+# sys.path so `src.*` imports resolve. (Docker runs from /app where this is a no-op.)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.config import load_config
 from src.credentials import load_credentials
 from src.discord_bot.bot import SAVESBot
