@@ -48,6 +48,9 @@ when the images are photographs, artwork, or contain only short decorative capti
 - instagram_reel   → Instagram video/Reel
 - instagram_post   → Instagram image post (1 or more images, no video)
 - tiktok_video     → TikTok video
+- tiktok_photo     → TikTok photo/slideshow post (still images + caption, NO video). Use this,
+                     not tiktok_video, when the metadata says is_photo_post or there is no
+                     transcript and the media are images.
 - facebook_video   → Facebook video post
 - facebook_post    → Facebook text/image post (no video)
 - web_recipe       → Recipe page (has ingredients + steps)

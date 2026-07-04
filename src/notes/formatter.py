@@ -63,6 +63,13 @@ def format_note(
     collapse_transcript = ncfg.get("collapse_transcript", True)
 
     note_type = ai_result.get("note_type", "web_generic")
+
+    # A TikTok photo/slideshow post has still images and a caption but no video or transcript.
+    # The extractor marks it with is_photo_post; if the model still tagged it as a video type,
+    # render it as an image post (embeds + caption + summary, no empty transcript block).
+    if note_type in ("tiktok_video", "tiktok") and (content.metadata or {}).get("is_photo_post"):
+        note_type = "tiktok_photo"
+
     parts = [_frontmatter(ai_result, content, saved_date)]
 
     # Blank spacer line so that when the note opens in Live Preview, the cursor
@@ -1279,6 +1286,7 @@ _RENDERERS = {
     "instagram_reel":  _render_instagram_reel,
     "instagram_post":  _render_instagram_post,
     "tiktok_video":    _render_tiktok_video,
+    "tiktok_photo":    _render_instagram_post,  # image post, no video/transcript
     "facebook_video":  _render_facebook_video,
     "facebook_post":   _render_facebook_post,
     "web_recipe":      _render_web_recipe,

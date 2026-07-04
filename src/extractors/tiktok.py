@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 
 import requests
 
@@ -114,6 +115,85 @@ def fetch_contents_caption(
         return None
 
 
+def _is_photo_url(url: str) -> bool:
+    """True for TikTok photo/slideshow posts (``/photo/<id>``). yt-dlp raises UnsupportedError on
+    these, so they take the gallery-dl path in :meth:`TikTokExtractor._extract_photo`."""
+    return "/photo/" in (url or "")
+
+
+def _yyyymmdd_from_unix(ts) -> str | None:
+    """TikTok ``createTime`` (unix seconds) → ``YYYYMMDD``, matching the yt-dlp ``upload_date``
+    the video path stores. Returns None for missing/garbage values."""
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y%m%d")
+    except Exception:
+        return None
+
+
+def _parse_photo_gallerydl(data) -> dict | None:
+    """Pull caption, author, and still-image URLs out of ``gallery-dl -j`` output for a TikTok
+    photo post. Pure (no I/O) so it is unit-testable against a captured fixture.
+
+    gallery-dl emits a JSON array of message tuples: ``[2, {kwdict}]`` carries the post metadata
+    (author, ``desc``, ``contents``) and ``[3, "<url>", {kwdict}]`` is one downloadable file —
+    ``kwdict['type']`` is ``"image"`` for the slides and ``"audio"`` for the background-music mp3,
+    which we deliberately drop (transcribing a song is worthless and would burn Whisper time).
+    The caption comes from the SAME ``contents[]`` blob the video path uses, so it is line-for-line
+    verbatim; ``desc`` (flattened) is the fallback. Returns None when the array yields neither a
+    caption nor any images.
+    """
+    if not isinstance(data, list):
+        return None
+    meta: dict | None = None
+    image_urls: list[str] = []
+    for entry in data:
+        if not isinstance(entry, list) or not entry:
+            continue
+        if entry[0] == 2 and len(entry) > 1 and isinstance(entry[1], dict):
+            # Prefer the kwdict that actually carries post fields over an empty directory header.
+            if meta is None or entry[1].get("author") or entry[1].get("desc"):
+                meta = entry[1]
+        elif entry[0] == 3 and len(entry) > 2 and isinstance(entry[2], dict):
+            if entry[2].get("type") == "image" and isinstance(entry[1], str):
+                image_urls.append(entry[1])
+    meta = meta or {}
+    author_info = meta.get("author") or {}
+    caption = caption_from_contents(meta.get("contents")) or (meta.get("desc") or "").strip()
+    if not caption and not image_urls:
+        return None
+    stats = meta.get("stats") or {}
+    return {
+        "caption": caption,
+        "author": author_info.get("nickname") or author_info.get("uniqueId"),
+        "image_urls": image_urls,
+        "hashtags": re.findall(r"#(\w+)", caption),
+        "like_count": stats.get("diggCount"),
+        "view_count": stats.get("playCount"),
+        "upload_date": _yyyymmdd_from_unix(meta.get("createTime")),
+    }
+
+
+def fetch_photo_post(url: str, cookies_path: str | None = None, timeout: int = 60) -> dict | None:
+    """Extract a TikTok photo/slideshow post via ``gallery-dl`` (yt-dlp can't — it raises
+    UnsupportedError on ``/photo/`` URLs). Best-effort and non-fatal: returns None on any
+    subprocess/JSON failure so the caller degrades to a minimal note. See
+    :func:`_parse_photo_gallerydl` for the returned shape."""
+    cmd = ["gallery-dl", "-j"]
+    if cookies_path and os.path.exists(cookies_path):
+        cmd += ["--cookies", cookies_path]
+    cmd.append(url)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("gallery-dl -j produced no parseable JSON for %s", url)
+        return None
+    except Exception as e:
+        logger.debug("gallery-dl photo fetch failed for %s: %s", url, e)
+        return None
+    return _parse_photo_gallerydl(data)
+
+
 # A dash bullet in a flattened caption: a space, a hyphen, then a non-space that is not another
 # hyphen -- e.g. " -3 tbsp", " -½ tsp", " -Freshly". Internal hyphens ("smoke-point",
 # "non-stick", "Center-cut") have no preceding space and never match, and " - " (spaces on both
@@ -174,6 +254,14 @@ class TikTokExtractor(BaseExtractor):
     def _extract_sync(self, url: str) -> ExtractedContent:
         cookies_path = os.path.join(self.cookies_dir, "tiktok.txt")
         has_cookies = os.path.exists(cookies_path)
+        cookies_arg = cookies_path if has_cookies else None
+
+        # TikTok photo/slideshow posts (/photo/<id>): yt-dlp raises UnsupportedError on these, so
+        # never hand them to yt-dlp — extract the still images + caption via gallery-dl instead.
+        if _is_photo_url(url):
+            return self._extract_photo(url, cookies_arg) or ExtractedContent(
+                url=url, platform="tiktok", title=url
+            )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cmd = [
@@ -191,7 +279,11 @@ class TikTokExtractor(BaseExtractor):
 
             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
             if not info_files:
-                return ExtractedContent(url=url, platform="tiktok", title=url)
+                # yt-dlp returned nothing — it may still be a photo post reached via an unusual
+                # (non-/photo/) URL, so try gallery-dl once before giving up on a minimal note.
+                return self._extract_photo(url, cookies_arg) or ExtractedContent(
+                    url=url, platform="tiktok", title=url
+                )
 
             with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
                 info = json.load(f)
@@ -223,6 +315,35 @@ class TikTokExtractor(BaseExtractor):
             },
             media_urls=[url],  # yt-dlp downloads this via downloader
             captions=captions,
+        )
+
+    def _extract_photo(self, url: str, cookies_path: str | None) -> ExtractedContent | None:
+        """Build ExtractedContent for a TikTok photo/slideshow post (gallery-dl path).
+
+        Returns None when gallery-dl yields nothing usable, so the caller falls back to a minimal
+        note. The still-image CDN URLs go straight into ``media_urls`` for the downloader to fetch
+        (each is a normal signed JPEG that the existing direct-download handles); vision then OCRs
+        any on-image text. No audio is included, so nothing is sent to Whisper. ``is_photo_post``
+        in the metadata lets the formatter render it as an image post, not a video.
+        """
+        photo = fetch_photo_post(url, cookies_path=cookies_path)
+        if not photo or not (photo.get("image_urls") or photo.get("caption")):
+            return None
+        caption = photo.get("caption") or ""
+        return ExtractedContent(
+            url=url,
+            platform="tiktok",
+            title=caption[:80] or url,
+            author=photo.get("author"),
+            body_text=caption,
+            metadata={
+                "like_count": photo.get("like_count"),
+                "view_count": photo.get("view_count"),
+                "hashtags": photo.get("hashtags") or [],
+                "upload_date": photo.get("upload_date"),
+                "is_photo_post": True,
+            },
+            media_urls=photo.get("image_urls") or [],
         )
 
     def _read_auto_captions(self, info: dict) -> str | None:
