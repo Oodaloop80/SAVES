@@ -14,7 +14,7 @@ dependencies, architecture, or operations.
 ## 1. What SAVES Is
 
 A personal content-archiving pipeline. You share a URL (from a phone or desktop); it gets
-appended to one Obsidian inbox file (`00 - FILE.md`). SAVES watches that file, extracts the
+appended to one Obsidian inbox file (`0 - INBOX/SAVES.md`). SAVES watches that file, extracts the
 content (social post / video / article), downloads the media, transcribes any audio, reads any
 on-screen text, asks Claude to organize + tag + summarize it, sends you a Discord approval card,
 and — once you approve — writes a structured Obsidian note into your vault and removes the URL
@@ -42,7 +42,7 @@ from the inbox.
 ## 3. Architecture & Data Flow
 
 ```
-00 - FILE.md
+0 - INBOX/SAVES.md
    │  watchdog (3s debounce) → call_soon_threadsafe
    ▼
 asyncio.Queue ──► processor (serial, one URL at a time)
@@ -143,7 +143,7 @@ CLAUDE.md            session orientation (auto-loaded by Claude Code)
 | `playwright` | headless Chromium for web articles + lazy-image scroll |
 | `trafilatura` | primary web-article → Markdown extractor (headings/links/images) |
 | `readability-lxml` | fallback article parser |
-| `watchdog` | watches `00 - FILE.md` for new URLs |
+| `watchdog` | watches the inbox file (`0 - INBOX/SAVES.md`) for new URLs |
 | `pyyaml` | config parsing |
 | `python-dotenv` | `.env` loading |
 | `aiofiles` | async file I/O |
@@ -243,8 +243,7 @@ pending_approvals_file: "pending_approvals.json"   # restart-safe Discord approv
 ```
 Windows dev overrides (mapped SMB drive) sit commented at the top of the file:
 `vault_root: "N:/NAS/OBSIDIAN/Remote Vault"`, `media_root: "N:/NAS/MEDIA/SAVES"`.
-> The inbox is now `0 - INBOX/SAVES.md`. Older prose in this doc and `CLAUDE.md` still calls it
-> `00 - FILE.md`; the **config path is authoritative**.
+> The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES.md` (docs updated 2026-07-04).
 
 **watcher / processing** — the serial pipeline.
 ```yaml
@@ -443,7 +442,7 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 
 - **NAS:** model = _TODO_; SMB hostname = _TODO_; volumes = `/volume1/NAS/OBSIDIAN`,
   `/volume1/NAS/MEDIA/SAVES`; app dir = _TODO_.
-- **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `00 - FILE.md`.
+- **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `0 - INBOX/SAVES.md`.
 - **Discord:** server = "Bora's AI Ops"; channel IDs = _TODO_; bot invite scopes/permissions = _TODO_.
 - **Cookies:** which account backs each of instagram/tiktok/facebook = _TODO_; refresh cadence = ~3–4 wks.
 - **Whisper:** full runbook now in **§9.1** (host/port, start, verify, config, firewall, restart, IP).

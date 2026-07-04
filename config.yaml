@@ -41,8 +41,13 @@ transcription:
 vision:
   enabled: true                   # Send images/video frames to Claude for visual text extraction
   max_images: 20                  # Instagram carousels cap at 20 slides; cover the full post
-  ocr_model: "claude-haiku-4-5"   # <-- SET THIS (was haiku, or absent)
-  max_video_frames: 8             # Frames to extract per video (evenly spaced, 10-80% of duration). Higher = more burned-in caption coverage, esp. when audio transcript is unavailable.
+  ocr_model: "claude-haiku-4-5"   # Stage-1 OCR model (cheap); unset → single combined call on ai.model
+  max_video_frames: 8             # Image blocks per video. Primary strategy is SCENE-CHANGE detection
+                                  #   (a frame per content change — catches rolling burned-in captions),
+                                  #   tiled into a frame_grid×frame_grid montage per block; falls back to
+                                  #   evenly-spaced (10–80% of duration) when too few scene changes.
+  frame_scene_threshold: 0.3      # ffmpeg scene-change sensitivity (0–1; lower = more frames)
+  frame_grid: 2                   # 2 = 2×2 montage (4 frames per image block, same token cost as 1)
   skip_platforms: []              # Platforms to exclude (youtube always skipped automatically)
 
 ai:

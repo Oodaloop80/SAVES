@@ -3,7 +3,7 @@
 ## What This Is
 
 SAVES is a personal content archiving pipeline. It watches a single Obsidian file
-(`00 - FILE.md`) for URLs, extracts content from social/web platforms, downloads media
+(`0 - INBOX/SAVES.md`) for URLs, extracts content from social/web platforms, downloads media
 to NAS, transcribes audio via remote Whisper, reads on-screen text via Claude vision,
 sends the result to a Discord bot for approval, then writes a structured Obsidian note
 to a Synology NAS vault.
@@ -91,7 +91,7 @@ SAVES/
 ## Data Flow
 
 ```
-00 - FILE.md
+0 - INBOX/SAVES.md
     │  (watchdog, 3s debounce)
     ▼
 asyncio.Queue
@@ -115,7 +115,7 @@ bot._finalize()
     ├── write_note()                → Obsidian vault file (atomic)
     ├── prefs.set(source_key, path) → learned preference saved
     ├── state.mark_done(url, path)  → processing_state.json updated
-    └── remove_url_from_inbox()     → URL removed from 00 - FILE.md
+    └── remove_url_from_inbox()     → URL removed from the inbox file
 ```
 
 ---
@@ -126,7 +126,7 @@ bot._finalize()
 paths:
   vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
   saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
-  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES/00 - FILE.md"
+  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"
   media_root: "/volume1/NAS/MEDIA/SAVES"
 
 transcription:
@@ -429,7 +429,7 @@ loop's first user message. Back-to-back posts and JSON retries benefit automatic
 6. Run first real test: `python scripts\process_one.py "https://reddit.com/r/..."`
    — runs the full pipeline and **writes the note to vault_root**. Add `--dry-run` to
    print only without writing.
-7. Run full pipeline: `python src\main.py`, paste a URL into `00 - FILE.md`,
+7. Run full pipeline: `python src\main.py`, paste a URL into `0 - INBOX/SAVES.md`,
    watch Discord, approve, verify note appears in vault
 8. Deploy to NAS: `docker-compose up --build` from `docker/`
 

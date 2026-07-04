@@ -95,8 +95,8 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Phase 4 — Deploy, mobile, live-test
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
-- [ ] iOS share shortcut (Obsidian Actions URI) → `00 - FILE.md`
-- [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `00 - FILE.md`
+- [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
+- [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `0 - INBOX/SAVES.md`
 - [x] Whisper runbook into HANDBOOK — **§9.1** (start, host/port, `/health` verify, config,
       client 300s+retry, firewall cmd, restart options, IP stability). Two owner facts to confirm
       live (firewall rule in place? restart mechanism?) tracked in §11.
