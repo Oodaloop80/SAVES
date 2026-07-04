@@ -199,7 +199,7 @@ volume-mounted. The container reaches the workstation Whisper server over the LA
 ## 7. How Key Subsystems Work
 
 - **Two-stage AI (cost saver).** Stage 1: a cheap vision model (`vision.ocr_model`,
-  Haiku) reads all image slides/frames → text. Stage 2: the capable model (`ai.model`, Opus)
+  Haiku) reads all image slides/frames → text. Stage 2: the capable model (`ai.model`, Sonnet 4.6)
   analyzes **text only** (no images → far cheaper). If `ocr_model` is unset, falls back to one
   combined call. (`ai/claude_client.py`)
 - **Vision frames.** Videos use ffmpeg scene-change detection (a frame per content change, so
@@ -225,21 +225,123 @@ volume-mounted. The container reaches the workstation Whisper server over the LA
 
 ---
 
-## 8. Configuration Reference (`config.yaml` highlights)
+## 8. Configuration Reference (`config.yaml`)
 
+`config.yaml` is the single source of truth for runtime behavior; `.env` holds only the two
+secrets. The blocks below are the **current production values** with the *why* for the
+non-obvious ones. Use exact model IDs (e.g. `claude-sonnet-4-6`) — never append date suffixes.
+
+**paths** — where SAVES reads and writes.
 ```yaml
-paths:        { vault_root, saves_root, inbox_file: ".../00 - FILE.md", media_root }
-transcription:{ mode: remote, remote_url: "http://192.168.1.90:5000/transcribe", model: large-v3-turbo }
-vision:       { ocr_model: claude-haiku-4-5, max_images: 20, max_video_frames: 8,
-                frame_scene_threshold: 0.3, frame_grid: 2 }
-ai:           { model: claude-opus-4-8, max_tokens: 4096 }
-fact_checking:{ model: claude-sonnet-4-6, include_images: false, web_search_topics: [health, finance] }
-discord:      { auto_approve_on_timeout: false, auto_approve_timeout_hours: 48 }
-credentials:  { keys: [ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN] }
+vault_root:   "/volume1/NAS/OBSIDIAN/Remote Vault"
+saves_root:   "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
+inbox_file:   "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"   # the watched file
+media_root:   "/volume1/NAS/MEDIA/SAVES"
+cookies_dir:  "cookies"   ·   logs_dir: "logs"
+state_file:  "processing_state.json"          # dedup / done-URLs
+pending_approvals_file: "pending_approvals.json"   # restart-safe Discord approvals
+```
+Windows dev overrides (mapped SMB drive) sit commented at the top of the file:
+`vault_root: "N:/NAS/OBSIDIAN/Remote Vault"`, `media_root: "N:/NAS/MEDIA/SAVES"`.
+> The inbox is now `0 - INBOX/SAVES.md`. Older prose in this doc and `CLAUDE.md` still calls it
+> `00 - FILE.md`; the **config path is authoritative**.
+
+**watcher / processing** — the serial pipeline.
+```yaml
+watcher.debounce_seconds: 3         # coalesce rapid saves before enqueue
+processing:
+  concurrent_downloads: 1           # one URL at a time
+  retry_attempts: 3                 # remote-transcription retry (utils/retry.py)
+  retry_delay_seconds: 30           # exponential backoff base: 30s, 60s, …
+  skip_duplicates: true             # already-saved URL → posts a notice + clears line, no reprocess
+  follow_profile_recipes: true      # "recipe in bio" → follow the bio link (non-fatal)
+  extract_timeout_seconds: 180      # hard cap on one extractor.extract()
 ```
 
-**Model routing:** OCR = Haiku, analysis = Opus, fact-check = Sonnet. Use the exact model IDs in
-config (e.g. `claude-opus-4-8`); do not append date suffixes.
+**media**
+```yaml
+download_video: true   ·   download_images: true   ·   max_video_size_mb: 500
+video_quality: "bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best"   # TikTok overrides this
+```
+
+**transcription** — remote Whisper (full runbook in §9.1).
+```yaml
+enabled: true
+mode: "remote"                      # POST audio to the workstation
+remote_url: "http://192.168.1.90:5000/transcribe"
+model: "large-v3-turbo"   ·   language: "en"
+skip_if_captions_available: true    ·   max_duration_minutes: 30
+```
+
+**vision** — Stage-1 OCR.
+```yaml
+enabled: true
+max_images: 20                      # IG carousels cap at 20 slides
+ocr_model: "claude-haiku-4-5"       # cheap model reads slides/frames → text
+max_video_frames: 8                 # frames extracted per video (strategy in §7)
+skip_platforms: []                  # youtube always skipped automatically
+```
+
+**ai** — Stage-2 analysis (Phase 3 tuned).
+```yaml
+model: "claude-sonnet-4-6"          # A/B verdict 2026-07-01: Sonnet ≈ Opus at ~½ cost
+max_tokens: 8192                    # room for full multi-slide OCR + all JSON fields — kept high on
+                                    #   purpose: not billed unless filled; lowering risks truncating
+                                    #   a long multi-recipe carousel's JSON
+temperature: 0.3                    # Sonnet accepts it (Opus 4.8 rejected it + was auto-stripped)
+effort: "medium"                    # thinking depth for analysis + local fact-check; auto-skipped for
+                                    #   Haiku OCR (rejects effort), not sent to the web-search loop
+max_content_chars: 20000
+max_retries: 4                      # Anthropic SDK transient-error retries (honors Retry-After)
+```
+
+**platforms** — per-platform knobs.
+- **reddit** — `top_comments_count: 5`, includes OP's top-level comments; public JSON API, no creds.
+- **instagram** — `delay_seconds: 4`; cookies, `cookie_expiry_days: 21`, warn 7 days ahead.
+- **tiktok** — `use_rich_caption: true` (verbatim caption from rehydration `contents[]`; legacy
+  `use_tdk_caption` still honoured); `no_watermark: true`; `video_quality` targets muxed **H.264**
+  (`best[vcodec=h264]/…`) — Obsidian/Electron can't decode H.265, and TikTok is portrait 720p.
+- **facebook** — `delay_seconds: 7`; cookies, `cookie_expiry_days: 30`.
+- **youtube** — `download_video: false` (captions/subtitles only), `subtitle_language: "en"`.
+- **generic** — `playwright_timeout_seconds: 30`, `wait_for_network_idle`, auto-click cookie banners.
+
+**discord**
+```yaml
+channel_approvals: "SAVES-approvals"   ·   channel_log: "SAVES-logs"   ·   channel_alerts: "SAVES-alerts"
+auto_approve_on_timeout: false   ·   auto_approve_timeout_hours: 48
+```
+
+**notes**
+```yaml
+include_metadata_section: true   ·   collapse_transcript: true   # long transcripts → collapsed callout
+date_format: "%Y-%m-%d"   ·   filename_max_length: 60   ·   tags_min: 10   ·   tags_max: 20
+```
+
+**fact_checking** — Phase 3 gated (see §7).
+```yaml
+enabled: true
+model: "claude-sonnet-4-6"          # falls back to ai.model if omitted
+topics: [health, political, finance]
+web_search: true
+web_search_topics: [health, finance, political]   # eligible for web search — but ONLY via the
+                                                   #   on-demand "Deep fact-check" button; the
+                                                   #   on-arrival pass is LOCAL only
+max_searches: 5
+max_searches_by_topic: { health: 6, finance: 3, political: 1 }   # highest applicable cap wins;
+                                                                 #   recipes/food always local-only
+max_tokens: 6000
+include_images: false               # OCR already captured image text; raw pixels would double-bill
+jurisdiction: "Charlotte, NC (Mecklenburg County, North Carolina, USA)"   # tax/legal claim validity
+```
+
+**travel_verification / credentials**
+```yaml
+travel_verification.enabled: true   # verifier.py location check; fires only on travel posts
+credentials.keys: [ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN]   # validated at startup; Reddit needs none
+```
+
+**Model routing at a glance:** OCR = **Haiku 4.5** → analysis = **Sonnet 4.6** → fact-check =
+**Sonnet 4.6**. (`ai.model` was Opus 4.8 pre-Phase-3; the A/B verdict switched it to Sonnet.)
 
 ---
 
