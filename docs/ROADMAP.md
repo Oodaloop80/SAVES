@@ -93,6 +93,11 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       fix (2026-07-04, `a5264c6`) drops the background mp3 so nothing bogus hits Whisper
 
 ## Phase 4 — Deploy, mobile, live-test
+- [x] Pre-Phase-4 deep code review (2026-07-04) → **`docs/CODE_REVIEW_2026-07-04.md`** —
+      34 findings: **2 deploy blockers** (compose mounts ≠ config paths; single-file state
+      binds break `os.replace` + preferences.json unmounted), 6 High, 13 Medium, 13 Low +
+      unused-config-key table. Fix blockers BEFORE `docker-compose up`.
+- [ ] Fix review blockers #1–2 (+ High #3–7) — see fix order at the bottom of the review doc
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
