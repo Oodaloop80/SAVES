@@ -4,7 +4,12 @@ import discord
 from discord.ext import tasks
 
 from src.discord_bot.approval import PendingApproval, PendingApprovalsStore
-from src.discord_bot.notifications import send_alert, send_approval_request, send_cookie_warning, send_log
+from src.discord_bot.notifications import (
+    send_alert,
+    send_approval_request,
+    send_cookie_warning,
+    send_log,
+)
 from src.notes.file_manager import write_note
 from src.notes.formatter import format_note
 from src.utils.cookie_checker import check_all_cookies

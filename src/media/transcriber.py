@@ -24,6 +24,29 @@ def is_audio_video(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in _AV_EXTENSIONS
 
 
+def _exceeds_duration_cap(audio_path: str, max_minutes: float) -> bool:
+    """True if the media is longer than the cap. Uses ffprobe. Fails open (returns False) on
+    any probe error — better to attempt a transcription than to silently drop a good file for
+    a probe hiccup. A cap of 0/None disables the check."""
+    if not max_minutes or max_minutes <= 0:
+        return False
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", audio_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        duration_secs = float(json.loads(result.stdout).get("format", {}).get("duration", 0))
+    except Exception:
+        return False
+    if duration_secs > max_minutes * 60:
+        logger.info(
+            "Skipping transcription: %.0fs > %.0fs limit (%s)",
+            duration_secs, max_minutes * 60, os.path.basename(audio_path),
+        )
+        return True
+    return False
+
+
 def _get_model(model_name: str, device: str = "cpu", compute_type: str = "int8"):
     global _whisper_model
     if _whisper_model is None:
@@ -40,6 +63,13 @@ async def transcribe(audio_path: str, config: dict) -> str | None:
         return None
     if not is_audio_video(audio_path):
         logger.debug("Skipping transcription — not an audio/video file: %s", audio_path)
+        return None
+
+    # Duration cap applies to BOTH modes. Enforced here (before dispatch) so an oversized file
+    # never reaches the remote POST — where a 300s timeout × retry backoff could stall the
+    # serial queue for ~17 min and still lose the transcript — nor loads the local model.
+    max_minutes = tcfg.get("max_duration_minutes", 30)
+    if await asyncio.to_thread(_exceeds_duration_cap, audio_path, max_minutes):
         return None
 
     mode = tcfg.get("mode", "local")
@@ -82,25 +112,12 @@ def _transcribe_remote(audio_path: str, config: dict) -> str | None:
 
 
 def _transcribe_local(audio_path: str, tcfg: dict) -> str | None:
+    # The duration cap is enforced centrally in transcribe() before dispatch, so it is not
+    # re-checked here.
     model_name = tcfg.get("model", "base")
     language = tcfg.get("language", "en")
-    max_minutes = tcfg.get("max_duration_minutes", 30)
 
     try:
-        # Check duration before loading the model
-        try:
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", audio_path],
-                capture_output=True, text=True, timeout=10,
-            )
-            info = json.loads(result.stdout)
-            duration_secs = float(info.get("format", {}).get("duration", 0))
-            if duration_secs > max_minutes * 60:
-                logger.info(f"Skipping transcription: {duration_secs:.0f}s > {max_minutes * 60:.0f}s limit")
-                return None
-        except Exception:
-            pass
-
         model = _get_model(model_name)
         segments, _ = model.transcribe(
             audio_path,

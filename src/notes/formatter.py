@@ -142,7 +142,12 @@ def format_note(
     if inserts:
         sep = "\n---\n"
         if sep in body:
-            pre, post = body.split(sep, 1)
+            # rsplit (last separator), not split (first): a web-article body carries the full
+            # article Markdown, which routinely contains its own '---' horizontal rules. The
+            # separator we want is the one before the trailing 'Sources & Metadata' block —
+            # always the LAST '\n---\n' in a rendered body — so the recipe/fact-check/location
+            # sections land just above Metadata instead of mid-article after the first HR.
+            pre, post = body.rsplit(sep, 1)
             body = pre + "\n" + "\n".join(inserts) + sep + post
         else:
             body = body + "\n" + "\n".join(inserts)

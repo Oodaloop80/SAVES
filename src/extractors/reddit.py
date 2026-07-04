@@ -78,10 +78,13 @@ class RedditExtractor(BaseExtractor):
         return "reddit.com" in url or "redd.it" in url
 
     async def extract(self, url: str) -> ExtractedContent:
-        url = resolve_reddit_short_url(url)
+        # resolve_reddit_short_url does a synchronous `requests` redirect-follow; keep it inside
+        # the worker thread so a slow/unreachable redd.it redirect can't stall the event loop
+        # (Discord heartbeats included) for the request timeout.
         return await asyncio.to_thread(self._extract_sync, url)
 
     def _extract_sync(self, url: str) -> ExtractedContent:
+        url = resolve_reddit_short_url(url)
         _load_cookies(self.cookies_dir)
         json_url = _to_old_reddit_json(url)
         logger.debug("Reddit JSON URL: %s", json_url)

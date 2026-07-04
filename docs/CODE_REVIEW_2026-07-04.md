@@ -153,22 +153,28 @@ formats — otherwise archive the video and record the external link in metadata
 
 ## 🟡 Medium
 
-### 9. Reddit short-link resolution blocks the event loop
+### 9. Reddit short-link resolution blocks the event loop — ✅ FIXED (2026-07-04)
 `reddit.py:81` calls `resolve_reddit_short_url(url)` (a synchronous `requests` call,
 url_parser.py:44) before handing off to `to_thread` — a slow/unreachable redirect stalls the
 entire loop (Discord heartbeats included) for up to the request timeout. **Fix:** move it
 inside `_extract_sync`.
+> **Fixed:** `resolve_reddit_short_url(url)` moved from `extract()` into `_extract_sync()`, so
+> it now runs in the `to_thread` worker, off the event loop. Verified by test.
 
 ### 10. Reddit: deleted/removed post → IndexError
 `reddit.py`: `data[0]["data"]["children"][0]["data"]` — `children` is `[]` for
 removed/deleted posts → unhandled `IndexError` (marked failed with a confusing reason).
 **Fix:** guard and raise a descriptive `ValueError("post deleted/removed")`.
 
-### 11. Remote transcription ignores `max_duration_minutes`
+### 11. Remote transcription ignores `max_duration_minutes` — ✅ FIXED (2026-07-04)
 The duration cap is enforced only in `_transcribe_local` (transcriber.py:87-100).
 `_transcribe_remote` (transcriber.py:51-81) POSTs any file: an oversized video hits the 300s
 timeout, retries ×3 with 30/60s backoff ≈ **up to ~17 minutes of serial-queue stall**, and
 the transcript is still lost. **Fix:** run the same ffprobe duration check before the POST.
+> **Fixed:** extracted `_exceeds_duration_cap()` and moved the check up into `transcribe()`
+> (before the mode dispatch), so it now gates **both** remote and local paths. The inline
+> check in `_transcribe_local` was removed (no longer needed). Fails open on a probe error.
+> Verified by test — an oversized file returns `None` with no remote POST attempted.
 
 ### 12. One malformed record wipes all pending approvals on load
 `approval.py:31` `_load` wraps the whole parse loop in one try/except — a single legacy/
@@ -214,12 +220,16 @@ newest file in the save dir — which can be `.part`, `.info.json`, or a thumbna
 then flows to the transcriber (guarded by extension — OK) and into the note embed (not
 guarded). **Fix:** filter the fallback to media extensions and exclude `.part`/`.ytdl`.
 
-### 19. Recipe/fact-check sections can be injected mid-article
+### 19. Recipe/fact-check sections can be injected mid-article — ✅ FIXED (2026-07-04)
 `formatter.py:142-148`: inserts go before the **first** `\n---\n` in the rendered body — but
 `web_article` bodies embed the article markdown, which frequently contains its own `---`
 (hr). Inserts (recipe, image-text, fact-check) then land mid-article instead of before the
 Metadata section. **Fix:** `body.rsplit(sep, 1)` — the renderers' Metadata separator is
 always the last one.
+> **Fixed:** changed `body.split(sep, 1)` → `body.rsplit(sep, 1)`. Confirmed safe: `body` is
+> only the renderer output (frontmatter is a separate `parts` element), and every renderer
+> ends `…\n---\n<Sources & Metadata callout>`, so the last `\n---\n` is always the Metadata
+> separator. Verified by test (inserts land above Metadata; article HRs preserved).
 
 ### 20. Docker image bloat: full torch/whisper stack + two Chromiums
 `docker/Dockerfile` installs `requirements-whisper.txt` (faster-whisper → ctranslate2/torch —
