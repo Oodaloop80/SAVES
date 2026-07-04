@@ -9,6 +9,18 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
+# Extensions the "newest file" fallback in _yt_dlp_download may return. Deliberately
+# excludes yt-dlp working files (.part, .ytdl), sidecars (.info.json, .json), and
+# subtitles — a non-media path here would flow into the note embed unplayable.
+_FALLBACK_MEDIA_EXTS = {
+    # video
+    ".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".m4v", ".ts", ".3gp",
+    # audio
+    ".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma",
+    # images (thumbnail/photo posts)
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic",
+}
+
 
 def _slug(text: str, max_len: int = 40) -> str:
     s = re.sub(r'[^\w\s-]', '', text.lower())
@@ -173,9 +185,16 @@ def _yt_dlp_download(
         lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
         if lines and os.path.exists(lines[-1]):
             return lines[-1]
-        # Fallback: newest file in save_dir
+        # Fallback: newest MEDIA file in save_dir. Must be filtered — the directory also
+        # holds yt-dlp's working files (.part, .ytdl, .info.json, thumbnails' .webp is
+        # fine but json/partials are not), and an unfiltered "newest file" could flow
+        # into the note embed as a non-playable path.
         files = sorted(
-            [os.path.join(save_dir, f) for f in os.listdir(save_dir)],
+            (
+                os.path.join(save_dir, f)
+                for f in os.listdir(save_dir)
+                if os.path.splitext(f)[1].lower() in _FALLBACK_MEDIA_EXTS
+            ),
             key=os.path.getmtime,
         )
         if files:

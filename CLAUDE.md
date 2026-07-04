@@ -152,8 +152,8 @@ fact_checking:
   web_search_topics: ["health", "finance"]  # Only web-search for these; recipes skip even if health triggered
 
 discord:
-  auto_approve_on_timeout: false
-  auto_approve_timeout_hours: 48
+  auto_approve_on_timeout: false   # DECISION (Bora, 2026-07-04): stays false — approvals are
+  auto_approve_timeout_hours: 48   # reviewed fresh, never auto'd. See ROADMAP "Decisions locked".
 
 credentials:
   keys: [ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN]   # Reddit needs NO credentials
@@ -398,6 +398,16 @@ Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
 ---
 
 ## Current State
+
+**Operating decision — everything is IMMEDIATE (Bora, 2026-07-04).** Extraction, AI analysis,
+and Discord approval cards all fire the moment a URL arrives; nothing is batched or deferred,
+and `auto_approve_on_timeout` stays `false`. Rationale: instant bug/quality feedback during
+tuning, and approvals are handled while the content is fresh in mind. The Batch API is a
+gated future phase (ROADMAP Phase 6) — do not pull deferral of any kind forward without a new
+explicit decision. Full rationale: `docs/ROADMAP.md` → "Decisions locked".
+
+**Decision notation discipline:** when a decision constrains future behavior, record it at the
+point of use (code comment) *and* in ROADMAP "Decisions locked", in the same commit.
 
 **Actively in use.** `process_one.py` has been run end-to-end against real Instagram,
 YouTube, Reddit, and web article URLs. Notes write to the Obsidian vault. Discord approval

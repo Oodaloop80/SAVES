@@ -185,29 +185,46 @@ the transcript is still lost. **Fix:** run the same ffprobe duration check befor
 > check in `_transcribe_local` was removed (no longer needed). Fails open on a probe error.
 > Verified by test — an oversized file returns `None` with no remote POST attempted.
 
-### 12. One malformed record wipes all pending approvals on load
+### 12. One malformed record wipes all pending approvals on load — ✅ FIXED (2026-07-04)
 `approval.py:31` `_load` wraps the whole parse loop in one try/except — a single legacy/
 corrupt item (e.g. after a dataclass field is added/renamed) silently drops **every** pending
 approval. **Fix:** per-item try/except; construct with
 `{k: v for k, v in item.items() if k in field_names}` so old records tolerate schema drift.
+> **Fixed:** `_load` now parses per-item: unknown keys are filtered (legacy schema drift
+> tolerated), a malformed record logs a warning with its id and is skipped alone. Verified by
+> test — good + legacy-extra-key records survive alongside a missing-fields record.
 
 ### 13. Startup duplicate notices are dropped (sent before the bot connects) — but the inbox line is still removed
 `main.py:74` awaits `scan_inbox()` before `bot.start()` (`main.py:82`). Any duplicates found
 at startup call `send_duplicate_notice` on a not-yet-connected bot → channel lookup fails →
 notice lost; the line is then removed from the inbox (`main.py:64`) with no ping.
 **Fix:** run the initial scan from `on_ready` (or queue notices until ready).
+> **Fixed:** `scan_inbox()` now begins with `await bot.wait_until_ready()` (every scan — no
+> Discord notice is ever attempted pre-connect), and the startup scan became
+> `asyncio.create_task(scan_inbox())` (awaiting it directly before `bot.start()` would
+> deadlock), cancelled in the shutdown `finally`. Notices are deferred, never dropped —
+> consistent with the immediate-processing decision in ROADMAP "Decisions locked".
 
-### 14. `write_note` doesn't sandbox `folder_path` to the vault
+### 14. `write_note` doesn't sandbox `folder_path` to the vault — ✅ FIXED (2026-07-04)
 The AI (or an NL edit / Change-Path modal typo) can return an absolute path or `../…`;
 `os.path.join(vault_root, folder_path)` then escapes the vault. Not an attack — it's your
 own bot — but a hallucinated `/SAVES/...` (leading slash) writes to the container root
 silently. **Fix:** `os.path.realpath` the join and require it starts with
 `realpath(vault_root)`; strip leading slashes from `folder_path`.
+> **Fixed:** new `_resolve_in_vault()` helper in `file_manager.py` strips leading slashes
+> (hallucinated `/SAVES/…` becomes vault-relative), realpaths the join, and raises
+> `ValueError` unless the result stays under `realpath(vault_root)` (normcase-compared for
+> Windows dev). Applied to both `write_note` and `move_note`. The raise surfaces through
+> `_finalize`'s #4 error handling — alert + item stays pending. Verified by test:
+> `../escape`, `SAVES/../../escape`, and absolute paths rejected; normal paths unaffected.
 
-### 15. NL-edit path has no error handling
+### 15. NL-edit path has no error handling — ✅ FIXED (2026-07-04)
 `bot.py:319` `_handle_nl_edit` → `nl_edit()` (a live Claude call) unguarded: an API error
 mid-session leaves the NL-edit session open with no reply — the bot appears to ignore the
 user. **Fix:** try/except → reply with the error + keep/clear session state deliberately.
+> **Fixed:** `nl_edit()` call wrapped in try/except: on failure logs a warning, replies
+> "⚠️ NL edit failed (…) — the item is unchanged" and **deliberately keeps the session
+> open** so retrying is just typing the instruction again. Verified by test.
 
 ### 16. YouTube/Facebook thin-extraction fallback produces junk notes instead of failing
 `youtube.py:50` (and the same pattern in facebook.py): when yt-dlp returns nothing usable,
@@ -215,19 +232,34 @@ the extractor fabricates `ExtractedContent(title=url, …)` instead of raising. 
 then spends OCR/analysis tokens on an empty post and sends a junk approval card. This is
 exactly the YouTube bot-check failure mode (yt-dlp gets an interstitial page). **Fix:** raise
 so it lands as `mark_failed` + `#SAVES-alerts` with a clear reason.
+> **Fixed:** both extractors now raise `RuntimeError` with yt-dlp's rc + stderr tail instead
+> of fabricating a stub. YouTube specifically detects the "Sign in" bot-check in stderr and
+> words the raise with "login" so the processor's keyword routing sends it to
+> `mark_retry_after_auth` (cookie refresh path) rather than permanent-fail. Facebook's raise
+> names `cookies/facebook.txt` as the likely cause; yt-dlp's own "login" stderr wording
+> routes it naturally when auth really is the issue. Facebook's `subprocess.run` also gained
+> `text=True` + captured result (stderr was previously discarded). Verified by test.
 
-### 17. `msg.content[0].text` can crash on non-text first blocks
+### 17. `msg.content[0].text` can crash on non-text first blocks — ✅ FIXED (2026-07-04)
 `claude_client.py:105` and `verifier.py:49`. If the model returns a leading non-text block
 (thinking block with `effort` set, or an empty `content` on a refusal stop), this raises
 `IndexError`/`AttributeError` and the save fails with a stack trace instead of a clean retry.
 **Fix:** `next((b.text for b in msg.content if b.type == "text"), "")` + explicit handling of
 empty content.
+> **Fixed:** `claude_client._call` picks the first text block; if none, raises a clean
+> `RuntimeError` naming the model and `stop_reason` (so a refusal reads as a reason, not an
+> `IndexError` stack trace). `verifier` does the same with `""` default — empty falls through
+> `json.loads` into the existing non-fatal `return None`. Verified by test (thinking-first
+> content and empty/refusal content).
 
-### 18. Downloader "newest file" fallback can return a non-media file
+### 18. Downloader "newest file" fallback can return a non-media file — ✅ FIXED (2026-07-04)
 `downloader.py:176`: when yt-dlp's expected output name isn't found, the fallback picks the
 newest file in the save dir — which can be `.part`, `.info.json`, or a thumbnail. That path
 then flows to the transcriber (guarded by extension — OK) and into the note embed (not
 guarded). **Fix:** filter the fallback to media extensions and exclude `.part`/`.ytdl`.
+> **Fixed:** module-level `_FALLBACK_MEDIA_EXTS` (video/audio/image extensions); the fallback
+> now returns the newest file whose extension is in that set — `.part`/`.ytdl`/`.info.json`
+> excluded by omission. Verified by test: with newer junk files present, the `.mp4` wins.
 
 ### 19. Recipe/fact-check sections can be injected mid-article — ✅ FIXED (2026-07-04)
 `formatter.py:142-148`: inserts go before the **first** `\n---\n` in the rendered body — but

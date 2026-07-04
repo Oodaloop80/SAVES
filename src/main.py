@@ -64,6 +64,13 @@ async def main():
     async def scan_inbox():
         """Queue new URLs and, for any already-saved duplicates, ping Discord and drop the
         line from the inbox so it doesn't re-trigger on the next file change."""
+        # Wait for the Discord connection before scanning. A scan that runs pre-connect
+        # finds duplicates, fails the channel lookup silently, and STILL removes the inbox
+        # line — the notice is lost forever. Nothing is sacrificed by waiting: approval
+        # cards need the bot online anyway, and the wait is a no-op once connected.
+        # (DECISION: notifications are immediate, never dropped/batched — see ROADMAP
+        # "Decisions locked".)
+        await bot.wait_until_ready()
         duplicates = await queue_manager.enqueue_from_file(inbox_path)
         for raw_url, existing_path in duplicates:
             await send_duplicate_notice(bot, log_channel, raw_url, existing_path)
@@ -79,7 +86,9 @@ async def main():
     watcher = FileWatcher(inbox_path, loop, on_file_change, debounce_seconds=debounce)
     watcher.start()
 
-    await scan_inbox()
+    # As a background task, NOT awaited: scan_inbox blocks on bot.wait_until_ready(),
+    # and the bot only becomes ready inside bot.start() below — awaiting here would deadlock.
+    startup_scan_task = asyncio.create_task(scan_inbox())
 
     processor_task = asyncio.create_task(
         run_processor(queue, config, bot, state, prefs)
@@ -91,6 +100,7 @@ async def main():
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
+        startup_scan_task.cancel()
         processor_task.cancel()
         watcher.stop()
         await bot.close()

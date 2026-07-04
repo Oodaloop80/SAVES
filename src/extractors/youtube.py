@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import re
 import subprocess
@@ -43,11 +42,22 @@ class YouTubeExtractor(BaseExtractor):
 
             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
             if not info_files:
-                logging.getLogger(__name__).warning(
-                    "YouTube metadata extraction produced no info.json for %s (rc=%s). %s",
-                    url, result.returncode, (result.stderr or "")[:300],
+                # Raise instead of fabricating an empty ExtractedContent(title=url): the
+                # fabricated stub used to flow through OCR/analysis (wasted tokens) and end
+                # as a junk approval card. Raising lands it as mark_failed + #SAVES-alerts
+                # with the real reason. The classic cause is YouTube's bot-check
+                # interstitial ("Sign in to confirm you're not a bot") — surface that as a
+                # login problem so the processor routes it to the auth-retry path.
+                stderr_tail = (result.stderr or "").strip()[-400:]
+                if "sign in" in stderr_tail.lower():
+                    raise RuntimeError(
+                        f"YouTube bot-check — login/cookies required "
+                        f"(refresh cookies/youtube.txt): {stderr_tail}"
+                    )
+                raise RuntimeError(
+                    f"YouTube extraction produced no metadata "
+                    f"(yt-dlp rc={result.returncode}): {stderr_tail or 'no stderr'}"
                 )
-                return ExtractedContent(url=url, platform="youtube", title=url)
 
             with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
                 info = json.load(f)

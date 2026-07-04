@@ -4,7 +4,7 @@ import os
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,23 @@ class PendingApprovalsStore:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for item_data in data:
-                item = PendingApproval(**item_data)
-                self._items[item.id] = item
         except Exception as e:
             logger.warning(f"Could not load pending approvals: {e}")
+            return
+        # Per-item parse: one malformed/legacy record (e.g. after a dataclass field is
+        # renamed) must not silently drop EVERY pending approval. Unknown keys from old
+        # schemas are filtered out so records tolerate schema drift; a record that still
+        # fails (missing required field) is skipped alone, with a warning.
+        field_names = {f.name for f in fields(PendingApproval)}
+        for item_data in data:
+            try:
+                item = PendingApproval(
+                    **{k: v for k, v in item_data.items() if k in field_names}
+                )
+                self._items[item.id] = item
+            except Exception as e:
+                rec_id = item_data.get("id", "?") if isinstance(item_data, dict) else "?"
+                logger.warning(f"Skipping malformed pending approval record ({rec_id}): {e}")
 
     def _save(self) -> None:
         data = [asdict(item) for item in self._items.values()]

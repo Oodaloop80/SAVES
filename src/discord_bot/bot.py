@@ -323,7 +323,18 @@ class SAVESBot(discord.Client):
 
     async def _handle_nl_edit(self, message: discord.Message, pending: PendingApproval):
         from src.ai.claude_client import nl_edit
-        result = await nl_edit(pending.ai_result, message.content, self.config)
+        try:
+            result = await nl_edit(pending.ai_result, message.content, self.config)
+        except Exception as e:
+            # An unguarded API failure here left the NL-edit session open with NO reply —
+            # the bot appeared to silently ignore the user. Reply with the error and keep
+            # the session active (deliberate: retrying is then just typing again).
+            logger.warning("NL edit failed for %s: %s", pending.url, e)
+            await message.reply(
+                f"⚠️ NL edit failed ({e}) — the item is unchanged.\n"
+                "Type your instruction again to retry, or use the buttons instead."
+            )
+            return
         action = result.get("action")
         value = result.get("value")
 

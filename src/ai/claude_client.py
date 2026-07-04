@@ -102,7 +102,16 @@ def _call(
         if not retried:
             raise
         msg = client.messages.create(**params)
-    return msg.content[0].text
+    # Don't assume content[0] is text: with `effort` set the first block can be a thinking
+    # block, and a refusal stop returns an empty content list — indexing would raise
+    # IndexError/AttributeError and fail the save with a stack trace instead of a clear reason.
+    text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), None)
+    if text is None:
+        raise RuntimeError(
+            f"Claude returned no text block (model={params.get('model')}, "
+            f"stop_reason={getattr(msg, 'stop_reason', None)})"
+        )
+    return text
 
 
 async def analyze_content(

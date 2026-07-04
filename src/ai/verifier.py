@@ -46,7 +46,10 @@ def _location_check_sync(content, ai_result: dict, config: dict) -> dict | None:
             system=TRAVEL_LOCATION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
-        raw = msg.content[0].text
+        # First block isn't guaranteed to be text (thinking block / empty refusal content);
+        # pick the first text block. An empty raw falls through to json.loads → caught by
+        # the except below → clean non-fatal None, matching this check's design.
+        raw = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
         result = json.loads(raw)
         # Surface the result when there's a location dispute OR any advisory worth showing.
         if result.get("location_disputed") or result.get("advisories"):

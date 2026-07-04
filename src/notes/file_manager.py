@@ -54,12 +54,34 @@ def _safe_filename(filename: str, max_chars: int = 150) -> str:
     return s or "untitled"
 
 
+def _resolve_in_vault(vault_root: str, rel_path: str, what: str) -> str:
+    """Join rel_path onto vault_root and require the result to stay inside the vault.
+
+    The AI (or an NL-edit / Change-Path modal typo) can produce an absolute path
+    (a hallucinated leading '/SAVES/…' would otherwise write to the container root
+    silently) or a '../…' traversal. Not an attack — it's our own bot — but notes
+    must never land outside the vault. Leading slashes are stripped (treated as
+    vault-relative), then the realpath must remain under realpath(vault_root).
+    """
+    rel_path = (rel_path or "").strip().lstrip("/\\")
+    vault_real = os.path.realpath(vault_root)
+    target = os.path.realpath(os.path.join(vault_root, rel_path))
+    # normcase for the comparison only (Windows is case-insensitive); return the
+    # un-normcased path so the on-disk casing is preserved.
+    if os.path.normcase(target) != os.path.normcase(vault_real) and not os.path.normcase(
+        target
+    ).startswith(os.path.normcase(vault_real) + os.sep):
+        raise ValueError(f"{what} escapes the vault: {rel_path!r} → {target}")
+    return target
+
+
 def write_note(vault_root: str, folder_path: str, filename: str, content: str) -> str:
     """
     Create folder if needed, write note atomically. Never deletes anything.
     Returns the final absolute path of the written note.
     """
-    folder_abs = os.path.join(vault_root, folder_path)
+    folder_path = (folder_path or "").strip().lstrip("/\\")
+    folder_abs = _resolve_in_vault(vault_root, folder_path, "folder_path")
     os.makedirs(folder_abs, exist_ok=True)
 
     # Budget the relative path (folder/…/name.md) so the synced note stays under
@@ -103,7 +125,7 @@ def move_note(src: str, new_vault_path: str, vault_root: str) -> str:
     Never deletes — renames source to .bak on cross-volume.
     Returns new path.
     """
-    dest = os.path.join(vault_root, new_vault_path)
+    dest = _resolve_in_vault(vault_root, new_vault_path, "new_vault_path")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
 
     try:

@@ -38,11 +38,21 @@ class FacebookExtractor(BaseExtractor):
             if os.path.exists(cookies_path):
                 cmd += ["--cookies", cookies_path]
             cmd.append(url)
-            subprocess.run(cmd, capture_output=True, timeout=60)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             info_files = [f for f in os.listdir(tmpdir) if f.endswith(".info.json")]
             if not info_files:
-                return ExtractedContent(url=url, platform="facebook", title=url)
+                # Raise instead of fabricating ExtractedContent(title=url) — the stub used
+                # to burn OCR/analysis tokens and produce a junk approval card. Raising
+                # lands it as mark_failed + #SAVES-alerts with the actual yt-dlp reason
+                # (typically expired cookies, which the processor's auth routing picks up
+                # from the "login" wording in yt-dlp's own stderr when present).
+                stderr_tail = (result.stderr or "").strip()[-400:]
+                raise RuntimeError(
+                    f"Facebook extraction produced no metadata (yt-dlp rc={result.returncode}) — "
+                    f"cookies/facebook.txt may be expired or the post is inaccessible: "
+                    f"{stderr_tail or 'no stderr'}"
+                )
 
             with open(os.path.join(tmpdir, info_files[0]), encoding="utf-8") as f:
                 info = json.load(f)

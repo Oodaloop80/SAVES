@@ -16,10 +16,22 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Decisions locked (change anytime)
 
 - **Dev surface:** Claude Code **CLI** on the desktop (not web).
+- **Immediate processing — PROD launches fully real-time (Bora, 2026-07-04).** Every URL is
+  extracted, analyzed, and sent to Discord **the moment it arrives**; nothing is queued for
+  later, batched, or deferred. Two reasons: (1) during tuning, bugs/quality issues must be
+  visible and fixable immediately, not discovered in bulk later; (2) Bora prefers to handle
+  approval cards right away while the saved content is fresh in mind, rather than recalling
+  context on stale cards. Corollaries: `discord.auto_approve_on_timeout` stays `false`;
+  never add notification batching/deferral without a new explicit decision. Batching *might*
+  come later — that is Phase 6, and only Phase 6.
 - **Runtime cost:** cut cost with **real-time** levers first (model routing, `effort`, prompt
   caching, fact-check gating) so results stay instant during tuning. The **Batch API** (50%
   off but async — no instant results) is **deferred to a final phase**, adopted only once
   save quality is dialed in and instant feedback is no longer needed.
+- **Decision notation discipline (Bora, 2026-07-04):** decisions like the above must be
+  written down where they'll be seen later — a short code comment at the point someone would
+  be tempted to change the behavior, plus the rationale here in "Decisions locked" (or
+  `docs/PLAN.md`), in the **same commit** as the related change. Chat-only decisions get lost.
 - **Docs system:** `CLAUDE.md` (auto-loaded orientation) + `docs/HANDBOOK.md` (recreate/maintain)
   + `docs/ROADMAP.md` (this file). Update the relevant doc in the same commit as each change.
 
@@ -118,6 +130,16 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       video — reroute now gated on `not has_video`. Reddit deleted/removed posts (empty
       `children`) raise a descriptive `ValueError` (routed to permanent-fail) instead of a bare
       `IndexError`.
+- [x] Fix review Medium findings #12–#18 (2026-07-04) — all Medium findings now closed:
+      per-item tolerance loading pending approvals (one malformed/legacy record no longer wipes
+      the rest); startup inbox scan gated on `bot.wait_until_ready()` as a background task
+      (duplicate notices deferred, never dropped); `write_note`/`move_note` sandbox
+      `folder_path` inside `realpath(vault_root)` (hallucinated absolute or `../` paths raise);
+      NL-edit API failures reply with the error and keep the session open for retry;
+      YouTube/Facebook thin extraction raises (YouTube bot-check worded to route to auth-retry)
+      instead of producing junk approval cards; `content[0].text` replaced with first-text-block
+      extraction (thinking blocks / refusal-empty content handled cleanly); downloader
+      newest-file fallback filtered to media extensions. All verified by no-token tests.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
