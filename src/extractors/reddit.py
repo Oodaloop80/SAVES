@@ -137,7 +137,14 @@ class RedditExtractor(BaseExtractor):
             subreddit = _subreddit_from_url(url)
             raise PermissionError(f"private subreddit — {subreddit} requires membership to view")
 
-        post = data[0]["data"]["children"][0]["data"]
+        # A deleted/removed post (or a bad permalink) returns an empty children list. Guard it
+        # with a descriptive error instead of a bare IndexError. "removed" in the message routes
+        # this to the processor's permanent-failure path (no pointless auth retry / re-queue).
+        children = data[0]["data"]["children"] if data else []
+        if not children:
+            raise ValueError(f"Reddit post has no content — likely deleted or removed: {url}")
+
+        post = children[0]["data"]
         comments_listing = data[1]["data"]["children"] if len(data) > 1 else []
 
         return ExtractedContent(

@@ -140,7 +140,7 @@ limits.
 **Fix:** add `article_markdown` to `skip_keys` (prompts.py:351). Consider a belt-and-braces
 `str(v)[:500]` cap on any metadata value so a future big key can't do this again.
 
-### 8. Facebook: any external link in a video post reroutes the whole post — video never archived
+### 8. Facebook: any external link in a video post reroutes the whole post — video never archived — ✅ FIXED (2026-07-04)
 `facebook.py` (embedded-article detection): finding an external URL in the post
 description hands the entire save to `GenericExtractor`. A *video* post whose caption merely
 links a source article gets archived as a web article — the video (the thing being saved) is
@@ -148,6 +148,11 @@ dropped.
 
 **Fix:** only reroute when it's genuinely a link-share post — e.g. yt-dlp found no video
 formats — otherwise archive the video and record the external link in metadata.
+> **Fixed:** added a `has_video = bool(info.get("duration") or info.get("formats"))` gate. The
+> reroute to `GenericExtractor` now fires only when `article_url and not has_video`. A video
+> post with an article link in its caption is archived as the video, with the link preserved
+> in metadata as `related_article_url` (not `embedded_article_url`, so `extract()` won't
+> reroute). Verified by test across all three scenarios.
 
 ---
 
@@ -161,10 +166,14 @@ inside `_extract_sync`.
 > **Fixed:** `resolve_reddit_short_url(url)` moved from `extract()` into `_extract_sync()`, so
 > it now runs in the `to_thread` worker, off the event loop. Verified by test.
 
-### 10. Reddit: deleted/removed post → IndexError
+### 10. Reddit: deleted/removed post → IndexError — ✅ FIXED (2026-07-04)
 `reddit.py`: `data[0]["data"]["children"][0]["data"]` — `children` is `[]` for
 removed/deleted posts → unhandled `IndexError` (marked failed with a confusing reason).
 **Fix:** guard and raise a descriptive `ValueError("post deleted/removed")`.
+> **Fixed:** guarded the empty `children` list before indexing; raises
+> `ValueError("Reddit post has no content — likely deleted or removed: <url>")`. "removed" in
+> the message routes it to the processor's permanent-failure path (logged to `_FAILED`, no
+> pointless auth-retry / re-queue). Verified by test; normal-post extraction unaffected.
 
 ### 11. Remote transcription ignores `max_duration_minutes` — ✅ FIXED (2026-07-04)
 The duration cap is enforced only in `_transcribe_local` (transcriber.py:87-100).

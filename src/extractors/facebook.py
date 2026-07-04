@@ -49,13 +49,23 @@ class FacebookExtractor(BaseExtractor):
 
         description = info.get("description", "")
 
-        # Detect shared article link in post body
+        # Did yt-dlp actually find a playable video? A real FB video post carries a duration
+        # (and a format list); a text/photo/link-share post that merely links an article does
+        # not. This gates the reroute below so a video isn't silently discarded.
+        has_video = bool(info.get("duration") or info.get("formats"))
+
+        # Detect a shared external article link in the post body.
         embedded_urls = extract_urls(description)
         article_url = next(
             (u for u in embedded_urls if "facebook.com" not in u and "fb.com" not in u),
             None,
         )
-        if article_url:
+
+        # Reroute the WHOLE post to the article extractor ONLY when this is genuinely a
+        # link-share post with no video of its own. A video post that just links a source
+        # article in its caption must still be archived AS the video (with the link preserved
+        # in metadata) — rerouting it would drop the video, i.e. the thing being saved.
+        if article_url and not has_video:
             # Store the article URL so the async extract() can route it
             return ExtractedContent(
                 url=url,
@@ -80,6 +90,10 @@ class FacebookExtractor(BaseExtractor):
                 "like_count": info.get("like_count"),
                 "view_count": info.get("view_count"),
                 "upload_date": info.get("upload_date"),
+                # A source article linked in a video post's caption — kept in metadata so it
+                # surfaces in the note without hijacking the video archive. None when absent
+                # (the prompt/metadata dumps skip None values).
+                "related_article_url": article_url,
             },
             media_urls=[url],  # video downloaded by downloader
         )

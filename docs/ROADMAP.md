@@ -112,6 +112,12 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       oversized file can't stall the queue ~17 min on the remote POST + retries); formatter
       injects recipe/fact-check/location sections before the *last* `---` (rsplit) so they land
       above Metadata instead of mid-article after the article's own horizontal rules.
+- [x] Fix review findings #8 (High) + #10 (Medium) (2026-07-04): Facebook video posts that link
+      a source article in the caption are now archived AS the video (link kept in metadata as
+      `related_article_url`) instead of being rerouted to the article extractor and losing the
+      video — reroute now gated on `not has_video`. Reddit deleted/removed posts (empty
+      `children`) raise a descriptive `ValueError` (routed to permanent-fail) instead of a bare
+      `IndexError`.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
