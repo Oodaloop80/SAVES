@@ -352,10 +352,15 @@ def build_user_prompt(
         "possible_paywall", "embedded_article_url", "youtube_description",
         "followed_recipe_markdown", "followed_recipe_hint", "followed_recipe_article_markdown",
         "followed_recipe_data", "followed_recipe_title", "recipe_data",
+        # article_markdown is the full extracted article body — often 20–100K chars.
+        # It is intentionally excluded here because body_text (capped at 8000 chars) carries
+        # the same content already. Including it would duplicate tokens at full length.
+        "article_markdown",
     )
     for k, v in (content.metadata or {}).items():
         if v is not None and k not in skip_keys:
-            meta_lines.append(f"  {k}: {v}")
+            # Cap individual metadata values so a future large key can't silently balloon cost.
+            meta_lines.append(f"  {k}: {str(v)[:500]}")
     if meta_lines:
         parts.append("Metadata:\n" + "\n".join(meta_lines))
 

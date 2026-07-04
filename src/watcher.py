@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import threading
 
 from watchdog.events import FileModifiedEvent, FileSystemEventHandler
@@ -9,18 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 class _InboxHandler(FileSystemEventHandler):
-    def __init__(self, inbox_path: str, loop: asyncio.AbstractEventLoop, callback):
-        self._inbox_path = inbox_path
+    def __init__(self, inbox_path: str, loop: asyncio.AbstractEventLoop, callback,
+                 debounce_seconds: float = 3.0):
+        self._inbox_path = os.path.normcase(os.path.normpath(inbox_path))
         self._loop = loop
         self._callback = callback
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
-        self._debounce_seconds = 3
+        self._debounce_seconds = debounce_seconds
 
     def on_modified(self, event: FileModifiedEvent):
         if event.is_directory:
             return
-        if not event.src_path.endswith(self._inbox_path.lstrip("/")):
+        # Normalize both paths so forward-slash (config) vs backslash (watchdog on Windows)
+        # differences don't cause the filter to silently swallow every event.
+        if os.path.normcase(os.path.normpath(event.src_path)) != self._inbox_path:
             return
         with self._lock:
             if self._timer:
@@ -33,14 +37,15 @@ class _InboxHandler(FileSystemEventHandler):
 
 
 class FileWatcher:
-    def __init__(self, inbox_path: str, loop: asyncio.AbstractEventLoop, on_change):
+    def __init__(self, inbox_path: str, loop: asyncio.AbstractEventLoop, on_change,
+                 debounce_seconds: float = 3.0):
         self._inbox_path = inbox_path
         self._loop = loop
         self._on_change = on_change
+        self._debounce_seconds = debounce_seconds
         self._observer: Observer | None = None
 
     def start(self):
-        import os
         watch_dir = os.path.dirname(self._inbox_path)
         # watchdog's Observer.schedule() raises FileNotFoundError if the directory is
         # missing (e.g. NAS not mounted yet). Degrade gracefully instead of crashing the
@@ -55,7 +60,8 @@ class FileWatcher:
                 watch_dir,
             )
             return
-        handler = _InboxHandler(self._inbox_path, self._loop, self._on_change)
+        handler = _InboxHandler(self._inbox_path, self._loop, self._on_change,
+                                debounce_seconds=self._debounce_seconds)
         self._observer = Observer()
         self._observer.schedule(handler, watch_dir, recursive=False)
         self._observer.start()

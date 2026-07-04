@@ -50,6 +50,13 @@ async def main():
     queue_manager = QueueManager(queue, state, skip_duplicates=skip_duplicates)
 
     bot = SAVESBot(config, prefs, state)
+
+    # Reconcile crash orphans: URLs that were marked_pending before the pipeline crashed
+    # (between mark_pending and bot.store.add) have no Discord card and will never be
+    # re-queued because is_processed() returns True for "pending". Reset them to "failed"
+    # so scan_inbox() picks them up again on this startup.
+    _reconcile_crash_orphans(state, bot)
+
     loop = asyncio.get_running_loop()
 
     log_channel = config.get("discord", {}).get("channel_log", "SAVES-logs")
@@ -68,7 +75,8 @@ async def main():
     def on_file_change():
         asyncio.ensure_future(scan_inbox())
 
-    watcher = FileWatcher(inbox_path, loop, on_file_change)
+    debounce = config.get("watcher", {}).get("debounce_seconds", 3.0)
+    watcher = FileWatcher(inbox_path, loop, on_file_change, debounce_seconds=debounce)
     watcher.start()
 
     await scan_inbox()
@@ -86,6 +94,26 @@ async def main():
         processor_task.cancel()
         watcher.stop()
         await bot.close()
+
+
+def _reconcile_crash_orphans(state, bot) -> None:
+    """Reset 'pending' state entries that have no Discord card to 'failed' so they are
+    re-queued on the next scan_inbox(). These arise when the app crashes between
+    mark_pending (start of pipeline) and bot.store.add (Discord card sent) — the URL
+    stays stuck as 'pending' forever because is_processed() returns True for that status."""
+    store_urls = {item.url for item in bot.store.get_all()}
+    orphans = [
+        url for url, entry in state._state.items()
+        if entry.get("status") == "pending" and url not in store_urls
+    ]
+    if orphans:
+        logger.warning(
+            "Startup: found %d crash-orphan 'pending' URL(s) with no Discord card — "
+            "resetting to 'failed' so they are re-queued: %s",
+            len(orphans), orphans,
+        )
+        for url in orphans:
+            state.mark_failed(url, "crash orphan: pipeline never reached Discord card — re-queued")
 
 
 if __name__ == "__main__":

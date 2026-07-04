@@ -4,7 +4,7 @@ import discord
 from discord.ext import tasks
 
 from src.discord_bot.approval import PendingApproval, PendingApprovalsStore
-from src.discord_bot.notifications import send_approval_request, send_cookie_warning, send_log
+from src.discord_bot.notifications import send_alert, send_approval_request, send_cookie_warning, send_log
 from src.notes.file_manager import write_note
 from src.notes.formatter import format_note
 from src.utils.cookie_checker import check_all_cookies
@@ -390,21 +390,35 @@ class SAVESBot(discord.Client):
             top_comments=cs.get("top_comments"),
         )
 
-        note_md = format_note(
-            pending.ai_result, content,
-            pending.media_paths, pending.transcript,
-            self.config,
-            fact_check_result=pending.ai_result.get("_fact_check"),
-            location_check_result=pending.ai_result.get("_location_check"),
-            include_warnings=include_warnings,
-        )
+        alert_channel = self._discord_cfg.get("channel_alerts", "SAVES-alerts")
+        try:
+            note_md = format_note(
+                pending.ai_result, content,
+                pending.media_paths, pending.transcript,
+                self.config,
+                fact_check_result=pending.ai_result.get("_fact_check"),
+                location_check_result=pending.ai_result.get("_location_check"),
+                include_warnings=include_warnings,
+            )
 
-        note_path = write_note(
-            vault_root=paths.get("vault_root", "/vault"),
-            folder_path=pending.ai_result["folder_path"],
-            filename=pending.ai_result.get("title") or pending.ai_result.get("filename", "untitled"),
-            content=note_md,
-        )
+            note_path = write_note(
+                vault_root=paths.get("vault_root", "/vault"),
+                folder_path=pending.ai_result["folder_path"],
+                filename=pending.ai_result.get("title") or pending.ai_result.get("filename", "untitled"),
+                content=note_md,
+            )
+        except Exception as e:
+            logger.exception("_finalize failed for %s: %s", pending.url, e)
+            await send_alert(self, alert_channel,
+                             f"❌ Save failed — item still pending, click Approve to retry.\n"
+                             f"URL: {pending.url}\nError: {e}")
+            try:
+                await interaction.edit_original_response(
+                    content=f"❌ Save failed: `{e}`\nItem is still pending — click Approve to retry."
+                )
+            except discord.HTTPException:
+                pass
+            return
 
         # Record completion in the state file immediately after the note is on disk — before
         # the slower preference/inbox/Discord cleanup — so a crash mid-cleanup can't cause a
