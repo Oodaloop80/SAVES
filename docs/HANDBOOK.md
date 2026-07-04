@@ -41,6 +41,9 @@ from the inbox.
 
 ## 3. Architecture & Data Flow
 
+> Full architecture reference with rendered diagrams (deployment, components, sequence,
+> URL state machine), plus command + config cheat sheets: **`docs/ARCHITECTURE.md`**.
+
 ```
 0 - INBOX/SAVES.md
    │  watchdog (3s debounce) → call_soon_threadsafe

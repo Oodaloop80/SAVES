@@ -2,7 +2,8 @@
 
 > Live checklist. Update boxes as items land; this is the "where are we" anchor across chats.
 > Full reasoning lives in `docs/PLAN.md`. Orientation lives in `CLAUDE.md`. Recreate/maintain
-> details live in `docs/HANDBOOK.md`.
+> details live in `docs/HANDBOOK.md`. System design, diagrams, and the command/config cheat
+> sheet live in `docs/ARCHITECTURE.md`.
 
 **Current phase:** Phase 4 (deploy, mobile, live-test). Phases 1–3 complete (one optional
 Phase 2 item — persist NL-edit sessions across restart — deferred).
