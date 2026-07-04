@@ -8,3 +8,10 @@ paths:
   inbox_file: "C:/DEV/Apps/SAVES/OBSIDIAN/0 - INBOX/SAVES.md"
   media_root: "C:/DEV/Apps/SAVES/MEDIA"
   cookies_dir: "cookies"
+  # Bare-metal dev keeps runtime state at the repo root (config.yaml's defaults are
+  # container paths under /app/state that don't exist outside Docker).
+  state_file: "processing_state.json"
+  pending_approvals_file: "pending_approvals.json"
+
+preferences:
+  file: "preferences.json"

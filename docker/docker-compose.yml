@@ -1,4 +1,9 @@
 version: "3.9"
+
+# PORTABILITY: this file contains NO machine-specific paths. Host locations come from
+# docker/.env (copy docker/.env.example and fill in — Compose reads it automatically
+# when you run compose from this directory). config.yaml uses the canonical container
+# paths (/vault, /media, /app/state) so the same image + config deploy anywhere.
 services:
   saves-automation:
     build:
@@ -6,17 +11,27 @@ services:
       dockerfile: docker/Dockerfile
     container_name: saves_app
     restart: unless-stopped
-    env_file: ../.env
+    env_file: ../.env            # secrets: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
+    environment:
+      - TZ=${TZ:-America/New_York}   # saved_date uses local time, not UTC
     volumes:
-      - /volume1/NAS/OBSIDIAN/Remote Vault:/vault:rw
-      - /volume1/NAS/MEDIA/SAVES:/media:rw
+      # Host layout → canonical container paths (set the *_HOST vars in docker/.env)
+      - "${VAULT_HOST}:/vault:rw"
+      - "${MEDIA_HOST}:/media:rw"
+      # One DIRECTORY for all runtime state (processing_state.json, pending_approvals.json,
+      # preferences.json). Never bind single files: Docker creates a directory if the host
+      # file is missing, and os.replace() onto a file-mountpoint fails with EBUSY.
+      - "${STATE_HOST}:/app/state:rw"
       - ../cookies:/app/cookies:ro
       - ../config.yaml:/app/config.yaml:ro
       - ../logs:/app/logs:rw
-      - ../processing_state.json:/app/processing_state.json:rw
-      - ../pending_approvals.json:/app/pending_approvals.json:rw
       - instaloader-session:/root/.config/instaloader
       - whisper-cache:/root/.cache/whisper
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   instaloader-session:

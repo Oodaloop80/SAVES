@@ -98,7 +98,12 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       34 findings: **2 deploy blockers** (compose mounts ≠ config paths; single-file state
       binds break `os.replace` + preferences.json unmounted), 6 High, 13 Medium, 13 Low +
       unused-config-key table. Fix blockers BEFORE `docker-compose up`.
-- [ ] Fix review blockers #1–2 (+ High #3–7) — see fix order at the bottom of the review doc
+- [x] Fix review blockers #1–2 (2026-07-04): portable path design — canonical container paths
+      in `config.yaml`; host mapping via `docker/.env` (Docker) / `config.local.yaml` (bare
+      metal); single state-dir mount incl. `preferences.json`; TZ + log rotation. PROD go-live
+      = **fresh implementation** (carry cookies + optionally preferences.json only) —
+      plan in ARCHITECTURE.md §1b.
+- [ ] Fix review High findings #3–7 — see fix order at the bottom of the review doc
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`

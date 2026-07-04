@@ -23,7 +23,15 @@ only bite once the app runs unattended on the NAS. Fix the two blockers before
 
 ## 🔴 P0 — Deploy blockers (the NAS deploy fails as-shipped)
 
-### 1. Compose mounts don't match config paths — container can't see the vault
+> **✅ Both blockers FIXED 2026-07-04** — and differently than first recommended here, to
+> satisfy the portability requirement (DEV on workstation today, PROD on NAS, movable to any
+> future host): `config.yaml` now holds canonical container paths (`/vault`, `/media`,
+> `/app/state`); hosts map onto them via `docker/.env` (Docker) or `config.local.yaml`
+> (bare metal). All three state JSONs (incl. `preferences.json`) live in one mounted state
+> directory. TZ + Docker log rotation (part of finding 21) landed in the same change.
+> Details: ARCHITECTURE.md §1b, HANDBOOK §6/§8.
+
+### 1. Compose mounts don't match config paths — container can't see the vault ✅ FIXED
 `docker/docker-compose.yml:11-12` mounts the vault at **`/vault`** and media at **`/media`**,
 but the `config.yaml` mounted into the container (`:14`) points at
 `/volume1/NAS/OBSIDIAN/Remote Vault` and `/volume1/NAS/MEDIA/SAVES` — paths that don't exist
@@ -39,7 +47,7 @@ untouched and `process_one.py` run on the NAS host would also agree:
 (Alternative: mount a container-specific config overriding `paths.*` to `/vault`/`/media` —
 more moving parts, not worth it.)
 
-### 2. Single-file bind mounts break atomic state saves (and `preferences.json` isn't mounted at all)
+### 2. Single-file bind mounts break atomic state saves (and `preferences.json` isn't mounted at all) ✅ FIXED
 `docker-compose.yml:16-17` bind-mounts `processing_state.json` and `pending_approvals.json`
 as **single files**. Two independent failures:
 

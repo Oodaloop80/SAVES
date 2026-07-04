@@ -172,8 +172,14 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium
 copy .env.example .env          # fill ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
-# edit config.yaml paths for Windows (N:/ SMB mounts) if needed
+copy config.local.yaml.example config.local.yaml   # then edit: YOUR Windows paths
 ```
+**Never edit the paths in `config.yaml` itself** — it holds canonical container paths
+(`/vault`, `/media`, `/app/state`) shared by every deployment. Bare-metal machines override
+them in the gitignored `config.local.yaml` (deep-merged over `config.yaml` at load;
+`src/config.py`). The current DEV workstation uses a fully local test vault
+(`C:/DEV/Apps/SAVES/OBSIDIAN`) and local media dir (`C:/DEV/Apps/SAVES/MEDIA`), with state
+JSONs at the repo root.
 Cookies: export with the "Get cookies.txt LOCALLY" browser extension into
 `cookies/instagram.txt`, `cookies/tiktok.txt`, `cookies/facebook.txt`.
 
@@ -189,13 +195,19 @@ python scripts\process_one.py "https://www.reddit.com/r/..."   # add --dry-run t
 python -m src.main
 ```
 
-### Production (Synology NAS, Docker)
+### Production (Synology NAS, Docker) — or ANY other Docker host
 ```bash
 cd docker
-docker-compose up --build
+cp .env.example .env            # host paths: VAULT_HOST, MEDIA_HOST, STATE_HOST, TZ
+mkdir -p /volume1/docker/saves/state   # the STATE_HOST dir must exist before first up
+docker-compose up --build -d
 ```
-`.env` must exist with `ANTHROPIC_API_KEY` + `DISCORD_BOT_TOKEN`. Vault and media are
-volume-mounted. The container reaches the workstation Whisper server over the LAN/Tailscale.
+Two `.env` files, different jobs: repo-root `.env` = secrets (`ANTHROPIC_API_KEY`,
+`DISCORD_BOT_TOKEN`, injected into the container); `docker/.env` = **host paths only**
+(compose reads it for `${VAR}` substitution). `config.yaml` never changes between hosts —
+moving PROD to a new machine means filling in a new `docker/.env`, nothing else.
+The container reaches the workstation Whisper server over the LAN/Tailscale
+(`transcription.remote_url`).
 
 ---
 
@@ -234,18 +246,24 @@ volume-mounted. The container reaches the workstation Whisper server over the LA
 secrets. The blocks below are the **current production values** with the *why* for the
 non-obvious ones. Use exact model IDs (e.g. `claude-sonnet-4-6`) — never append date suffixes.
 
-**paths** — where SAVES reads and writes.
+**paths** — where SAVES reads and writes. **Canonical container paths — identical on every
+deployment; never machine-specific.** Docker maps the host's real layout onto them via
+`docker/.env` (`VAULT_HOST`/`MEDIA_HOST`/`STATE_HOST`); bare-metal dev overrides them in
+`config.local.yaml` (gitignored, deep-merged at load).
 ```yaml
-vault_root:   "/volume1/NAS/OBSIDIAN/Remote Vault"
-saves_root:   "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
-inbox_file:   "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"   # the watched file
-media_root:   "/volume1/NAS/MEDIA/SAVES"
+vault_root:   "/vault"
+saves_root:   "/vault/SAVES"
+inbox_file:   "/vault/0 - INBOX/SAVES.md"   # the watched file
+media_root:   "/media"
 cookies_dir:  "cookies"   ·   logs_dir: "logs"
-state_file:  "processing_state.json"          # dedup / done-URLs
-pending_approvals_file: "pending_approvals.json"   # restart-safe Discord approvals
+state_file:  "/app/state/processing_state.json"          # dedup / done-URLs
+pending_approvals_file: "/app/state/pending_approvals.json"   # restart-safe Discord approvals
+# preferences.file (its own block) also lives in /app/state/
 ```
-Windows dev overrides (mapped SMB drive) sit commented at the top of the file:
-`vault_root: "N:/NAS/OBSIDIAN/Remote Vault"`, `media_root: "N:/NAS/MEDIA/SAVES"`.
+PROD host values (NAS) live in `docker/.env`: vault `/volume1/NAS/OBSIDIAN/Remote Vault`,
+media `/volume1/NAS/MEDIA/SAVES`, state `/volume1/docker/saves/state`. DEV workstation values
+live in `config.local.yaml`: local test vault `C:/DEV/Apps/SAVES/OBSIDIAN`, media
+`C:/DEV/Apps/SAVES/MEDIA`, state JSONs at the repo root.
 > The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES.md` (docs updated 2026-07-04).
 
 **watcher / processing** — the serial pipeline.

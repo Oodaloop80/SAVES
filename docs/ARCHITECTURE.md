@@ -59,6 +59,46 @@ note without your approval, and it never deletes anything, ever.
 
 ---
 
+## 1b. DEV vs PROD — what runs where, and how deployment stays portable
+
+`config.yaml` contains **only canonical container paths** (`/vault`, `/media`, `/app/state`)
+that are identical on every deployment. Machine reality is injected per host and never
+committed — so moving PROD to a new NAS/server, or spinning up a second environment, is a
+matter of filling in one small file:
+
+| | **DEV (today)** | **PROD (target)** | Portable because… |
+|---|---|---|---|
+| Pipeline app | Workstation, bare Python (`python src\main.py`) | NAS, Docker container | same code, same tracked config |
+| Path mapping | `config.local.yaml` overlay (gitignored; deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts | host paths live outside git |
+| Vault | local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | real vault `/volume1/NAS/OBSIDIAN/Remote Vault` | notes reference media via `media://` relative paths — device-independent |
+| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/NAS/MEDIA/SAVES` | same |
+| State JSONs | repo root | `/volume1/docker/saves/state` (one mounted **directory**) | schema identical; single-file binds are forbidden (os.replace breaks) |
+| Whisper | workstation `192.168.1.90:5000` | workstation — possibly a dedicated server later | app only knows `transcription.remote_url`; relocating = one line |
+| Secrets | repo-root `.env` | same file, on the NAS | only 2 keys ever |
+
+**Rule:** never run DEV and PROD against the same vault/state simultaneously — two watchers
++ two state writers on one inbox will fight. Today's separate DEV test vault makes this safe.
+
+### PROD go-live: fresh implementation, not a migration
+
+There is almost nothing to migrate — the real vault and media store already live on the NAS,
+and DEV's state describes a *different* (test) vault. Cutover is:
+
+1. On the NAS: clone/copy the repo → `cp .env.example .env` (secrets) →
+   `cd docker && cp .env.example .env` (host paths) → `mkdir -p /volume1/docker/saves/state`.
+2. **Carry over:** `cookies/*.txt` (required — auth), and *optionally*
+   `preferences.json` → `/volume1/docker/saves/state/` (the learned folder routing transfers
+   cleanly because it stores vault-relative paths).
+3. **Do NOT carry over** `processing_state.json` / `pending_approvals.json` from DEV — they
+   describe test-vault saves; starting empty lets the same URLs be saved "for real". (Only
+   exception: if some past saves were written into the *real* NAS vault and you want their
+   dedup memory, copy `processing_state.json` too.)
+4. `docker-compose up --build -d`, watch `docker-compose logs -f` for the startup validation,
+   then paste one URL into the real inbox and run the full Discord approval once.
+5. DEV keeps running bare-metal on the workstation against its test vault, unchanged.
+
+---
+
 ## 2. Inside the container — runtime components
 
 Two threads only: **watchdog's observer thread** (filesystem events) and the **main asyncio
@@ -248,9 +288,9 @@ inbox file modified                   │
 | Inbox (the one file you write) | `{vault}/0 - INBOX/SAVES.md` | one URL per line; lines are removed only after approval or duplicate-notice |
 | Notes | `{vault}/SAVES/<AI-chosen folder>/<title>.md` | atomic write; never overwrites (name collision → `-2` suffix) |
 | Media | `{media_root}/{platform}/{author}/{slug}/` | videos, images, subtitles; notes embed via vault-relative paths |
-| Processing state | `processing_state.json` (repo/app root) | §4 above |
-| Pending approvals | `pending_approvals.json` | cards awaiting clicks; survives restarts |
-| Learned folders | `preferences.json` | source-key → folder; written on every approval |
+| Processing state | `/app/state/processing_state.json` (Docker) · repo root (bare-metal DEV) | §4 above |
+| Pending approvals | `/app/state/pending_approvals.json` · repo root (DEV) | cards awaiting clicks; survives restarts |
+| Learned folders | `/app/state/preferences.json` · repo root (DEV) | source-key → folder; written on every approval |
 | Cookies | `cookies/instagram.txt`, `tiktok.txt`, `facebook.txt` | gitignored; expiry monitored → `#SAVES-alerts` |
 | Logs | `logs/processor.log` (all), `logs/errors.log` (errors only) | append-only by design |
 
@@ -311,11 +351,15 @@ Full runbook incl. firewall + auto-start options: **HANDBOOK §9.1**.
 
 ```bash
 cd docker/
-docker-compose up --build -d     # build + start (fix review blockers #1–2 FIRST)
+cp .env.example .env              # ONCE per host: VAULT_HOST, MEDIA_HOST, STATE_HOST, TZ
+mkdir -p /volume1/docker/saves/state   # STATE_HOST dir must exist before first up
+docker-compose up --build -d      # build + start
 docker-compose logs -f            # tail the app
 docker-compose restart            # bounce after config.yaml change (config is read at startup)
 docker-compose down               # stop (state/notes/media all live outside the container)
 ```
+`docker/.env` (host paths) ≠ repo-root `.env` (API secrets). Deploying to a different
+machine = new `docker/.env`, nothing else.
 
 ### Maintenance & QA
 
@@ -356,7 +400,7 @@ The **complete** key-by-key reference is **HANDBOOK §8**. This is the short lis
 | Turn off duplicate notices | `processing.skip_duplicates` | default on |
 | Cookie-expiry alert timing | `platforms.<x>.cookie_expiry_days` / `cookie_warning_days_ahead` | IG/TikTok 21d, FB 30d |
 | Rename Discord channels | `discord.channel_approvals` / `channel_log` / `channel_alerts` | must match server channel names |
-| Move the vault/inbox | `paths.*` | container paths — must agree with docker-compose mounts (review #1) |
+| Move the vault/inbox | **don't edit `paths.*`** | canonical container paths — remap the host side in `docker/.env` (Docker) or `config.local.yaml` (bare metal) instead |
 
 Environment (`.env` — the only secrets): `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN`.
 Reddit needs **no** credentials (public JSON API). Config is loaded once at startup —
@@ -376,8 +420,10 @@ restart the app/container after edits.
    checked against them.
 2. **Only the bot writes notes.** If a note didn't appear, the question is "was ✅ clicked
    and did `_finalize` succeed?" — not "did the processor fail?".
-3. **The mounts must mirror `config.yaml` paths** in Docker — as shipped they don't
-   (review blockers #1–2). Fix before first `docker-compose up`.
+3. **`config.yaml` paths are canonical container paths — never edit them per machine.**
+   Host layout is supplied by `docker/.env` (Docker) or `config.local.yaml` (bare metal).
+   And never run DEV and PROD against the same vault/state at the same time — two writers
+   on one inbox/state file will fight.
 4. **URL keys are normalized.** When hand-inspecting `processing_state.json`, strip tracking
    params from the URL you're looking for.
 5. **Cookies expire ~monthly.** IG/TikTok/FB saves failing with auth errors →

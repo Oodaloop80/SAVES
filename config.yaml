@@ -1,16 +1,19 @@
+# PORTABILITY DESIGN — do not put machine-specific paths in this file.
+# These are CANONICAL CONTAINER paths, identical on every deployment. The host's real
+# layout is mapped onto them per-machine:
+#   - Docker (PROD): docker/docker-compose.yml binds ${VAULT_HOST}/${MEDIA_HOST}/${STATE_HOST}
+#     (set in docker/.env, copied from docker/.env.example) onto /vault, /media, /app/state.
+#   - Bare metal (DEV workstation): config.local.yaml (gitignored; copy from
+#     config.local.yaml.example) overrides these with real Windows paths.
 paths:
-  vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
-  saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
-  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"
-  media_root: "/volume1/NAS/MEDIA/SAVES"
+  vault_root: "/vault"
+  saves_root: "/vault/SAVES"
+  inbox_file: "/vault/0 - INBOX/SAVES.md"
+  media_root: "/media"
   cookies_dir: "cookies"
   logs_dir: "logs"
-  state_file: "processing_state.json"
-  pending_approvals_file: "pending_approvals.json"
-
-# Windows dev override (comment/uncomment as needed):
-# vault_root: "N:/NAS/OBSIDIAN/Remote Vault"
-# media_root: "N:/NAS/MEDIA/SAVES"
+  state_file: "/app/state/processing_state.json"
+  pending_approvals_file: "/app/state/pending_approvals.json"
 
 watcher:
   debounce_seconds: 3
@@ -118,7 +121,7 @@ notes:
   tags_max: 20
 
 preferences:
-  file: "preferences.json"
+  file: "/app/state/preferences.json"   # same state dir as the other JSON files (see paths)
   enabled: true
 
 fact_checking:

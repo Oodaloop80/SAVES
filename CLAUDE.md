@@ -81,7 +81,8 @@ SAVES/
 ├── docker/
 │   ├── Dockerfile                 # python:3.11-slim + ffmpeg + chromium + playwright
 │   └── docker-compose.yml         # 8 volumes: vault, media, cookies, config, logs, state files
-├── config.yaml                    # All configuration (see key values below)
+├── config.yaml                    # All configuration — canonical container paths only
+├── config.local.yaml.example      # Template for bare-metal dev overrides (gitignored copy)
 ├── .env.example                   # Template: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
 └── cookies/                       # instagram.txt, tiktok.txt, facebook.txt (gitignored)
 ```
@@ -123,11 +124,11 @@ bot._finalize()
 ## Key Configuration Values (`config.yaml`)
 
 ```yaml
-paths:
-  vault_root: "/volume1/NAS/OBSIDIAN/Remote Vault"
-  saves_root: "/volume1/NAS/OBSIDIAN/Remote Vault/SAVES"
-  inbox_file: "/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md"
-  media_root: "/volume1/NAS/MEDIA/SAVES"
+paths:                       # CANONICAL CONTAINER PATHS — identical everywhere, never edit
+  vault_root: "/vault"       #   per-machine. Docker maps host dirs onto them via docker/.env
+  saves_root: "/vault/SAVES" #   (VAULT_HOST/MEDIA_HOST/STATE_HOST); bare-metal dev overrides
+  inbox_file: "/vault/0 - INBOX/SAVES.md"   # them in gitignored config.local.yaml.
+  media_root: "/media"       # State JSONs live in /app/state/ (one mounted directory).
 
 transcription:
   mode: "remote"                          # POSTs audio to workstation
@@ -361,18 +362,35 @@ substitutions) can surface.
 
 ---
 
-## Environment & Deployment
+## Environment & Deployment — DEV vs PROD (read this before touching paths)
 
-**Workstation (Windows, `C:\DEV\Apps\SAVES\SAVES_app`):**
-- Git repo, development
-- Runs `whisper_server.py` when transcription is needed
-- `N:\` mapped to `\\NAS-hostname\NAS` (SMB)
-- Obsidian vault at `N:\NAS\OBSIDIAN\Remote Vault`
+The system is **portable by design**: `config.yaml` holds only canonical container paths
+(`/vault`, `/media`, `/app/state`) that are the same on every deployment. Machine-specific
+reality is supplied per-host, never committed:
 
-**NAS (Synology, Docker):**
-- `docker-compose up --build` from `docker/` directory
-- `.env` must exist with ANTHROPIC_API_KEY and DISCORD_BOT_TOKEN
-- Vault and media paths are volume-mounted
+| | DEV (today) | PROD (target) |
+|---|---|---|
+| Pipeline app | Workstation, **bare Python** (`python src\main.py`) | NAS, **Docker** (`docker-compose up`) |
+| Path mapping | `config.local.yaml` (gitignored overlay, deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts |
+| Vault | Local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | Real vault `/volume1/NAS/OBSIDIAN/Remote Vault` |
+| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/NAS/MEDIA/SAVES` |
+| State JSONs | Repo root | `/volume1/docker/saves/state` (one mounted dir — never single-file binds) |
+| Whisper server | Workstation `192.168.1.90:5000` | Workstation (same box; possibly a dedicated server later — one config line, `transcription.remote_url`) |
+
+Rules that keep it portable:
+- **Never put machine paths in `config.yaml`** — new host = new `docker/.env` (Docker) or
+  new `config.local.yaml` (bare metal), nothing else changes.
+- **Never run DEV and PROD simultaneously against the same vault/state** — two writers on
+  one inbox/state file will fight. (Distinct DEV vault avoids this today.)
+- Repo-root `.env` = secrets only (ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN);
+  `docker/.env` = host paths + TZ only. Both gitignored, both have `.example` templates.
+
+**Workstation (Windows, `C:\DEV\Apps\SAVES\SAVES_app`):** git repo, development, and the
+Whisper server (`python scripts\whisper_server.py --model large-v3-turbo`). `N:\` is the SMB
+view of the NAS when needed.
+
+**NAS (Synology, Docker):** `cp docker/.env.example docker/.env` (adjust paths), create the
+state dir, then `docker-compose up --build -d` from `docker/`.
 
 **Discord server:** "Bora's AI Ops"
 Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
@@ -431,7 +449,8 @@ loop's first user message. Back-to-back posts and JSON retries benefit automatic
    print only without writing.
 7. Run full pipeline: `python src\main.py`, paste a URL into `0 - INBOX/SAVES.md`,
    watch Discord, approve, verify note appears in vault
-8. Deploy to NAS: `docker-compose up --build` from `docker/`
+8. Deploy to NAS: `cp docker/.env.example docker/.env` (host paths), create the state dir,
+   then `docker-compose up --build -d` from `docker/`
 
 ---
 

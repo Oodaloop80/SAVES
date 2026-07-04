@@ -8,6 +8,10 @@ cookies/facebook.txt
 
 # Local dev config overrides (never commit — contains machine-specific paths)
 config.local.yaml
+docker/.env
+
+# Runtime state directory (bare-metal dev keeps state JSONs here too)
+state/
 
 # Runtime state
 processing_state.json
