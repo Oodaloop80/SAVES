@@ -4,7 +4,7 @@
 > Full reasoning lives in `docs/PLAN.md`. Orientation lives in `CLAUDE.md`. Recreate/maintain
 > details live in `docs/HANDBOOK.md`.
 
-**Current phase:** Phase 3 (runtime token efficiency). Phases 1–2 complete (one optional
+**Current phase:** Phase 4 (deploy, mobile, live-test). Phases 1–3 complete (one optional
 Phase 2 item — persist NL-edit sessions across restart — deferred).
 
 **Status in one line:** Core pipeline is feature-complete and in active dev use. Remaining work
@@ -78,19 +78,28 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       DEV vault for review. **Verdict (2026-07-01): Sonnet wins** — across many test saves Sonnet
       matched Opus on routing/quality at ~half the cost. `ai.model` set to `claude-sonnet-4-6`.
       Sonnet accepts `temperature`, so the param stays (no more auto-stripped 400 on each call).
-- [ ] `effort: medium` on Opus analysis + Sonnet fact-check; drop the rejected `temperature`
-      param on Opus (currently wastes one 400'd request per process) — untapped, big lever
-- [ ] Cache the travel-location check (`verifier.py`) — zero-risk quick win
-- [ ] Right-size `max_tokens` (analysis 8192→4096, OCR 8192→6000) with truncation watch
-- [ ] Trim `SYSTEM_PROMPT` folder examples; make recipe/travel rules conditional
-- [ ] Conditional OCR — skip Haiku OCR for pure-photo posts
+- [x] `effort: medium` on analysis + fact-check (`output_config.effort`); self-learning
+      `_MODELS_REJECTING_EFFORT` guard silently drops it for models that 400 (e.g. Haiku OCR)
+      so the shared call path doesn't need branching. `temperature` non-issue: Sonnet accepts it.
+- [x] Travel-location check (`verifier.py`) reviewed → **kept as-is**: NOT prompt-cached, but it's
+      a single `max_tokens: 1024` call that only fires on travel posts — cost is in the noise.
+- [x] `max_tokens` reviewed (2026-07-04) → **kept as-is**: analysis `8192`, fact-check `6000`, OCR
+      `8192`, verifier `1024`. A high ceiling isn't billed unless output fills it, and lowering it
+      risks truncating a long multi-recipe carousel's JSON. No real saving; truncation risk is real.
+- [x] `SYSTEM_PROMPT` (~16K chars) reviewed (2026-07-04) → **kept as-is**: prompt caching already
+      bills the static prefix at ~10% after the first call, so a trim saves little and risks dropping
+      a routing/recipe/travel rule. Left intact by decision.
+- [x] Conditional OCR — photo posts (`is_photo_post`) handled by vision naturally; TikTok photo
+      fix (2026-07-04, `a5264c6`) drops the background mp3 so nothing bogus hits Whisper
 
 ## Phase 4 — Deploy, mobile, live-test
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `00 - FILE.md`
 - [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `00 - FILE.md`
-- [ ] Whisper runbook into HANDBOOK (start cmd, host/port, firewall, restart)
+- [x] Whisper runbook into HANDBOOK — **§9.1** (start, host/port, `/health` verify, config,
+      client 300s+retry, firewall cmd, restart options, IP stability). Two owner facts to confirm
+      live (firewall rule in place? restart mechanism?) tracked in §11.
 
 ## Phase 5 — Ongoing tuning
 - [ ] Feed real URLs via `/save`; refine quality + routing; let `preferences.json` learn

@@ -253,6 +253,72 @@ config (e.g. `claude-opus-4-8`); do not append date suffixes.
 - **Discord:** server "Bora's AI Ops"; channels `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`.
 - **Logs:** `logs/` (append-only; no rotation deletes — watch disk).
 
+### 9.1 Whisper transcription server (workstation)
+
+Transcription is offloaded to the workstation (Ryzen 9 7950X) because the NAS is too weak for
+it. With `transcription.mode: remote`, the NAS container POSTs each audio/video file to the
+workstation over the LAN; the workstation runs faster-whisper and returns the text. The NAS
+never transcribes locally.
+
+- **Host / endpoints:** `192.168.1.90:5000` — `POST /transcribe` (multipart field `audio`,
+  optional form field `language`) and `GET /health` (liveness). Binds `0.0.0.0:5000`.
+- **Model:** `large-v3-turbo` (int8 on CPU). Loaded once at startup, so the *first* request is
+  not slow; startup is where the model download/load happens.
+- **Serial by design:** the server runs `threaded=False`, so it transcribes one file at a time —
+  which matches the processor (one URL at a time). Don't expect concurrency.
+
+**Install (one-time, on the workstation):**
+```bash
+pip install -r requirements-whisper.txt   # faster-whisper (CTranslate2)
+# ffmpeg must be on PATH (already required for the main app)
+```
+
+**Start (foreground terminal that must stay open while processing videos):**
+```bash
+python scripts\whisper_server.py --model large-v3-turbo
+# defaults: --host 0.0.0.0  --port 5000  --device cpu  --compute-type int8
+```
+
+**Verify it's up (from the workstation, or from the NAS to prove reachability):**
+```bash
+curl http://192.168.1.90:5000/health
+# → {"status":"ok","model":"large-v3-turbo","device":"cpu","compute_type":"int8"}
+```
+
+**Config that must agree (`config.yaml`):**
+```yaml
+transcription:
+  mode: "remote"
+  remote_url: "http://192.168.1.90:5000/transcribe"
+  model: "large-v3-turbo"
+```
+
+**Client behavior (what the NAS does):** `transcriber._transcribe_remote()` POSTs with a **300 s**
+timeout and is **retry-wrapped** — `processing.retry_attempts` (default 3) attempts with
+`processing.retry_delay_seconds` (default 30 s) backoff, re-opening the file fresh each attempt.
+If all attempts fail the note is still written, just **without a transcript** (non-fatal).
+
+**Firewall (NAS → workstation:5000).** Windows blocks inbound 5000 by default. Add a LAN-scoped
+inbound rule once, in an **elevated** shell (documented here; run it yourself — this session does
+not execute it):
+```powershell
+netsh advfirewall firewall add rule name="SAVES Whisper 5000" ^
+  dir=in action=allow protocol=TCP localport=5000 remoteip=192.168.1.0/24
+```
+Scope `remoteip` to the LAN (or the NAS's exact IP) rather than `any`.
+
+**Restart / keep-alive.** Today it's a **manual foreground process** — if the terminal closes or
+the workstation reboots, re-run the start command. To make it survive reboots, pick one (owner's
+choice, see §11): (a) **Task Scheduler** task "At log on" running the start command, or
+(b) **NSSM** (`nssm install SAVES-Whisper`) to run it as a real Windows service.
+
+**IP stability.** `remote_url` hard-codes `192.168.1.90`. If the workstation's DHCP lease changes
+the IP, transcription silently starts failing (retries, then no transcript) — give the
+workstation a **static/reserved IP** on the router, or update `remote_url` when it moves.
+
+**When it's down:** videos archive with no transcript; the symptom + fix is in §10
+("Transcript missing on a video").
+
 ---
 
 ## 10. Troubleshooting
@@ -278,8 +344,9 @@ config (e.g. `claude-opus-4-8`); do not append date suffixes.
 - **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `00 - FILE.md`.
 - **Discord:** server = "Bora's AI Ops"; channel IDs = _TODO_; bot invite scopes/permissions = _TODO_.
 - **Cookies:** which account backs each of instagram/tiktok/facebook = _TODO_; refresh cadence = ~3–4 wks.
-- **Whisper:** host = `192.168.1.90:5000`; start cmd = `whisper_server.py --model large-v3-turbo`;
-  firewall rule NAS→workstation:5000 = _TODO_; restart procedure = _TODO_.
+- **Whisper:** full runbook now in **§9.1** (host/port, start, verify, config, firewall, restart, IP).
+  Two owner decisions remain: is the LAN-scoped inbound firewall rule actually in place = _TODO_;
+  which restart mechanism — manual / Task Scheduler / NSSM service = _TODO_.
 - **Anthropic:** org/account = _TODO_; monthly budget/limit = _TODO_ (raise at claude.ai/settings/usage).
 - **Mobile:** iOS Shortcut config = _TODO_; Android HTTP Shortcuts config = _TODO_.
 - **Performance baselines:** typical URL→card time per platform = _TODO_.
