@@ -103,7 +103,9 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       metal); single state-dir mount incl. `preferences.json`; TZ + log rotation. PROD go-live
       = **fresh implementation** (carry cookies + optionally preferences.json only) —
       plan in ARCHITECTURE.md §1b.
-- [ ] Fix review High findings #3–7 — see fix order at the bottom of the review doc
+- [x] Fix review High findings #3–7 (2026-07-04, commit `16a7bf3`): crash-orphan reconciliation;
+      _finalize error handling + alert; watcher path-normcase fix + debounce wired; inbox
+      exact-match removal; article_markdown prompt leak + metadata value cap.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
