@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,24 @@ def write_note(vault_root: str, folder_path: str, filename: str, content: str) -
 
     logger.info(f"Note written: {dest}")
     return dest
+
+
+def retire_note_to_bak(path: str) -> str | None:
+    """Move an obsolete note aside as `<path>.bak` — used by the duplicate notice's
+    🔁 Re-save button so the fresh save can take the original filename. NEVER deletes
+    (zero-delete policy): the old note stays on disk, just renamed. If a `.bak` from an
+    earlier re-save already exists, a timestamped suffix is used instead of overwriting
+    it. Returns the .bak path, or None when the note doesn't exist (e.g. already moved
+    or hand-deleted in Obsidian) — that's fine, there's simply nothing to retire.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    bak = path + ".bak"
+    if os.path.exists(bak):
+        bak = f"{path}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+    os.replace(path, bak)
+    logger.info(f"Old note retired: {path} -> {bak}")
+    return bak
 
 
 def move_note(src: str, new_vault_path: str, vault_root: str) -> str:

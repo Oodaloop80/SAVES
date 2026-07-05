@@ -62,7 +62,8 @@ SAVES/
 │   │   └── verifier.py            # check_travel_location() — called only when travel in topics
 │   ├── discord_bot/
 │   │   ├── approval.py            # PendingApproval dataclass, PendingApprovalsStore (JSON)
-│   │   ├── notifications.py       # send_approval_request(), send_log(), send_alert()
+│   │   ├── notifications.py       # send_approval_request(), send_log(), send_alert(),
+│   │   │                          # duplicate notice + DuplicateNoticeView (🔁 Re-save/✖ Dismiss)
 │   │   └── bot.py                 # SAVESBot; ApprovalView (4 buttons); _finalize() writes note
 │   ├── notes/
 │   │   ├── formatter.py           # format_note() dispatches to 13 per-type renderers
@@ -231,10 +232,20 @@ already-saved URLs (matched via normalized-URL `ProcessingState.is_done`) instea
 skipping; `main.py`'s `scan_inbox()` posts a `send_duplicate_notice()` to `#SAVES-logs` and
 clears the line from the inbox — so no tokens are spent reprocessing. Behind
 `processing.skip_duplicates` (default on). **The authority is `processing_state.json`, NOT
-the vault** — deleting a note in Obsidian does not clear it. To deliberately re-save a URL,
-use the **`/forget` slash command** (autocompletes over saved history, done + permanently-
-failed entries): it drops the state entry (`ProcessingState.forget`) and clears the queue
-manager's session dedup sets, then re-pasting the URL reprocesses it.
+the vault** — deleting a note in Obsidian does not clear it.
+
+Two ways to deliberately re-save a URL:
+- **🔁 Re-save button on the duplicate notice** (`DuplicateNoticeView`, notifications.py):
+  forgets the URL (state + session dedup), **retires the old note to `<name>.md.bak`**
+  (`retire_note_to_bak` in file_manager.py — rename, never delete; timestamped suffix on
+  collision) so the new save takes the original filename, and requeues directly via
+  `QueueManager.enqueue_url()` — no re-paste needed. The view is in-process only: buttons on
+  notices from before a bot restart go dead (fallback: `/forget`).
+- **`/forget` slash command** (autocompletes over saved history, done + permanently-failed
+  entries): drops the state entry (`ProcessingState.forget`) and clears the queue manager's
+  session dedup sets, then re-pasting the URL reprocesses it. Does not touch the old note.
+
+User-facing walkthrough of both paths: `docs/USER_GUIDE.md`.
 
 ---
 
@@ -449,6 +460,10 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
 - `CLAUDE.md` (this file) — the canonical map: repo tree, data flow, note types, button/slash
   behavior, platform notes, hard constraints, config. If a new file, note type, button, slash
   command, config key, or flow appears (or one is renamed/removed), fix it here.
+- `docs/USER_GUIDE.md` — the user-facing nuances: every slash command, button, surprising
+  default, and recovery path, written for the person *using* the bot. Any new or changed
+  user-visible behavior (a command, a button, a gotcha like "deleting the note doesn't
+  clear the dedup") gets its entry here in the same commit.
 - `docs/ARCHITECTURE.md` — how the pieces fit + the §11 scaling analysis. Update when a
   component's responsibility, threading model, or a scaling characteristic changes.
 - `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;

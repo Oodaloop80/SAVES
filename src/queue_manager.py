@@ -134,6 +134,20 @@ class QueueManager:
             logger.info(f"Detected {len(duplicates)} already-saved duplicate(s)")
         return duplicates
 
+    async def enqueue_url(self, raw_url: str) -> bool:
+        """Directly queue one URL, bypassing the inbox file — the duplicate notice's
+        🔁 Re-save button uses this after forget() so the user doesn't have to re-paste.
+        Same normalization/dedup as enqueue_from_file. Returns True if it was queued."""
+        url = normalize_url(raw_url)
+        if url in self._queued:
+            return False
+        if self._skip_duplicates and self._state.is_done(url):
+            return False
+        self._queued.add(url)
+        await self._queue.put(url)
+        logger.info(f"Queued 1 URL directly (re-save): {url}")
+        return True
+
     def forget(self, url: str) -> None:
         """Companion to ProcessingState.forget: clear the session-local dedup sets so a
         forgotten URL pasted again in the SAME process actually re-enqueues (without this,

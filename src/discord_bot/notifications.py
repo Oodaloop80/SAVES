@@ -1,6 +1,10 @@
+import asyncio
 import logging
 
 import discord
+
+from src.notes.file_manager import retire_note_to_bak
+from src.utils.url_parser import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -141,19 +145,79 @@ async def send_alert(bot: discord.Client, channel_name: str, message: str) -> No
         logger.warning(f"ALERT (channel not found): {message}")
 
 
+class DuplicateNoticeView(discord.ui.View):
+    """Buttons on the duplicate notice: 🔁 Re-save (forget the URL, retire the old note to
+    `.bak`, and requeue it through the normal pipeline — new approval card and all) or
+    ✖ Dismiss. In-process only: after a bot restart the buttons on old notices go dead —
+    the fallback is `/forget` + re-pasting the URL, which does the same thing.
+
+    The old note is RENAMED to `<name>.md.bak`, never deleted (zero-delete policy), so the
+    fresh save can take the original filename while the previous version stays recoverable.
+    """
+
+    def __init__(self, url: str, existing_path: str | None):
+        super().__init__(timeout=None)
+        self.url = url
+        self.existing_path = existing_path
+
+    async def _finish(self, interaction: discord.Interaction, extra: str) -> None:
+        for child in self.children:
+            child.disabled = True
+        content = (interaction.message.content or "") + f"\n{extra}"
+        await interaction.response.edit_message(content=content[:2000], view=self)
+
+    @discord.ui.button(label="🔁 Re-save", style=discord.ButtonStyle.primary)
+    async def resave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client  # SAVESBot: has .state and .queue_manager
+        target = normalize_url(self.url)
+        # 1. Retire the old note (rename to .bak — zero-delete) so the new save can take
+        #    the original filename instead of getting a "-2" suffix.
+        retired = None
+        if self.existing_path:
+            try:
+                retired = await asyncio.to_thread(retire_note_to_bak, self.existing_path)
+            except OSError as e:
+                logger.warning("Could not retire old note %s: %s", self.existing_path, e)
+        # 2. Forget: drop the state entry + session dedup sets (same as /forget).
+        if getattr(bot, "state", None) is not None:
+            if not bot.state.forget(target) and self.url != target:
+                bot.state.forget(self.url)
+        queued = False
+        if getattr(bot, "queue_manager", None) is not None:
+            bot.queue_manager.forget(target)
+            # 3. Requeue directly — no need to re-paste into the inbox.
+            queued = await bot.queue_manager.enqueue_url(self.url)
+        parts = ["🔁 **Re-saving** — forgotten and requeued; a new approval card is coming."]
+        if retired:
+            parts.append(f"Old note retired to `{retired}` (renamed, not deleted).")
+        if not queued:
+            parts.append(
+                "⚠️ Couldn't requeue automatically — paste the URL into the inbox to reprocess."
+            )
+        await self._finish(interaction, "\n".join(parts))
+
+    @discord.ui.button(label="✖ Dismiss", style=discord.ButtonStyle.secondary)
+    async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._finish(interaction, "Dismissed — kept the existing note.")
+
+
 async def send_duplicate_notice(
     bot: discord.Client, channel_name: str, url: str, existing_path: str | None
 ) -> None:
-    """Tell the user a pasted URL was already saved, so it was skipped before any
-    extraction/AI tokens were spent."""
+    """Tell the user a pasted URL was already saved (skipped before any extraction/AI tokens
+    were spent) and offer a 🔁 Re-save button to reprocess it anyway."""
     lines = [
         "🔁 **Duplicate — already saved**",
         f"`{url}`",
     ]
     if existing_path:
         lines.append(f"Existing note: `{existing_path}`")
-    lines.append("Skipped before processing — no tokens spent.")
-    await send_log(bot, channel_name, "\n".join(lines))
+    lines.append("Skipped before processing — no tokens spent. Re-save to process it again.")
+    channel = _get_channel(bot, channel_name)
+    if channel:
+        await channel.send("\n".join(lines), view=DuplicateNoticeView(url, existing_path))
+    else:
+        logger.warning("Duplicate notice (channel not found): %s", url)
 
 
 async def send_cookie_warning(

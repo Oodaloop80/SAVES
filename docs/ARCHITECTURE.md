@@ -236,7 +236,7 @@ What each status means when you're staring at the JSON:
 | status | Meaning | What happens next |
 |---|---|---|
 | `pending` | Pipeline started (or card is awaiting your click) | Nothing re-runs it — it's "in flight" |
-| `done` | Note written; `path` records where | Re-pasting the URL → duplicate notice, no tokens spent |
+| `done` | Note written; `path` records where | Re-pasting the URL → duplicate notice with a 🔁 Re-save button (forget + retire old note to `.bak` + requeue), no tokens spent |
 | `failed` | Transient failure, `reason` says why | Re-enqueued automatically on the next inbox scan |
 | `failed_permanent` | Unfixable (deleted post, etc.) | Never retried; alert was sent |
 | `retry_after_auth` | Cookies were expired | Refresh cookies, it retries on next scan |
@@ -332,6 +332,12 @@ are the only search-as-you-type surfaces):
 |---|---|
 | `/tag add <tag> [item]` | Adds a tag to a pending save. `tag` autocompletes over the **vault tag index** (frontmatter `tags:`/`tag:` + inline body `#tags`, usage-count ranked); `item` picks which pending save (default newest). |
 | `/forget <url>` | Drops a URL from `processing_state.json` so it can be saved again — deleting the note in Obsidian does **not** do this (state, not the vault, is the dedup authority). `url` autocompletes over saved history (done + permanently-failed). |
+
+**Duplicate notice buttons** (`DuplicateNoticeView`, posted to `#SAVES-logs` when a pasted
+URL was already saved): **🔁 Re-save** = forget + retire the old note to `<name>.md.bak`
+(rename, never delete; timestamped on collision) + requeue directly through the pipeline —
+no re-paste needed. **✖ Dismiss** = keep the existing note. The view is in-memory only:
+buttons on notices from before a bot restart go dead; the fallback is `/forget` + re-paste.
 
 `auto_approve_on_timeout` exists in config (default **off**) — if ever enabled, unclicked
 cards self-approve after `auto_approve_timeout_hours` (48).
