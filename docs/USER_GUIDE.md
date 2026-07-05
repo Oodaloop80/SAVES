@@ -40,7 +40,9 @@ When you paste an already-saved URL:
      deleted — zero-delete policy; a second re-save gets a timestamped `.bak` so nothing is
      overwritten), and requeues the URL through the normal pipeline. You get a fresh
      approval card, and the new note takes the original filename.
-   - **✖ Dismiss** — keeps the existing note; nothing changes.
+   - **✖ Dismiss** — keeps the existing note; nothing changes. Changed your mind later?
+     Just paste the URL again — you get a fresh notice every time (it works the same
+     whether the original save happened this session or long ago).
 3. **Buttons on old notices die when the bot restarts** (they're in-memory only). The
    fallback is the `/forget` command + re-pasting the URL — identical effect, minus the
    automatic `.bak` rename (retire the old note yourself if you care about the filename).

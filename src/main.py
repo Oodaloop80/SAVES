@@ -85,6 +85,11 @@ async def main():
                 remove_url_from_inbox(inbox_path, raw_url)
             except Exception as e:
                 logger.warning(f"Failed to clear duplicate URL from inbox: {e}")
+            else:
+                # Line is gone → lift the once-only guard so a future deliberate
+                # re-paste gets a fresh notice. (On failure the line is still in the
+                # inbox; keeping the guard prevents a notice on every file change.)
+                queue_manager.duplicate_cleared(raw_url)
 
     def on_file_change():
         asyncio.ensure_future(scan_inbox())

@@ -112,15 +112,21 @@ class QueueManager:
             # Without this, social share links with tracking params (igsh/fbclid/utm_*)
             # miss the state lookup and get re-enqueued after a restart → duplicate notes.
             url = normalize_url(raw_url)
-            if url in self._queued:
-                continue
-            # Already saved before? Report it as a duplicate (once) so the user gets a
-            # Discord heads-up BEFORE any extraction/AI tokens are spent — instead of the
-            # old behaviour of silently skipping it.
+            # Already saved before? Report it as a duplicate so the user gets a Discord
+            # heads-up BEFORE any extraction/AI tokens are spent — instead of the old
+            # behaviour of silently skipping it. This check MUST come before the _queued
+            # session check: a URL saved earlier in this same session is still in _queued,
+            # and checking _queued first silently ate the re-paste (no notice, line left
+            # in the inbox forever). _reported_duplicates only guards the window while the
+            # line is still in the inbox (watcher re-fires before the caller removes it);
+            # duplicate_cleared() lifts it once the line is gone so a later deliberate
+            # re-paste notifies again.
             if self._skip_duplicates and self._state.is_done(url):
                 if url not in self._reported_duplicates:
                     self._reported_duplicates.add(url)
                     duplicates.append((raw_url, self._state.path_for(url)))
+                continue
+            if url in self._queued:
                 continue
             if self._state.is_processed(url):
                 continue
@@ -147,6 +153,14 @@ class QueueManager:
         await self._queue.put(url)
         logger.info(f"Queued 1 URL directly (re-save): {url}")
         return True
+
+    def duplicate_cleared(self, raw_url: str) -> None:
+        """Called by the caller AFTER the duplicate line was removed from the inbox.
+        Lifts the once-only report guard so that pasting the same URL again later gets a
+        fresh duplicate notice (instead of being swallowed for the rest of the session).
+        Safe because the guard's only job is the detection→line-removal window: with the
+        line gone, the next watcher fire no longer sees the URL at all."""
+        self._reported_duplicates.discard(normalize_url(raw_url))
 
     def forget(self, url: str) -> None:
         """Companion to ProcessingState.forget: clear the session-local dedup sets so a
