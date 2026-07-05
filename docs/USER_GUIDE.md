@@ -94,6 +94,10 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
 - **🏷️ Add Tags** — type tags space/comma-separated, no `#` needed. Add-only. Typed tags
   are checked against the vault: near-duplicates (airfryer vs air-fryer) get a one-tap
   "Use existing" swap offer.
+- **Tags are always lowercase.** Whatever you type (`BBQ`, `#Air-Fryer`) — and whatever
+  the AI generates — is normalized to lowercase at every entry point (Add Tags, `/tag
+  add`, NL Edit, swaps) before it reaches the card or the note, so case-variant duplicate
+  tags can't happen.
 - **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly. Removed one by
   accident? **↩ Undo All** restores the tag list exactly as it was when you opened the
   remover, so you can start over. The message names the save it belongs to and has a

@@ -34,6 +34,11 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   `docs/PLAN.md`), in the **same commit** as the related change. Chat-only decisions get lost.
 - **Docs system:** `CLAUDE.md` (auto-loaded orientation) + `docs/HANDBOOK.md` (recreate/maintain)
   + `docs/ROADMAP.md` (this file). Update the relevant doc in the same commit as each change.
+- **Tags are all-lowercase (Bora, 2026-07-05).** Every tag — AI-generated or user-typed — is
+  normalized by `clean_tags()` (src/utils/tag_index.py) at every entry point (processor,
+  Add-Tags modal, `/tag add`, NL edit, near-dup swap) plus a write-time backstop in
+  `bot._finalize()`. The lowercase mirror of the ALL-CAPS `clean_folder_path()` convention
+  for folders. Don't add a tag entry point without routing it through `clean_tags()`.
 
 ---
 

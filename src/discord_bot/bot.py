@@ -19,7 +19,7 @@ from src.notes.formatter import format_note
 from src.utils.cookie_checker import check_all_cookies
 from src.utils.file_io import remove_url_from_inbox
 from src.utils.preferences import PreferencesStore
-from src.utils.tag_index import get_tag_index
+from src.utils.tag_index import clean_tags, get_tag_index
 from src.utils.url_parser import normalize_url
 from src.utils.vault_scanner import clean_folder_path
 
@@ -252,7 +252,9 @@ class TagSwapView(discord.ui.View):
                 if t not in seen:
                     seen.add(t)
                     tags.append(t)
-            pending.ai_result["tags"] = tags
+            # The swapped-in vault tag may have been hand-typed uppercase in Obsidian —
+            # normalize so the all-lowercase convention holds.
+            pending.ai_result["tags"] = clean_tags(tags)
             self.bot.store.update(pending)
             rest = [p for p in self.pairs if p != (typed, existing)]
             preview = "  ".join(f"`{t}`" for t in tags)
@@ -328,7 +330,7 @@ def _parse_tags_to_add(raw: str) -> tuple[list[str], list[str]]:
         if token.startswith("-"):
             skipped.append(token)
             continue
-        t = token.lstrip("+#").strip()
+        t = token.lstrip("+#").strip().lower()  # tags are all-lowercase by convention
         if t and t not in to_add:
             to_add.append(t)
     return to_add, skipped
@@ -465,7 +467,7 @@ class SAVESBot(discord.Client):
         if not pending:
             await interaction.response.send_message("No pending saves.", ephemeral=True)
             return
-        t = tag.strip().lstrip("#")
+        t = tag.strip().lstrip("#").lower()  # tags are all-lowercase by convention
         if not t:
             await interaction.response.send_message("Empty tag.", ephemeral=True)
             return
@@ -740,14 +742,15 @@ class SAVESBot(discord.Client):
                 applied += 1
             elif action == "add_tags" and value:
                 tags = list(pending.ai_result.get("tags") or [])
-                for t in value:
+                for t in clean_tags(value):
                     if t not in tags:
                         tags.append(t)
                 pending.ai_result["tags"] = tags
                 applied += 1
             elif action == "remove_tags" and value:
+                to_remove = set(clean_tags(value))
                 pending.ai_result["tags"] = [
-                    t for t in (pending.ai_result.get("tags") or []) if t not in value
+                    t for t in (pending.ai_result.get("tags") or []) if t not in to_remove
                 ]
                 applied += 1
             elif action == "rename_title" and value:
@@ -817,6 +820,10 @@ class SAVESBot(discord.Client):
             chapters=cs.get("chapters"),
             top_comments=cs.get("top_comments"),
         )
+
+        # Write-time backstop for the all-lowercase tag convention: covers approval cards
+        # created before the convention existed (their stored tags may be mixed-case).
+        pending.ai_result["tags"] = clean_tags(pending.ai_result.get("tags"))
 
         alert_channel = self._discord_cfg.get("channel_alerts", "SAVES-alerts")
         try:

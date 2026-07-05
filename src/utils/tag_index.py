@@ -30,6 +30,22 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def clean_tags(tags) -> list[str]:
+    """Normalize tags to the canonical form SAVES writes: lowercase, stripped, no leading
+    '#'. Mirrors clean_folder_path for paths — applied at EVERY tag entry point (AI
+    generation in the processor, Add-Tags modal, /tag add, NL edit, near-dup swap) so
+    case-variant duplicate tags (BBQ vs bbq) can't happen. Order-preserving; collisions
+    that only differ by case/whitespace dedupe to the first occurrence."""
+    out: list[str] = []
+    for t in tags or []:
+        if not t:  # None/empty would otherwise stringify to a literal "none"/"" tag
+            continue
+        t = str(t).strip().lstrip("#").lower()
+        if t and t not in out:
+            out.append(t)
+    return out
+
 # Notes can be long (full localized articles); 256KB covers them while keeping a big
 # vault scan bounded.
 _MAX_NOTE_BYTES = 262144

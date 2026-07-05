@@ -258,6 +258,9 @@ Every approval message has (in this order — Bora, 2026-07-05):
   removal lives on the next button. Typed tags are checked against the vault tag index and
   near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap button.
   (custom_id stays `edit_tags` so pre-rename approval cards keep working.)
+  **All tags are forced lowercase** by `clean_tags()` (tag_index.py) at every entry point —
+  AI generation (processor), this modal, `/tag add`, NL edit, swap — plus a write-time
+  backstop in `_finalize()`; the lowercase mirror of `clean_folder_path()` for paths.
 - **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly.
   **↩ Undo All** restores the open-time snapshot; header names the save + jump-link to its
   card (ephemeral messages always land at channel bottom — Discord limitation)
