@@ -304,8 +304,8 @@ final folder back. The system literally learns your filing habits per source.
 
 ## 7. Discord surface — every button explained
 
-Channels: `#SAVES-approvals` (cards), `#SAVES-logs` (successes, duplicates), `#SAVES-alerts`
-(failures, cookie expiry).
+Channels: `#SAVES-approvals` (cards + duplicate notices — both carry decisions), `#SAVES-logs`
+(successes), `#SAVES-alerts` (failures, cookie expiry).
 
 Button order (Bora, 2026-07-05): Approve, Add Tags, Remove Tags, Change Path, NL Edit
 (Deep fact-check on the second row when the topic is checkable).
@@ -333,7 +333,7 @@ are the only search-as-you-type surfaces):
 | `/tag add <tag> [item]` | Adds a tag to a pending save. `tag` autocompletes over the **vault tag index** (frontmatter `tags:`/`tag:` + inline body `#tags`, usage-count ranked); `item` picks which pending save (default newest). |
 | `/forget <url>` | Drops a URL from `processing_state.json` so it can be saved again — deleting the note in Obsidian does **not** do this (state, not the vault, is the dedup authority). `url` autocompletes over saved history (done + permanently-failed). |
 
-**Duplicate notice buttons** (`DuplicateNoticeView`, posted to `#SAVES-logs` when a pasted
+**Duplicate notice buttons** (`DuplicateNoticeView`, posted to `#SAVES-approvals` when a pasted
 URL was already saved): **🔁 Re-save** = forget + retire the old note to `<name>.md.bak`
 (rename, never delete; timestamped on collision) + requeue directly through the pipeline —
 no re-paste needed. **✖ Dismiss** = keep the existing note. The view is in-memory only:

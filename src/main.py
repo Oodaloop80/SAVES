@@ -66,7 +66,10 @@ async def main():
 
     loop = asyncio.get_running_loop()
 
-    log_channel = config.get("discord", {}).get("channel_log", "SAVES-logs")
+    # The duplicate notice carries the 🔁 Re-save / ✖ Dismiss buttons — it's an actionable
+    # decision, so it goes to #SAVES-approvals alongside the normal approval cards (Bora,
+    # 2026-07-05), not to the passive #SAVES-logs feed.
+    approvals_channel = config.get("discord", {}).get("channel_approvals", "SAVES-approvals")
 
     async def scan_inbox():
         """Queue new URLs and, for any already-saved duplicates, ping Discord and drop the
@@ -80,7 +83,7 @@ async def main():
         await bot.wait_until_ready()
         duplicates = await queue_manager.enqueue_from_file(inbox_path)
         for raw_url, existing_path in duplicates:
-            await send_duplicate_notice(bot, log_channel, raw_url, existing_path)
+            await send_duplicate_notice(bot, approvals_channel, raw_url, existing_path)
             try:
                 remove_url_from_inbox(inbox_path, raw_url)
             except Exception as e:

@@ -33,8 +33,9 @@ skipped as a duplicate, forever, until you tell the state file to forget it.
 
 When you paste an already-saved URL:
 
-1. A **"🔁 Duplicate — already saved"** notice appears in `#SAVES-logs` (with the existing
-   note's path), the line is cleared from the inbox, and **no tokens are spent**.
+1. A **"🔁 Duplicate — already saved"** notice appears in `#SAVES-approvals` (with the
+   existing note's path) — it lives with the normal approval cards because it carries a
+   decision. The line is cleared from the inbox, and **no tokens are spent**.
 2. The notice has two buttons:
    - **🔁 Re-save** — forgets the URL, **renames the old note to `<name>.md.bak`** (never
      deleted — zero-delete policy; a second re-save gets a timestamped `.bak` so nothing is

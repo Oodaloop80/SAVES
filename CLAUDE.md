@@ -230,8 +230,9 @@ note's metadata. Deterministic core is unit-tested; the Playwright fetch needs l
 
 **Duplicate detection (`queue_manager.py` + `main.py`):** `enqueue_from_file()` returns
 already-saved URLs (matched via normalized-URL `ProcessingState.is_done`) instead of silently
-skipping; `main.py`'s `scan_inbox()` posts a `send_duplicate_notice()` to `#SAVES-logs` and
-clears the line from the inbox — so no tokens are spent reprocessing. Behind
+skipping; `main.py`'s `scan_inbox()` posts a `send_duplicate_notice()` to `#SAVES-approvals`
+(it carries the Re-save/Dismiss decision buttons, so it sits with the normal approval cards)
+and clears the line from the inbox — so no tokens are spent reprocessing. Behind
 `processing.skip_duplicates` (default on). **The authority is `processing_state.json`, NOT
 the vault** — deleting a note in Obsidian does not clear it.
 
