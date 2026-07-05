@@ -92,7 +92,12 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
 - **🏷️ Add Tags** — type tags space/comma-separated, no `#` needed. Add-only. Typed tags
   are checked against the vault: near-duplicates (airfryer vs air-fryer) get a one-tap
   "Use existing" swap offer.
-- **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly.
+- **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly. Removed one by
+  accident? **↩ Undo All** restores the tag list exactly as it was when you opened the
+  remover, so you can start over. The message names the save it belongs to and has a
+  **jump to card** link — Discord always drops these ephemeral messages at the bottom of
+  the channel (they can't be pinned under the card), so with several saves queued, check
+  the header/link to stay oriented.
 - **📁 Change Path** — prepopulated with the current path; tweak, don't retype. Whatever
   you enter is normalized to ALL CAPS + forward slashes automatically.
 - **✏️ NL Edit** — plain English; costs one extra Claude call. One instruction can do

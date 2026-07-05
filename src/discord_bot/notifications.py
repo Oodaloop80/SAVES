@@ -53,12 +53,15 @@ def build_approval_embed(pending) -> discord.Embed:
                 inline=False,
             )
         elif fc.get("disputed_claims"):
-            dispute_lines = []
-            for claim in fc["disputed_claims"][:3]:
-                dispute_lines.append(f"• {claim.get('claim', '')[:80]}")
+            # Discord's field cap is 1024 chars; the old 3×80-char slice cut findings
+            # mid-sentence. Show up to 5 claims at readable length and say how many more.
+            claims = fc["disputed_claims"]
+            dispute_lines = [f"• {c.get('claim', '')[:180]}" for c in claims[:5]]
+            if len(claims) > 5:
+                dispute_lines.append(f"…and {len(claims) - 5} more — 🔍 Deep fact-check for the full list.")
             embed.add_field(
-                name=f"⚠️ Disputed Claims ({len(fc['disputed_claims'])})",
-                value="\n".join(dispute_lines)[:512],
+                name=f"⚠️ Disputed Claims ({len(claims)})",
+                value="\n".join(dispute_lines)[:1024],
                 inline=False,
             )
         # Cross-cutting flags (media authenticity, conflict of interest, scam, tax, etc.)
@@ -68,12 +71,14 @@ def build_approval_embed(pending) -> discord.Embed:
         ]
         if warn_flags:
             flag_lines = [
-                f"• **{f.get('type', 'flag').replace('_', ' ').title()}:** {f.get('detail', '')[:80]}"
-                for f in warn_flags[:4]
+                f"• **{f.get('type', 'flag').replace('_', ' ').title()}:** {f.get('detail', '')[:180]}"
+                for f in warn_flags[:5]
             ]
+            if len(warn_flags) > 5:
+                flag_lines.append(f"…and {len(warn_flags) - 5} more.")
             embed.add_field(
                 name=f"⚠️ Flags ({len(warn_flags)})",
-                value="\n".join(flag_lines)[:512],
+                value="\n".join(flag_lines)[:1024],
                 inline=False,
             )
 
@@ -85,18 +90,18 @@ def build_approval_embed(pending) -> discord.Embed:
         confidence = lc.get("confidence", "?")
         embed.add_field(
             name=f"⚠️ Location Disputed ({confidence} confidence)",
-            value=f"Stated: **{stated}** → Claimed actual: **{actual}**\n{lc.get('evidence', '')[:200]}",
+            value=f"Stated: **{stated}** → Claimed actual: **{actual}**\n{lc.get('evidence', '')[:700]}"[:1024],
             inline=False,
         )
     if lc and lc.get("advisories"):
         adv_lines = [
-            f"• **{a.get('type', 'advisory').replace('_', ' ').title()}:** {a.get('detail', '')[:80]}"
-            for a in lc["advisories"][:4] if isinstance(a, dict)
+            f"• **{a.get('type', 'advisory').replace('_', ' ').title()}:** {a.get('detail', '')[:180]}"
+            for a in lc["advisories"][:5] if isinstance(a, dict)
         ]
         if adv_lines:
             embed.add_field(
                 name="⚠️ Travel Advisories",
-                value="\n".join(adv_lines)[:512],
+                value="\n".join(adv_lines)[:1024],
                 inline=False,
             )
 

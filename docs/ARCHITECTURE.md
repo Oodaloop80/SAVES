@@ -314,7 +314,7 @@ Button order (Bora, 2026-07-05): Approve, Add Tags, Remove Tags, Change Path, NL
 |---|---|
 | ✅ **Approve** | Writes the note, learns the folder preference, marks done, removes the inbox line |
 | 🏷️ **Add Tags** | Modal; just type tags (space/comma separated, no `+` prefix). Add-only — removal is the next button. Typed tags are fuzzy-checked against the vault tag index; near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap. custom_id stays `edit_tags` so pre-rename cards still route. |
-| 🗑️ **Remove Tags** | Ephemeral view with one ✖ button per tag — tap to remove instantly |
+| 🗑️ **Remove Tags** | Ephemeral view with one ✖ button per tag — tap to remove instantly. **↩ Undo All** restores the snapshot taken when the view opened. Header names the save + jump-link to its card (ephemeral messages can't be anchored under the card — Discord limitation). 23 tag buttons + Undo + Done fit the 25-component cap. |
 | 📁 **Change Path** | Modal **prepopulated with the current path**; input is force-uppercased + slash-normalized (`clean_folder_path()`) so case-variant duplicate folders can't happen |
 | ✏️ **NL Edit** | Type instructions in plain English — a second Claude call parses them into structured edits. One instruction may map to several actions ("move to COOKING/BBQ and add a smoker tag"), and it can reference the note's content ("tag every coffee type in the summary" — summary + takeaways are in the prompt). Lenient JSON parse; a parse failure reports an error and keeps the session open (it is never disguised as "cancelled"); a genuine cancel carries the model's reason. |
 | 🔍 **Deep fact-check** | The *only* trigger for web-searched fact-checking (health 6 / finance 3 / political 1 searches) — updates the card with findings |

@@ -257,7 +257,9 @@ Every approval message has (in this order — Bora, 2026-07-05):
   removal lives on the next button. Typed tags are checked against the vault tag index and
   near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap button.
   (custom_id stays `edit_tags` so pre-rename approval cards keep working.)
-- **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly
+- **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly.
+  **↩ Undo All** restores the open-time snapshot; header names the save + jump-link to its
+  card (ephemeral messages always land at channel bottom — Discord limitation)
 - **📁 Change Path** — modal **prepopulated with the current path** (tweak, don't retype);
   input is force-normalized by `clean_folder_path()` (vault_scanner) → ALL CAPS, forward
   slashes — applied at every entry point (AI generation, this modal, NL edit) so case-variant

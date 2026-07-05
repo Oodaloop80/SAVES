@@ -70,9 +70,16 @@ class ApprovalView(discord.ui.View):
         if not tags:
             await interaction.response.send_message("No tags to remove.", ephemeral=True)
             return
-        view = TagRemoveView(self.bot, self.pending_id, tags)
+        # Ephemeral messages always land at the bottom of the channel (Discord limitation —
+        # they can't be anchored under the card), so with several saves queued the header
+        # names the save and links back to its card.
+        title = (pending.ai_result.get("title") or pending.url)[:80]
+        header = f"Removing tags for **{title}**"
+        if interaction.message:  # the approval card this button sits on
+            header += f" — [jump to card]({interaction.message.jump_url})"
+        view = TagRemoveView(self.bot, self.pending_id, tags, header=header)
         await interaction.response.send_message(
-            "Tap a tag to remove it:",
+            f"{header}\nTap a tag to remove it:",
             view=view,
             ephemeral=True,
         )
@@ -128,18 +135,40 @@ class TagRemoveView(discord.ui.View):
 
     Replaced the earlier multi-select dropdown: one tap per unwanted tag beats
     open-dropdown → tick → confirm, especially on mobile. The view re-renders with the
-    removed button gone after each tap. Discord caps a view at 25 components (5 rows × 5),
-    so 24 tag buttons + Done; generated tags stay far below that."""
+    removed button gone after each tap.
 
-    def __init__(self, bot: "SAVESBot", pending_id: str, tags: list[str]):
+    `header` names the save being edited (+ a jump-link back to its approval card) —
+    ephemeral messages always land at the bottom of the channel (Discord limitation, they
+    can't be anchored under the card), so with several saves queued the header is what
+    keeps you oriented. `original` is the tag list snapshotted when the view was FIRST
+    opened; ↩ Undo All restores it — an accidental ✖ is one tap from recovered.
+    Discord caps a view at 25 components (5 rows × 5), so 23 tag buttons + Undo + Done."""
+
+    def __init__(
+        self,
+        bot: "SAVESBot",
+        pending_id: str,
+        tags: list[str],
+        original: list[str] | None = None,
+        header: str = "",
+    ):
         super().__init__(timeout=300)
         self.bot = bot
         self.pending_id = pending_id
-        for tag in tags[:24]:
+        # Snapshot from the first render; re-renders pass it through unchanged.
+        self.original = list(original) if original is not None else list(tags)
+        self.header = header
+        for tag in tags[:23]:
             self.add_item(self._make_tag_button(tag))
+        undo = discord.ui.Button(label="↩ Undo All", style=discord.ButtonStyle.secondary)
+        undo.callback = self._on_undo
+        self.add_item(undo)
         done = discord.ui.Button(label="Done", style=discord.ButtonStyle.primary)
         done.callback = self._on_done
         self.add_item(done)
+
+    def _content(self, line: str) -> str:
+        return f"{self.header}\n{line}" if self.header else line
 
     def _make_tag_button(self, tag: str) -> discord.ui.Button:
         btn = discord.ui.Button(label=f"✖ {tag}"[:80], style=discord.ButtonStyle.secondary)
@@ -152,27 +181,43 @@ class TagRemoveView(discord.ui.View):
             remaining = [t for t in (pending.ai_result.get("tags") or []) if t != tag]
             pending.ai_result["tags"] = remaining
             self.bot.store.update(pending)
+            next_view = TagRemoveView(
+                self.bot, self.pending_id, remaining,
+                original=self.original, header=self.header,
+            )
             if remaining:
-                await interaction.response.edit_message(
-                    content=f"Removed `{tag}` — tap more to remove, or **Done**.",
-                    view=TagRemoveView(self.bot, self.pending_id, remaining),
-                )
+                line = f"Removed `{tag}` — tap more to remove, **↩ Undo All**, or **Done**."
             else:
-                await interaction.response.edit_message(
-                    content=f"Removed `{tag}`. No tags left.\nUse ✅ Approve when ready.",
-                    view=None,
-                )
+                line = f"Removed `{tag}`. No tags left — **↩ Undo All** to restore them."
+            await interaction.response.edit_message(content=self._content(line), view=next_view)
             await self.bot._refresh_card(pending)
 
         btn.callback = _remove
         return btn
+
+    async def _on_undo(self, interaction: discord.Interaction):
+        """Restore the tag list captured when this removal session started."""
+        pending = self.bot.store.get_by_id(self.pending_id)
+        if not pending:
+            await interaction.response.edit_message(content="Already processed.", view=None)
+            return
+        pending.ai_result["tags"] = list(self.original)
+        self.bot.store.update(pending)
+        await interaction.response.edit_message(
+            content=self._content("↩ Restored the original tags — start over or **Done**."),
+            view=TagRemoveView(
+                self.bot, self.pending_id, self.original,
+                original=self.original, header=self.header,
+            ),
+        )
+        await self.bot._refresh_card(pending)
 
     async def _on_done(self, interaction: discord.Interaction):
         pending = self.bot.store.get_by_id(self.pending_id)
         tags = (pending.ai_result.get("tags") or []) if pending else []
         remaining = "  ".join(f"`{t}`" for t in tags)
         await interaction.response.edit_message(
-            content=f"**Tags:** {remaining or '*(none)*'}\nUse ✅ Approve when ready.",
+            content=self._content(f"**Tags:** {remaining or '*(none)*'}\nUse ✅ Approve when ready."),
             view=None,
         )
 
