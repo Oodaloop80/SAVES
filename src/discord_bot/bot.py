@@ -6,6 +6,8 @@ from discord.ext import tasks
 
 from src.discord_bot.approval import PendingApproval, PendingApprovalsStore
 from src.discord_bot.notifications import (
+    _get_channel,
+    build_approval_embed,
     send_alert,
     send_approval_request,
     send_cookie_warning,
@@ -17,6 +19,8 @@ from src.utils.cookie_checker import check_all_cookies
 from src.utils.file_io import remove_url_from_inbox
 from src.utils.preferences import PreferencesStore
 from src.utils.tag_index import get_tag_index
+from src.utils.url_parser import normalize_url
+from src.utils.vault_scanner import clean_folder_path
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +114,6 @@ class ApprovalView(discord.ui.View):
             return
         # Re-render with the web-searched results: new embed + refreshed view (warning variant
         # now that flags are present, and the deep-check button dropped since it's done).
-        from src.discord_bot.notifications import build_approval_embed
         embed = build_approval_embed(pending)
         new_view = self.bot._build_view(pending)
         await interaction.edit_original_response(
@@ -158,6 +161,7 @@ class TagRemoveView(discord.ui.View):
                     content=f"Removed `{tag}`. No tags left.\nUse ✅ Approve when ready.",
                     view=None,
                 )
+            await self.bot._refresh_card(pending)
 
         btn.callback = _remove
         return btn
@@ -210,6 +214,7 @@ class TagSwapView(discord.ui.View):
                 content=f"✅ Swapped `{typed}` → `{existing}`.\n**Tags:** {preview}",
                 view=TagSwapView(self.bot, self.pending_id, rest) if rest else None,
             )
+            await self.bot._refresh_card(pending)
 
         btn.callback = _swap
         return btn
@@ -234,7 +239,7 @@ class ApprovalViewWithWarning(ApprovalView):
 
 class PathModal(discord.ui.Modal, title="Change Path"):
     new_path = discord.ui.TextInput(
-        label="New folder path",
+        label="New folder path (auto-uppercased)",
         placeholder="SAVES/COOKING/SMOKING",
         style=discord.TextStyle.short,
     )
@@ -243,18 +248,23 @@ class PathModal(discord.ui.Modal, title="Change Path"):
         super().__init__()
         self.bot = bot
         self.pending_id = pending_id
+        # Prepopulate with the current path so a tweak is an edit, not a full retype.
+        pending = bot.store.get_by_id(pending_id)
+        if pending:
+            self.new_path.default = pending.ai_result.get("folder_path") or ""
 
     async def on_submit(self, interaction: discord.Interaction):
         pending = self.bot.store.get_by_id(self.pending_id)
         if not pending:
             await interaction.response.send_message("Item already processed.", ephemeral=True)
             return
-        pending.ai_result["folder_path"] = self.new_path.value.strip()
+        pending.ai_result["folder_path"] = clean_folder_path(self.new_path.value)
         self.bot.store.update(pending)
         await interaction.response.send_message(
-            f"✅ Path updated to `{pending.ai_result['folder_path']}`\n"
-            f"Use ✅ Approve when ready.", ephemeral=True
+            f"✅ Path updated to `{pending.ai_result['folder_path']}` — card updated.",
+            ephemeral=True,
         )
+        await self.bot._refresh_card(pending)
 
 
 def _parse_tags_to_add(raw: str) -> tuple[list[str], list[str]]:
@@ -315,7 +325,7 @@ class AddTagsModal(discord.ui.Modal, title="Add Tags"):
             logger.debug("Tag near-duplicate check skipped: %s", e)
 
         preview = " ".join(f"#{t}" for t in tags)
-        msg = f"✅ Tags: {preview}\nUse ✅ Approve when ready."
+        msg = f"✅ Tags: {preview}\nCard updated — use ✅ Approve when ready."
         if skipped_removals:
             skipped = " ".join(f"`{t}`" for t in skipped_removals)
             msg += f"\nℹ️ Ignored {skipped} — removing tags moved to the 🗑️ Remove Tags button."
@@ -332,6 +342,7 @@ class AddTagsModal(discord.ui.Modal, title="Add Tags"):
             )
         else:
             await interaction.response.send_message(msg, ephemeral=True)
+        await self.bot._refresh_card(pending)
 
 
 class SAVESBot(discord.Client):
@@ -347,7 +358,10 @@ class SAVESBot(discord.Client):
         self.store = PendingApprovalsStore(paths.get("pending_approvals_file", "pending_approvals.json"))
         self._discord_cfg = config.get("discord", {})
         self._commands_synced = False
-        self._register_tag_commands()
+        # Wired by main.py after construction; lets /forget clear the session-local
+        # enqueue-dedup sets so a forgotten URL re-pasted in the same process re-queues.
+        self.queue_manager = None
+        self._register_commands()
 
     # ---- /tag slash commands -------------------------------------------------------
 
@@ -393,21 +407,78 @@ class SAVESBot(discord.Client):
             await interaction.response.send_message("Empty tag.", ephemeral=True)
             return
         tags = list(pending.ai_result.get("tags") or [])
-        if t not in tags:
+        changed = t not in tags
+        if changed:
             tags.append(t)
             pending.ai_result["tags"] = tags
             self.store.update(pending)
         preview = " ".join(f"#{x}" for x in tags)
         title = (pending.ai_result.get("title") or pending.url)[:80]
         await interaction.response.send_message(
-            f"✅ Added `{t}` to **{title}**\nTags: {preview}\nUse ✅ Approve when ready.",
+            f"✅ Added `{t}` to **{title}**\nTags: {preview}\n"
+            f"Card updated — use ✅ Approve when ready.",
             ephemeral=True,
         )
+        if changed:
+            await self._refresh_card(pending)
 
-    def _register_tag_commands(self) -> None:
-        """/tag add — the only Discord surface with real search-as-you-type: slash-command
-        option autocomplete. (Modal text inputs cannot autocomplete — a Discord platform
-        limitation — so the Add-Tags modal gets a submit-time near-duplicate check instead.)"""
+    def _forget_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
+        """Autocomplete for /forget: URLs from the processing state, newest first. Offers
+        'done' (the duplicate-notice case) and 'failed_permanent' (retry a dead extract)
+        entries; other statuses re-run by themselves. URLs longer than Discord's 100-char
+        Choice value limit are skipped — paste those in full instead."""
+        if self.state is None:
+            return []
+        cur = (current or "").lower()
+        entries = sorted(
+            self.state.entries().items(),
+            key=lambda kv: kv[1].get("timestamp", 0),
+            reverse=True,
+        )
+        out: list[discord.app_commands.Choice[str]] = []
+        for url, entry in entries:
+            status = entry.get("status")
+            if status not in ("done", "failed_permanent") or len(url) > 100:
+                continue
+            if cur and cur not in url.lower():
+                continue
+            name = url if status == "done" else f"[failed] {url}"
+            out.append(discord.app_commands.Choice(name=name[:100], value=url))
+            if len(out) == 25:
+                break
+        return out
+
+    async def _forget_impl(self, interaction: discord.Interaction, url: str):
+        if self.state is None:
+            await interaction.response.send_message(
+                "State tracking isn't available in this process.", ephemeral=True
+            )
+            return
+        raw = url.strip()
+        target = normalize_url(raw)
+        # State keys are normalized URLs, but tolerate an entry stored under the raw
+        # form (e.g. from an older run before enqueue normalization).
+        existed = self.state.forget(target)
+        if not existed and raw != target:
+            existed = self.state.forget(raw)
+        if self.queue_manager is not None:
+            self.queue_manager.forget(target)
+        if existed:
+            await interaction.response.send_message(
+                f"🧹 Forgot `{target}` — paste it into the inbox to reprocess it.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Nothing in the saved history matches `{target}`.", ephemeral=True
+            )
+
+    def _register_commands(self) -> None:
+        """Slash commands. /tag add — the only Discord surface with real search-as-you-type:
+        slash-command option autocomplete. (Modal text inputs cannot autocomplete — a Discord
+        platform limitation — so the Add-Tags modal gets a submit-time near-duplicate check
+        instead.) /forget — drop a URL from the processing state so it can be saved again;
+        deleting the note in Obsidian alone does NOT do that (state is the authority)."""
         bot = self
         tag_group = discord.app_commands.Group(
             name="tag", description="Tag tools for pending saves"
@@ -434,6 +505,22 @@ class SAVESBot(discord.Client):
 
         self.tree.add_command(tag_group)
 
+        @discord.app_commands.command(
+            name="forget",
+            description="Forget a saved URL so it can be reprocessed (deleting its note in Obsidian isn't enough)",
+        )
+        @discord.app_commands.describe(
+            url="The URL to forget — suggestions come from your saved history"
+        )
+        async def forget_cmd(interaction: discord.Interaction, url: str):
+            await bot._forget_impl(interaction, url)
+
+        @forget_cmd.autocomplete("url")
+        async def _forget_ac(interaction: discord.Interaction, current: str):
+            return bot._forget_choices(current)
+
+        self.tree.add_command(forget_cmd)
+
     def _build_view(self, pending: PendingApproval) -> ApprovalView:
         """Pick the approval-view variant for an item: the warning variant when fact-check or
         location flags are present, else the standard one. Both carry the item's *real*
@@ -449,6 +536,26 @@ class SAVESBot(discord.Client):
         show_deep = any(t in checkable for t in topics) and not ai.get("_deep_fact_check_done")
         cls = ApprovalViewWithWarning if has_flags else ApprovalView
         return cls(self, pending.id, show_deep_button=show_deep)
+
+    async def _refresh_card(self, pending: PendingApproval) -> None:
+        """Re-render the item's ORIGINAL approval message (embed + buttons) with its current
+        state. Called after every mutation — Add Tags, Remove Tags, tag swap, /tag add,
+        Change Path, NL edit — so the card always shows what will actually be approved.
+        Before this existed, edits lived only in the store and the stale card made every
+        approval look like approving unedited content (Bora, 2026-07-05). Best-effort: a
+        missing card (deleted message, renamed channel) must never block the edit itself."""
+        if pending.discord_message_id is None:
+            return
+        channel_name = self._discord_cfg.get("channel_approvals", "SAVES-approvals")
+        channel = _get_channel(self, channel_name)
+        if channel is None:
+            logger.warning("Card refresh skipped: channel #%s not found", channel_name)
+            return
+        try:
+            msg = await channel.fetch_message(pending.discord_message_id)
+            await msg.edit(embed=build_approval_embed(pending), view=self._build_view(pending))
+        except discord.HTTPException as e:
+            logger.warning("Could not refresh approval card for %s: %s", pending.url, e)
 
     async def _run_deep_fact_check(self, pending: PendingApproval):
         """Run the on-demand web-searched fact-check for a pending item, store the result on
@@ -547,7 +654,7 @@ class SAVESBot(discord.Client):
         value = result.get("value")
 
         if action == "change_path" and value:
-            pending.ai_result["folder_path"] = value
+            pending.ai_result["folder_path"] = clean_folder_path(value)
         elif action == "add_tags" and value:
             tags = list(pending.ai_result.get("tags") or [])
             for t in value:
@@ -567,13 +674,18 @@ class SAVESBot(discord.Client):
 
         self.store.update(pending)
         _nl_edit_sessions.pop(message.channel.id, None)
+        # Re-render the approval card FIRST — it is the thing the user approves from, so it
+        # must show the edit. (The old flow updated only the store and replied with a
+        # preview capped at 8 tags: NL-added tags append at the END of the list, so "add
+        # tags for each AI tool" looked like a no-op even though it applied.)
+        await self._refresh_card(pending)
 
         preview = (
-            f"Updated preview:\n"
+            f"✅ Applied — the approval card is updated:\n"
             f"**Title:** {pending.ai_result.get('title')}\n"
             f"**Path:** {pending.ai_result.get('folder_path')}\n"
-            f"**Tags:** {' '.join('#'+t for t in (pending.ai_result.get('tags') or [])[:8])}\n\n"
-            f"Use ✅ Approve button to finalize."
+            f"**Tags:** {' '.join('#' + t for t in (pending.ai_result.get('tags') or []))}\n\n"
+            f"Use ✅ Approve on the card to finalize."
         )
         await message.reply(preview)
 

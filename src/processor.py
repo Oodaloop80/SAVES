@@ -17,7 +17,7 @@ from src.utils.preferences import PreferencesStore, get_source_key
 from src.utils.recipe_data import apply_structured_recipe
 from src.utils.tag_index import get_tag_index
 from src.utils.url_parser import detect_platform, normalize_url
-from src.utils.vault_scanner import scan_saves_folders
+from src.utils.vault_scanner import clean_folder_path, scan_saves_folders
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,11 @@ async def _process_one(
     # Backfill recipe_* fields from the page's authoritative schema.org Recipe data (exact
     # quantities + every step), so accuracy doesn't hinge on the model transcribing a long page.
     ai_result = apply_structured_recipe(ai_result, content)
+
+    # Vault folders are ALL CAPS by convention — force it on the generated path so a
+    # lowercase slip from the model can't create a case-variant duplicate folder.
+    if ai_result.get("folder_path"):
+        ai_result["folder_path"] = clean_folder_path(ai_result["folder_path"])
 
     # 7. Fact-check (health/political/finance) and travel location check in parallel.
     # The automatic pass is LOCAL ONLY (allow_web_search=False) — it surfaces the cheap,

@@ -1,6 +1,7 @@
 """Vault-wide tag index: what tags exist, and how often each is used.
 
-Scans every note's YAML frontmatter for `tags:` and keeps a usage count. Powers:
+Scans every note for tags — frontmatter `tags:`/`tag:` plus inline body `#tags`, i.e.
+everything Obsidian itself counts as a tag — and keeps a usage count. Powers:
   - the `/tag add` slash command's search-as-you-type autocomplete,
   - the Edit-Tags modal's "did you mean an existing tag?" fuzzy check,
   - the analysis prompt's existing-tags hint (so Claude reuses the vault's taxonomy
@@ -21,12 +22,20 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Frontmatter lives at the top of the file; reading the whole note just for it would make
-# large vault scans needlessly slow. 8KB covers any sane frontmatter block.
-_HEAD_BYTES = 8192
+# Notes can be long (full localized articles); 256KB covers them while keeping a big
+# vault scan bounded.
+_MAX_NOTE_BYTES = 262144
 _REFRESH_TTL_SECONDS = 300
 # Vault housekeeping dirs that hold no user notes.
 _SKIP_DIRS = {".obsidian", ".trash", ".git", ".stfolder", ".stversions"}
+
+# Inline body tags, Obsidian-style: `#tag`, `#air-fryer`, `#food/recipes` — only when
+# preceded by start-of-line/whitespace so URL anchors (example.com#section) don't match.
+_INLINE_TAG_RE = re.compile(r"(?:^|(?<=\s))#([\w/-]+)")
+# Obsidian requires at least one non-numeric character in a tag ("#2024" is not a tag).
+_NUMERIC_ONLY_RE = re.compile(r"[\d/_-]+")
+_CODE_FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
 
 def _normalize(tag: str) -> str:
@@ -34,39 +43,56 @@ def _normalize(tag: str) -> str:
     return re.sub(r"[^a-z0-9]", "", tag.lower())
 
 
-def _frontmatter_tags(path: str) -> list[str]:
-    """Extract the frontmatter `tags:` list from one note. Empty list on any problem —
-    a single malformed note must never break the vault scan."""
+def _parse_frontmatter_tags(fm_text: str) -> list[str]:
+    """Tags from a frontmatter YAML block — both `tags:` and Obsidian's legacy `tag:` key,
+    in list form or inline string form ("tag1, tag2")."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            head = f.read(_HEAD_BYTES)
-    except OSError:
-        return []
-    if not head.startswith("---"):
-        return []
-    end = head.find("\n---", 3)
-    if end == -1:
-        return []
-    try:
-        fm = yaml.safe_load(head[3:end])
+        fm = yaml.safe_load(fm_text)
     except yaml.YAMLError:
         return []
     if not isinstance(fm, dict):
         return []
-    raw = fm.get("tags")
-    if raw is None:
+    out: list[str] = []
+    for key in ("tags", "tag"):
+        raw = fm.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            raw = [t for t in re.split(r"[,\s]+", raw) if t]
+        if not isinstance(raw, list):
+            continue
+        for t in raw:
+            if isinstance(t, str):
+                t = t.strip().lstrip("#")
+                if t and t not in out:
+                    out.append(t)
+    return out
+
+
+def _note_tags(path: str) -> list[str]:
+    """Every tag in one note, deduplicated: frontmatter `tags:`/`tag:` PLUS inline `#tags`
+    in the body — Obsidian treats both as tags, so tags added by hand in the editor count
+    the same as frontmatter ones written by SAVES. Code blocks are stripped first so
+    `#include` in a fenced snippet isn't mistaken for a tag. Empty list on any problem —
+    a single malformed note must never break the vault scan."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(_MAX_NOTE_BYTES)
+    except OSError:
         return []
-    if isinstance(raw, str):
-        # Inline forms: "tag1, tag2" or "tag1 tag2"
-        raw = [t for t in re.split(r"[,\s]+", raw) if t]
-    if not isinstance(raw, list):
-        return []
-    out = []
-    for t in raw:
-        if isinstance(t, str):
-            t = t.strip().lstrip("#")
-            if t:
-                out.append(t)
+    out: list[str] = []
+    body = text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            out.extend(_parse_frontmatter_tags(text[3:end]))
+            body = text[end + 4:]
+    body = _CODE_FENCE_RE.sub(" ", body)
+    body = _INLINE_CODE_RE.sub(" ", body)
+    for m in _INLINE_TAG_RE.finditer(body):
+        t = m.group(1).strip("/")
+        if t and not _NUMERIC_ONLY_RE.fullmatch(t) and t not in out:
+            out.append(t)
     return out
 
 
@@ -87,7 +113,7 @@ class TagIndex:
                 if not fname.endswith(".md"):
                     continue
                 n_files += 1
-                for tag in _frontmatter_tags(os.path.join(dirpath, fname)):
+                for tag in _note_tags(os.path.join(dirpath, fname)):
                     counts[tag] += 1
         # Swap in one assignment so concurrent readers never see a half-built index.
         self._counts = counts

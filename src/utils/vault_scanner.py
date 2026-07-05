@@ -4,6 +4,15 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def clean_folder_path(raw: str) -> str:
+    """Normalize a vault folder path to the house convention: ALL CAPS, forward slashes,
+    no stray leading/trailing slashes. Uppercasing is FORCED (Bora, 2026-07-05) — folders
+    in the vault are all-caps by convention, and normalizing at every entry point (AI
+    generation, Change-Path modal, NL edit) prevents case-variant duplicate folders once
+    on the NAS's case-sensitive filesystem."""
+    return (raw or "").replace("\\", "/").strip().strip("/").upper()
+
+
 def scan_saves_folders(
     saves_root: str,
     max_depth: int = 5,

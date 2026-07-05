@@ -151,8 +151,20 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       no +/- syntax, add-only (removal = 🗑️ Remove Tags); stray `-tag` tokens are skipped
       with a pointer, not added literally. Button order now Approve → Add Tags → Remove Tags
       → Change Path → NL Edit. custom_id kept as `edit_tags` for pre-rename cards.
+- [x] **Live-edit fidelity batch (2026-07-05, from Bora's first live approval session):**
+      (a) `SAVESBot._refresh_card()` — EVERY mutation (Add/Remove/swap tags, `/tag add`,
+      Change Path, NL edit) re-renders the original approval card, so ✅ Approve never sits
+      on stale info; embed + NL reply now list ALL tags (the old 8-tag preview cap hid
+      NL-added tags, which append at the end — the "NL edit didn't apply" report);
+      (b) Change-Path modal prepopulates the current path; `clean_folder_path()` forces
+      ALL-CAPS folder convention at every entry point (AI generation, modal, NL edit);
+      (c) tag index now also reads inline body `#tags` + singular `tag:` key (code blocks/
+      URL anchors/numeric-only excluded) so manually-added Obsidian tags autocomplete too;
+      (d) **/forget** slash command (autocompletes saved history) — `ProcessingState.forget()`
+      + queue-manager session-set clear, the sanctioned way to re-save a URL after deleting
+      its note (state, not the vault, is the duplicate authority). 123 no-token tests.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
-      (now incl. tap-to-remove tags + `/tag add` autocomplete)
+      (now incl. card-refresh-on-edit, `/forget`, + `/tag add` autocomplete)
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
 - [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `0 - INBOX/SAVES.md`

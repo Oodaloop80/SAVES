@@ -61,6 +61,22 @@ class ProcessingState:
         self._state[url] = {"status": "retry_after_auth", "platform": platform, "timestamp": time.time()}
         self._save()
 
+    def forget(self, url: str) -> bool:
+        """Drop a URL's state entry so it can be reprocessed — deleting the note in
+        Obsidian does NOT do this (the vault is never watched for deletions), which is
+        why a deleted-then-repasted URL still reports as a duplicate. Exposed to the
+        user via the /forget slash command. Returns True if an entry existed."""
+        if url in self._state:
+            self._state.pop(url)
+            self._save()
+            return True
+        return False
+
+    def entries(self) -> dict:
+        """Read-only view of the state map (url → {status, path, timestamp}) for
+        autocomplete over saved history."""
+        return dict(self._state)
+
 
 class QueueManager:
     def __init__(self, queue: asyncio.Queue, state: ProcessingState, skip_duplicates: bool = True):
@@ -117,3 +133,10 @@ class QueueManager:
         if duplicates:
             logger.info(f"Detected {len(duplicates)} already-saved duplicate(s)")
         return duplicates
+
+    def forget(self, url: str) -> None:
+        """Companion to ProcessingState.forget: clear the session-local dedup sets so a
+        forgotten URL pasted again in the SAME process actually re-enqueues (without this,
+        a URL saved earlier this session stays blocked by _queued until restart)."""
+        self._queued.discard(url)
+        self._reported_duplicates.discard(url)

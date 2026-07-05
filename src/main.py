@@ -54,6 +54,9 @@ async def main():
     queue_manager = QueueManager(queue, state, skip_duplicates=skip_duplicates)
 
     bot = SAVESBot(config, prefs, state)
+    # /forget needs to clear the queue manager's session dedup sets too, or a URL
+    # forgotten and re-pasted within the same process would stay blocked until restart.
+    bot.queue_manager = queue_manager
 
     # Reconcile crash orphans: URLs that were marked_pending before the pipeline crashed
     # (between mark_pending and bot.store.add) have no Discord card and will never be

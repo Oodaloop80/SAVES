@@ -20,7 +20,10 @@ def build_approval_embed(pending) -> discord.Embed:
     """Build the approval embed for a pending item. Extracted so it can be re-rendered when
     the on-demand deep fact-check completes and populates `_fact_check` with fresh results."""
     ai = pending.ai_result
-    tags_preview = " ".join(f"#{t}" for t in (ai.get("tags") or [])[:8])
+    # ALL tags, not a preview slice — a [:8] cap here made tags added via NL edit /
+    # Add Tags invisible on the card (they append at the end of the list). Discord's
+    # 512-char field cap below still bounds the extreme case.
+    tags_preview = " ".join(f"#{t}" for t in (ai.get("tags") or []))
     summary = ai.get("summary", "")[:300]
 
     embed = discord.Embed(

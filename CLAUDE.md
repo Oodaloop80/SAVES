@@ -72,8 +72,8 @@ SAVES/
 │       ├── file_io.py             # read_inbox(), remove_url_from_inbox() (atomic)
 │       ├── preferences.py         # PreferencesStore — learned folder routing per source
 │       ├── cookie_checker.py      # Checks instagram/tiktok/facebook cookie file mtimes
-│       ├── tag_index.py           # Vault tag index — /tag add autocomplete, near-dup check,
-│       │                          # prompt taxonomy hint (TTL rescan + incremental add)
+│       ├── tag_index.py           # Vault tag index (frontmatter + inline #tags) — /tag add
+│       │                          # autocomplete, near-dup check, prompt taxonomy hint
 │       └── retry.py               # with_retry() decorator — defined but not yet wired in
 ├── scripts/
 │   ├── process_one.py             # CLI test: run full pipeline for one URL, print note
@@ -230,7 +230,11 @@ note's metadata. Deterministic core is unit-tested; the Playwright fetch needs l
 already-saved URLs (matched via normalized-URL `ProcessingState.is_done`) instead of silently
 skipping; `main.py`'s `scan_inbox()` posts a `send_duplicate_notice()` to `#SAVES-logs` and
 clears the line from the inbox — so no tokens are spent reprocessing. Behind
-`processing.skip_duplicates` (default on).
+`processing.skip_duplicates` (default on). **The authority is `processing_state.json`, NOT
+the vault** — deleting a note in Obsidian does not clear it. To deliberately re-save a URL,
+use the **`/forget` slash command** (autocompletes over saved history, done + permanently-
+failed entries): it drops the state entry (`ProcessingState.forget`) and clears the queue
+manager's session dedup sets, then re-pasting the URL reprocesses it.
 
 ---
 
@@ -243,9 +247,18 @@ Every approval message has (in this order — Bora, 2026-07-05):
   near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap button.
   (custom_id stays `edit_tags` so pre-rename approval cards keep working.)
 - **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly
-- **📁 Change Path** — modal prompt → updates folder_path → saves preference
+- **📁 Change Path** — modal **prepopulated with the current path** (tweak, don't retype);
+  input is force-normalized by `clean_folder_path()` (vault_scanner) → ALL CAPS, forward
+  slashes — applied at every entry point (AI generation, this modal, NL edit) so case-variant
+  duplicate folders can't happen
 - **✏️ NL Edit** — natural language edit via a second Claude call
 - **🔍 Deep fact-check** — on-demand web-searched claim verification
+
+**Every mutation re-renders the original approval card** (`SAVESBot._refresh_card`: fetches
+the card by `discord_message_id`, re-edits embed + buttons). Add/Remove/swap tags, `/tag add`,
+Change Path, and NL Edit all call it — so the card the ✅ Approve button sits on always shows
+exactly what will be written. (Before 2026-07-05, edits updated only the store; the stale card
+made approvals look unedited.) The embed lists ALL tags (no 8-tag preview cap).
 
 Discord modals **cannot autocomplete** (platform limitation) — search-as-you-type for tags
 exists only on the `/tag add` slash command below.
@@ -254,10 +267,15 @@ If fact-check or location dispute was found:
 - **⚠️ Approve + Include Warning** — adds `> [!warning]` callout to the written note
 
 **`/tag add` slash command** — search-as-you-type autocomplete over the vault tag index
-(`src/utils/tag_index.py`: frontmatter `tags:` scan, 5-min TTL, incremental bump on note
-write). Suggestions show usage counts; optional `item` param picks which pending save
-(default newest). The same index feeds an existing-tags hint into the analysis prompt so
-Claude reuses the established taxonomy instead of inventing near-duplicate tags.
+(`src/utils/tag_index.py`: frontmatter `tags:`/`tag:` **plus inline body `#tags`** — code
+blocks/URL anchors/numeric-only excluded — 5-min TTL, incremental bump on note write, 256KB
+per-note read cap). Manually-typed Obsidian tags count the same as SAVES-written ones.
+Suggestions show usage counts; optional `item` param picks which pending save (default
+newest). The same index feeds an existing-tags hint into the analysis prompt so Claude
+reuses the established taxonomy instead of inventing near-duplicate tags.
+
+**`/forget` slash command** — drops a URL from `processing_state.json` (+ session dedup sets)
+so it can be saved again; see Duplicate detection above.
 
 ---
 
