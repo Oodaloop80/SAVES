@@ -194,16 +194,24 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 > Raised by Bora (2026-07-05): the vault will eventually hold tens of thousands of saves and
 > an unknown number of tags. Dedup lookups (O(1) dict) and prompt size (top-50 tags / ≤400
 > folders) scale fine; three paths degrade. Correctness is unaffected — these are perf cliffs.
-- [ ] **① Tag-index rescan off the event loop (do proactively — latent bot-freeze).**
-      `TagIndex.refresh()` reads every note in the vault synchronously; the processor already
-      threads it, but the Discord autocomplete callbacks (`_tag_choices`, `close_matches`) call
-      it **on the event loop**, so a TTL-expired rescan on a keystroke freezes the whole bot at
-      scale. Cheap fix: wrap the autocomplete index reads in `asyncio.to_thread`. Structural
-      fix: persist the index to a sidecar + incremental mtime-based updates (no O(vault) read).
-- [ ] **② `processing_state.json` → SQLite** when it gets uncomfortable (~low tens of
-      thousands). Today every mark_*/forget rewrites the whole file (O(n) per save); SQLite gives
-      per-key upserts. Localized to `queue_manager.py` — small public surface
-      (`is_done`/`mark_done`/`forget`/`entries`).
+- [x] **① Tag-index rescan off the event loop — DONE (2026-07-05).** `_tag_choices` is now
+      `async` and dispatches `search()` via `asyncio.to_thread`; the Add-Tags modal runs its
+      near-duplicate check (`_compute_swap_pairs` → `close_matches`) in a thread too; and
+      `TagIndex.refresh()` gained a `threading.Lock` + double-checked TTL so a burst of
+      concurrent autocomplete keystrokes collapses to one vault walk. No keystroke can freeze
+      the loop anymore. Test §18 covers it (8 concurrent rescans → 1 walk).
+  - [ ] ①(b) *(structural, only if the threaded walk itself gets slow on a huge vault)*
+        persist the index to a sidecar + incremental mtime-based updates so a rescan doesn't
+        re-read unchanged notes at all — removes the O(vault) read entirely.
+- [ ] **② `processing_state.json` → SQLite — TRIGGER: ~100k entries** (Bora, 2026-07-05: "I
+      don't think we will [reach it], but if we do"). Today every `mark_*`/`forget` rewrites the
+      whole file (O(n) per save: ~15 MB re-serialized at 100k). Below ~100k the cost is
+      negligible next to extraction + Claude calls — **do not build preemptively.** When the day
+      comes: `state(url PRIMARY KEY, status, path, reason, platform, timestamp)` with per-row
+      `INSERT … ON CONFLICT DO UPDATE`/`DELETE` and indexed `SELECT`s. Localized to
+      `queue_manager.py` — small public surface (`is_done`/`is_processed`/`mark_done`/`forget`/
+      `entries`), fully covered by the section-13 no-token tests. Migration sketch + full detail
+      in ARCHITECTURE §11 ②. Zero-delete policy unaffected (a row `DELETE` is not a file delete).
 - [ ] **③ Autocomplete sorts per keystroke.** `/forget`'s `_forget_choices` sorts the entire
       state dict per keystroke; `search()`/`close_matches()` sort/scan all tags. Risk Discord's
       3s autocomplete deadline + stall the loop at scale. Pre-sort/cap the forget history to

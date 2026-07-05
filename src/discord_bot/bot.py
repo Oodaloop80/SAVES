@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 
@@ -288,6 +289,19 @@ def _parse_tags_to_add(raw: str) -> tuple[list[str], list[str]]:
     return to_add, skipped
 
 
+def _compute_swap_pairs(idx, added: list[str]) -> list[tuple[str, str]]:
+    """For each just-added tag, the single closest existing vault tag (if any) — the
+    near-duplicate swap suggestions offered after an Add-Tags submit. Calls
+    `close_matches`, which may trigger a full-vault rescan, so this must run in a worker
+    thread (asyncio.to_thread) off the event loop, not inline in the modal handler."""
+    pairs: list[tuple[str, str]] = []
+    for t in added:
+        for cand in idx.close_matches(t):
+            pairs.append((t, cand))
+            break  # top suggestion per typed tag is enough
+    return pairs
+
+
 class AddTagsModal(discord.ui.Modal, title="Add Tags"):
     new_tags = discord.ui.TextInput(
         label="Tags to add (space or comma separated)",
@@ -314,13 +328,13 @@ class AddTagsModal(discord.ui.Modal, title="Add Tags"):
 
         # Guard against taxonomy forks: if a typed tag is a near-duplicate of an existing
         # vault tag (airfryer vs air-fryer), offer a one-tap swap to the established one.
+        # close_matches() can trigger a full-vault rescan, so run the whole check in a worker
+        # thread — otherwise a large vault would stall the modal response on the event loop.
         swap_pairs: list[tuple[str, str]] = []
         try:
-            idx = get_tag_index(self.bot.config)
-            for t in added:
-                for cand in idx.close_matches(t):
-                    swap_pairs.append((t, cand))
-                    break  # top suggestion per typed tag is enough
+            swap_pairs = await asyncio.to_thread(
+                _compute_swap_pairs, get_tag_index(self.bot.config), added
+            )
         except Exception as e:
             logger.debug("Tag near-duplicate check skipped: %s", e)
 
@@ -369,11 +383,15 @@ class SAVESBot(discord.Client):
         items = self.store.get_all()
         return max(items, key=lambda p: p.created_at) if items else None
 
-    def _tag_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
+    async def _tag_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
         """Autocomplete choices for /tag add: existing vault tags matching what's typed,
-        most-used first, with usage counts. Empty input → the top tags."""
+        most-used first, with usage counts. Empty input → the top tags.
+
+        `search()` can trigger a full-vault rescan (TTL expiry), which on a large vault would
+        freeze the whole bot if run on the event loop — so it's dispatched to a worker thread.
+        Discord gives autocomplete a 3s deadline; threading keeps the loop responsive within it."""
         try:
-            matches = get_tag_index(self.config).search(current, limit=25)
+            matches = await asyncio.to_thread(get_tag_index(self.config).search, current, 25)
         except Exception as e:
             logger.warning("Tag autocomplete failed: %s", e)
             return []
@@ -497,7 +515,7 @@ class SAVESBot(discord.Client):
 
         @tag_add.autocomplete("tag")
         async def _tag_ac(interaction: discord.Interaction, current: str):
-            return bot._tag_choices(current)
+            return await bot._tag_choices(current)
 
         @tag_add.autocomplete("item")
         async def _item_ac(interaction: discord.Interaction, current: str):

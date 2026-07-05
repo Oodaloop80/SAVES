@@ -443,6 +443,22 @@ explicit decision. Full rationale: `docs/ROADMAP.md` → "Decisions locked".
 **Decision notation discipline:** when a decision constrains future behavior, record it at the
 point of use (code comment) *and* in ROADMAP "Decisions locked", in the same commit.
 
+**Documentation discipline (MANDATORY):** docs are part of the change, not a follow-up. Any
+commit that adds a feature, alters behavior, or changes architecture MUST update the relevant
+docs **in the same commit** — never "later". The doc surfaces and what lives where:
+- `CLAUDE.md` (this file) — the canonical map: repo tree, data flow, note types, button/slash
+  behavior, platform notes, hard constraints, config. If a new file, note type, button, slash
+  command, config key, or flow appears (or one is renamed/removed), fix it here.
+- `docs/ARCHITECTURE.md` — how the pieces fit + the §11 scaling analysis. Update when a
+  component's responsibility, threading model, or a scaling characteristic changes.
+- `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;
+  record constraining decisions under "Decisions locked".
+- Module/function docstrings + code comments — the point-of-use record for any non-obvious
+  contract (e.g. the tag-index threading contract, the zero-delete rule).
+Rule of thumb before committing: *if someone read only the docs, would they now describe the
+system correctly?* If not, the doc edit belongs in this commit. When unsure a doc claim is
+still true, verify against the code before writing it — stale docs are worse than none.
+
 **Actively in use.** `process_one.py` has been run end-to-end against real Instagram,
 YouTube, Reddit, and web article URLs. Notes write to the Obsidian vault. Discord approval
 flow is the next stage to test in full.

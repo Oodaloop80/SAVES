@@ -465,19 +465,24 @@ The dedup/tag/autocomplete machinery is fine at today's scale (hundreds of saves
 paths degrade as the vault grows into the tens of thousands. None is a correctness bug; all
 are performance cliffs. Ranked by when they bite:
 
-**① Tag-index full rescan on the event loop — the sharp edge (fix first).**
+**① Tag-index full rescan on the event loop — the sharp edge. ✅ FIXED (2026-07-05).**
 `TagIndex.refresh()` does an `os.walk` of the whole vault and reads up to 256 KB of *every*
 `.md` file, then regexes the body for inline `#tags`. It's TTL-gated (5 min) and swaps the
-`Counter` atomically, so *correctness* is fine. The problem is *where* it runs: the processor
-calls it inside `asyncio.to_thread` (safe), but the Discord **autocomplete callbacks**
-(`_tag_choices`, and indirectly `close_matches`) call `search()`/`top()` **directly on the
-event loop**. At ~30k notes a TTL-expired rescan triggered by a single keystroke reads hundreds
-of MB synchronously and freezes the *entire* bot — every button, every approval — for seconds.
-- **Trigger:** first `/tag add` keystroke after any 5-min idle, once the vault is large.
-- **Fixes (cheap → structural):** (a) wrap the autocomplete index reads in `asyncio.to_thread`
-  so a rescan can't block the loop; (b) persist the index to a small JSON/SQLite sidecar and do
-  **incremental mtime-based** updates instead of re-reading unchanged notes; (c) longer TTL.
-  (a) is a few lines and removes the freeze; (b) removes the O(vault) read entirely.
+`Counter` atomically, so *correctness* was always fine. The problem was *where* it ran: the
+processor called it inside `asyncio.to_thread` (safe), but the Discord **autocomplete
+callbacks** (`_tag_choices`, and the Add-Tags modal's `close_matches`) called it **directly on
+the event loop** — at ~30k notes a TTL-expired rescan on a single keystroke would read hundreds
+of MB synchronously and freeze the *entire* bot (every button, every approval) for seconds.
+- **What was done:** (a) `_tag_choices` is now `async` and dispatches `search()` via
+  `asyncio.to_thread`; the Add-Tags modal runs its near-duplicate check (`_compute_swap_pairs`
+  → `close_matches`) in a thread too — so a rescan can never block the loop. (b) `TagIndex`
+  grew a `threading.Lock` + double-checked TTL in `refresh()`, so a burst of concurrent
+  autocomplete keystrokes collapses to **one** vault walk instead of a thundering herd of them.
+  The threading contract is documented at the top of `tag_index.py`.
+- **Still open (structural, not urgent):** persist the index to a small sidecar and do
+  **incremental mtime-based** updates so a rescan doesn't re-read unchanged notes at all —
+  removes the O(vault) read entirely. Only worth it if the threaded walk itself gets slow
+  (very large vault). Tracked in ROADMAP → Phase 7 ①(b).
 
 **② `processing_state.json` write amplification.** Reads are O(1) dict lookups — `is_done()`
 scales forever. But `_save()` rewrites the **whole** file (json.dump + atomic replace) on every
@@ -485,9 +490,19 @@ scales forever. But `_save()` rewrites the **whole** file (json.dump + atomic re
 15 MB at 100k — re-serialized and rewritten on *every single URL*. Processing is serial and
 human-approval-paced, so it's not a throughput wall, but it's O(n) work per save and grows
 unbounded.
-- **Fix path:** move the state to SQLite (per-key upsert, no full rewrite) when it gets
-  uncomfortable. The public surface (`is_done`/`mark_done`/`forget`/`entries`) is small, so the
-  swap is localized to `queue_manager.py`. Not worth doing before ~low tens of thousands.
+- **Trigger to act: ~100k entries** (Bora, 2026-07-05 — "I don't think we will [get there], but
+  if we do"). Below that the full-rewrite cost is negligible next to the per-save extraction +
+  Claude calls; there is **no reason to build this preemptively**.
+- **Migration sketch when the day comes:** replace the dict-backed `ProcessingState` in
+  `queue_manager.py` with a SQLite table `state(url TEXT PRIMARY KEY, status TEXT, path TEXT,
+  reason TEXT, platform TEXT, timestamp REAL)`. `mark_*`/`forget` become single-row
+  `INSERT … ON CONFLICT(url) DO UPDATE`/`DELETE` (no full rewrite); `is_done`/`is_processed`/
+  `path_for` become indexed `SELECT`s; `entries()` becomes `SELECT *`. The public surface is
+  tiny and fully covered by the section-13 no-token tests, so the swap is localized and
+  test-guarded. Keep the same file path convention (`/app/state/…` in Docker, repo root in
+  DEV). Zero-delete policy is unaffected — a SQL `DELETE` of a row is not a *file* delete, same
+  as today's dict `pop`. **Do not** migrate the JSON in place; write a one-shot importer so the
+  old file stays as a `.bak`.
 
 **③ Autocomplete sorts per keystroke.** `/forget`'s `_forget_choices` copies the entire state
 dict and sorts it by timestamp **on every keystroke**; `TagIndex.search()` runs `most_common()`

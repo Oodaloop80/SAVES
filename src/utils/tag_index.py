@@ -9,12 +9,20 @@ everything Obsidian itself counts as a tag — and keeps a usage count. Powers:
 
 Read-only on the vault. Refreshes lazily on a TTL; `add()` bumps counts incrementally
 when SAVES writes a note so brand-new tags are searchable before the next rescan.
+
+⚠️ Threading contract: `refresh()` (and the methods that trigger it — `search`, `top`,
+`close_matches`) walk the ENTIRE vault and read every note, so on a large vault a rescan
+can take seconds. Callers running on the asyncio event loop (the Discord autocomplete
+callbacks and the Add-Tags modal) MUST invoke those methods via `asyncio.to_thread` so a
+rescan never blocks the loop and freezes the bot. The processor already does. `count()` and
+`add()` are O(1)/cheap and never rescan, so they're safe to call inline.
 """
 
 import difflib
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 
@@ -101,24 +109,38 @@ class TagIndex:
         self.vault_root = vault_root
         self._counts: Counter[str] = Counter()
         self._scanned_at: float = 0.0
+        # Collapses a burst of concurrent rescans into one vault walk: with autocomplete
+        # reads now dispatched through asyncio.to_thread, several keystrokes could each land
+        # in a worker thread with an expired TTL — the lock + double-check below means only
+        # the first walks; the rest see the fresh index and return. Readers of an
+        # already-built _counts never take the lock.
+        self._lock = threading.Lock()
 
     def refresh(self, force: bool = False) -> None:
+        """Rebuild the tag counts from the vault when the TTL has expired. See the module
+        docstring's threading contract: on the event loop, call this (via search/top/
+        close_matches) inside asyncio.to_thread — it can take seconds on a big vault."""
         if not force and (time.time() - self._scanned_at) < _REFRESH_TTL_SECONDS:
             return
-        counts: Counter[str] = Counter()
-        n_files = 0
-        for dirpath, dirnames, filenames in os.walk(self.vault_root):
-            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
-            for fname in filenames:
-                if not fname.endswith(".md"):
-                    continue
-                n_files += 1
-                for tag in _note_tags(os.path.join(dirpath, fname)):
-                    counts[tag] += 1
-        # Swap in one assignment so concurrent readers never see a half-built index.
-        self._counts = counts
-        self._scanned_at = time.time()
-        logger.debug("Tag index: %d tags across %d notes", len(counts), n_files)
+        with self._lock:
+            # Double-checked: another thread may have rebuilt the index while we waited for
+            # the lock — if so, skip the (expensive) walk entirely.
+            if not force and (time.time() - self._scanned_at) < _REFRESH_TTL_SECONDS:
+                return
+            counts: Counter[str] = Counter()
+            n_files = 0
+            for dirpath, dirnames, filenames in os.walk(self.vault_root):
+                dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+                for fname in filenames:
+                    if not fname.endswith(".md"):
+                        continue
+                    n_files += 1
+                    for tag in _note_tags(os.path.join(dirpath, fname)):
+                        counts[tag] += 1
+            # Swap in one assignment so concurrent readers never see a half-built index.
+            self._counts = counts
+            self._scanned_at = time.time()
+            logger.debug("Tag index: %d tags across %d notes", len(counts), n_files)
 
     def add(self, tags: list[str]) -> None:
         """Incremental bump when a note is written — keeps new tags searchable
