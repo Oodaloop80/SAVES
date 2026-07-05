@@ -236,15 +236,19 @@ clears the line from the inbox — so no tokens are spent reprocessing. Behind
 
 ## Discord Bot Buttons
 
-Every approval message has:
+Every approval message has (in this order — Bora, 2026-07-05):
 - **✅ Approve** — writes note, saves learned preference, removes URL from inbox
-- **📁 Change Path** — modal prompt → updates folder_path → saves preference
-- **🏷️ Edit Tags** — modal prompt with +add / -remove syntax; added tags are checked
-  against the vault tag index and near-duplicates (airfryer vs air-fryer) get a one-tap
-  "Use existing" swap button
+- **🏷️ Add Tags** — modal; just type tags (space/comma separated, no prefix). Add-only —
+  removal lives on the next button. Typed tags are checked against the vault tag index and
+  near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap button.
+  (custom_id stays `edit_tags` so pre-rename approval cards keep working.)
 - **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly
+- **📁 Change Path** — modal prompt → updates folder_path → saves preference
 - **✏️ NL Edit** — natural language edit via a second Claude call
 - **🔍 Deep fact-check** — on-demand web-searched claim verification
+
+Discord modals **cannot autocomplete** (platform limitation) — search-as-you-type for tags
+exists only on the `/tag add` slash command below.
 
 If fact-check or location dispute was found:
 - **⚠️ Approve + Include Warning** — adds `> [!warning]` callout to the written note

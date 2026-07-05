@@ -1,4 +1,5 @@
 import logging
+import re
 
 import discord
 from discord.ext import tasks
@@ -35,6 +36,11 @@ class ApprovalView(discord.ui.View):
                 if getattr(item, "custom_id", None) == "deep_fact_check":
                     self.remove_item(item)
 
+    # Button order (Bora, 2026-07-05): Approve, Add Tags, Remove Tags, Change Path, NL Edit.
+    # Decorator definition order = display order. custom_id "edit_tags" is kept on Add Tags
+    # so approval cards posted before the rename still route their clicks here after restart
+    # (persistent views match components by custom_id, not label).
+
     @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
@@ -44,25 +50,10 @@ class ApprovalView(discord.ui.View):
             return
         await self.bot._finalize(pending, interaction, include_warnings=False)
 
-    @discord.ui.button(label="📁 Change Path", style=discord.ButtonStyle.secondary, custom_id="change_path")
-    async def change_path(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = PathModal(self.bot, self.pending_id)
+    @discord.ui.button(label="🏷️ Add Tags", style=discord.ButtonStyle.secondary, custom_id="edit_tags")
+    async def add_tags(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = AddTagsModal(self.bot, self.pending_id)
         await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="🏷️ Edit Tags", style=discord.ButtonStyle.secondary, custom_id="edit_tags")
-    async def edit_tags(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = TagsModal(self.bot, self.pending_id)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="✏️ NL Edit", style=discord.ButtonStyle.secondary, custom_id="nl_edit")
-    async def nl_edit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        _nl_edit_sessions[interaction.channel_id] = self.pending_id
-        await interaction.response.send_message(
-            "NL Edit mode active. Type your instruction naturally.\n"
-            "Examples: \"move to travel Caribbean\", \"add tags: points-miles trip-planning\", "
-            "\"rename it to American Airlines Card Tips\"",
-            ephemeral=True,
-        )
 
     @discord.ui.button(label="🗑️ Remove Tags", style=discord.ButtonStyle.secondary, custom_id="remove_tags")
     async def remove_tags(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -78,6 +69,21 @@ class ApprovalView(discord.ui.View):
         await interaction.response.send_message(
             "Tap a tag to remove it:",
             view=view,
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="📁 Change Path", style=discord.ButtonStyle.secondary, custom_id="change_path")
+    async def change_path(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = PathModal(self.bot, self.pending_id)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="✏️ NL Edit", style=discord.ButtonStyle.secondary, custom_id="nl_edit")
+    async def nl_edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        _nl_edit_sessions[interaction.channel_id] = self.pending_id
+        await interaction.response.send_message(
+            "NL Edit mode active. Type your instruction naturally.\n"
+            "Examples: \"move to travel Caribbean\", \"add tags: points-miles trip-planning\", "
+            "\"rename it to American Airlines Card Tips\"",
             ephemeral=True,
         )
 
@@ -251,10 +257,31 @@ class PathModal(discord.ui.Modal, title="Change Path"):
         )
 
 
-class TagsModal(discord.ui.Modal, title="Edit Tags"):
-    tag_edits = discord.ui.TextInput(
-        label="Add or remove tags",
-        placeholder="+weekend-project +bbq -oldtag",
+def _parse_tags_to_add(raw: str) -> tuple[list[str], list[str]]:
+    """Parse the Add-Tags input: space/comma-separated tags, no prefix needed
+    (a leading + or # from old habit is tolerated and stripped). Returns
+    (tags_to_add, skipped_removal_tokens) — `-tag` tokens are NOT removals here
+    (that moved to the 🗑️ Remove Tags button) and are skipped so a stray old-syntax
+    removal can't be silently added as a literal `-tag`."""
+    to_add: list[str] = []
+    skipped: list[str] = []
+    for token in re.split(r"[,\s]+", raw or ""):
+        token = token.strip()
+        if not token:
+            continue
+        if token.startswith("-"):
+            skipped.append(token)
+            continue
+        t = token.lstrip("+#").strip()
+        if t and t not in to_add:
+            to_add.append(t)
+    return to_add, skipped
+
+
+class AddTagsModal(discord.ui.Modal, title="Add Tags"):
+    new_tags = discord.ui.TextInput(
+        label="Tags to add (space or comma separated)",
+        placeholder="bbq weekend-project — tip: /tag add autocompletes existing tags",
         style=discord.TextStyle.short,
     )
 
@@ -269,16 +296,9 @@ class TagsModal(discord.ui.Modal, title="Edit Tags"):
             await interaction.response.send_message("Item already processed.", ephemeral=True)
             return
         tags = list(pending.ai_result.get("tags") or [])
-        added: list[str] = []
-        for token in self.tag_edits.value.split():
-            if token.startswith("+"):
-                t = token[1:].strip()
-                if t and t not in tags:
-                    tags.append(t)
-                    added.append(t)
-            elif token.startswith("-"):
-                t = token[1:].strip()
-                tags = [x for x in tags if x != t]
+        to_add, skipped_removals = _parse_tags_to_add(self.new_tags.value)
+        added = [t for t in to_add if t not in tags]
+        tags.extend(added)
         pending.ai_result["tags"] = tags
         self.bot.store.update(pending)
 
@@ -295,7 +315,10 @@ class TagsModal(discord.ui.Modal, title="Edit Tags"):
             logger.debug("Tag near-duplicate check skipped: %s", e)
 
         preview = " ".join(f"#{t}" for t in tags)
-        msg = f"✅ Tags updated: {preview}\nUse ✅ Approve when ready."
+        msg = f"✅ Tags: {preview}\nUse ✅ Approve when ready."
+        if skipped_removals:
+            skipped = " ".join(f"`{t}`" for t in skipped_removals)
+            msg += f"\nℹ️ Ignored {skipped} — removing tags moved to the 🗑️ Remove Tags button."
         if swap_pairs:
             hints = "\n".join(
                 f"⚠️ `{typed}` is close to existing `{cand}` "
@@ -383,8 +406,8 @@ class SAVESBot(discord.Client):
 
     def _register_tag_commands(self) -> None:
         """/tag add — the only Discord surface with real search-as-you-type: slash-command
-        option autocomplete. (Modal text inputs cannot autocomplete, so the Edit-Tags modal
-        gets a submit-time near-duplicate check instead.)"""
+        option autocomplete. (Modal text inputs cannot autocomplete — a Discord platform
+        limitation — so the Add-Tags modal gets a submit-time near-duplicate check instead.)"""
         bot = self
         tag_group = discord.app_commands.Group(
             name="tag", description="Tag tools for pending saves"
