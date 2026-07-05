@@ -177,7 +177,7 @@ sequenceDiagram
 
     U->>IB: paste URL (from any device)
     IB-->>P: watchdog event → debounce 3s → queue
-    Note over P: normalize URL → dedup check<br/>already saved? → duplicate notice, line cleared, STOP
+    Note over P: normalize URL → dedup check<br/>already saved? → duplicate notice (🔁 Re-save / ✖ Dismiss), line cleared, STOP
     P->>P: mark_pending(url)
     P->>X: extract(url) [180s timeout]
     X-->>P: ExtractedContent (title, body, caption, metadata)

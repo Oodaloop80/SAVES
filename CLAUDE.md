@@ -57,14 +57,15 @@ SAVES/
 │   │   ├── transcriber.py         # mode=remote: POST to 192.168.1.90:5000; mode=local: faster-whisper
 │   │   └── vision.py              # Images → base64; videos → scene-change frames → 2×2 montage
 │   ├── ai/
-│   │   ├── prompts.py             # SYSTEM_PROMPT, build_user_prompt(), fact-check/travel prompts
+│   │   ├── prompts.py             # SYSTEM_PROMPT, build_user_prompt(), fact-check/travel/NL-edit prompts
 │   │   ├── claude_client.py       # analyze_content(), fact_check(), nl_edit()
 │   │   └── verifier.py            # check_travel_location() — called only when travel in topics
 │   ├── discord_bot/
 │   │   ├── approval.py            # PendingApproval dataclass, PendingApprovalsStore (JSON)
 │   │   ├── notifications.py       # send_approval_request(), send_log(), send_alert(),
 │   │   │                          # duplicate notice + DuplicateNoticeView (🔁 Re-save/✖ Dismiss)
-│   │   └── bot.py                 # SAVESBot; ApprovalView (4 buttons); _finalize() writes note
+│   │   └── bot.py                 # SAVESBot; ApprovalView (6 buttons + conditional ⚠️);
+│   │                              # TagRemoveView (✖ per tag, ↩ Undo All); _finalize() writes note
 │   ├── notes/
 │   │   ├── formatter.py           # format_note() dispatches to 13 per-type renderers
 │   │   └── file_manager.py        # write_note() atomic; move_note() with SHA256 verify

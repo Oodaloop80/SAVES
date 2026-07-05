@@ -4,7 +4,7 @@
 
 SAVES (the URL → Obsidian-note archiving pipeline) is no longer greenfield. Three parallel
 audits this session established that the **core loop is feature-complete**: watcher → queue →
-processor → extract/download/transcribe/analyze/fact-check → Discord approval with 4 buttons →
+processor → extract/download/transcribe/analyze/fact-check → Discord approval (6 buttons + conditional ⚠️) →
 `_finalize()` writes the note, saves the learned preference, removes the URL from the inbox, and
 marks state done; pending approvals persist and re-send on restart; the cookie-expiry loop and
 error alerts exist; everything runs on a single asyncio loop.
