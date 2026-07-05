@@ -6,9 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_channel(bot: discord.Client, channel_name: str) -> discord.TextChannel | None:
+    # Case-insensitive: Discord force-lowercases text channel names ("SAVES-approvals"
+    # becomes "saves-approvals"), so an exact match against the configured name never hits.
+    wanted = channel_name.lower()
     for guild in bot.guilds:
         for ch in guild.text_channels:
-            if ch.name == channel_name:
+            if ch.name.lower() == wanted:
                 return ch
     return None
 
