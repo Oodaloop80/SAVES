@@ -15,6 +15,7 @@ from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key
 from src.utils.recipe_data import apply_structured_recipe
+from src.utils.tag_index import get_tag_index
 from src.utils.url_parser import detect_platform, normalize_url
 from src.utils.vault_scanner import scan_saves_folders
 
@@ -173,14 +174,20 @@ async def _process_one(
         except Exception as e:
             logger.warning(f"Vision preparation failed (non-fatal): {e}")
 
-    # 6. AI analysis (text + vision, with preferences hint + existing vault folders)
+    # 6. AI analysis (text + vision, with preferences hint + existing vault folders/tags)
     saves_root = config.get("paths", {}).get("saves_root") or os.path.join(vault_root, "SAVES")
     existing_folders = await asyncio.to_thread(scan_saves_folders, saves_root)
+    # Top vault tags go into the prompt so generated tags reuse the established taxonomy
+    # instead of inventing near-duplicates. Scanned in a worker thread (file I/O).
+    existing_tags = await asyncio.to_thread(
+        lambda: get_tag_index(config).top(50)
+    )
     try:
         ai_result = await analyze_content(
             content, transcript, config, preferences_hint,
             image_blocks=image_blocks or None,
             existing_folders=existing_folders,
+            existing_tags=existing_tags or None,
         )
     except Exception as e:
         logger.error(f"AI analysis failed for {url}: {e}")

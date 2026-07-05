@@ -72,6 +72,8 @@ SAVES/
 │       ├── file_io.py             # read_inbox(), remove_url_from_inbox() (atomic)
 │       ├── preferences.py         # PreferencesStore — learned folder routing per source
 │       ├── cookie_checker.py      # Checks instagram/tiktok/facebook cookie file mtimes
+│       ├── tag_index.py           # Vault tag index — /tag add autocomplete, near-dup check,
+│       │                          # prompt taxonomy hint (TTL rescan + incremental add)
 │       └── retry.py               # with_retry() decorator — defined but not yet wired in
 ├── scripts/
 │   ├── process_one.py             # CLI test: run full pipeline for one URL, print note
@@ -237,11 +239,21 @@ clears the line from the inbox — so no tokens are spent reprocessing. Behind
 Every approval message has:
 - **✅ Approve** — writes note, saves learned preference, removes URL from inbox
 - **📁 Change Path** — modal prompt → updates folder_path → saves preference
-- **🏷️ Edit Tags** — modal prompt with +add / -remove syntax
+- **🏷️ Edit Tags** — modal prompt with +add / -remove syntax; added tags are checked
+  against the vault tag index and near-duplicates (airfryer vs air-fryer) get a one-tap
+  "Use existing" swap button
+- **🗑️ Remove Tags** — ephemeral view with one ✖ button per tag; tap to remove instantly
 - **✏️ NL Edit** — natural language edit via a second Claude call
+- **🔍 Deep fact-check** — on-demand web-searched claim verification
 
 If fact-check or location dispute was found:
 - **⚠️ Approve + Include Warning** — adds `> [!warning]` callout to the written note
+
+**`/tag add` slash command** — search-as-you-type autocomplete over the vault tag index
+(`src/utils/tag_index.py`: frontmatter `tags:` scan, 5-min TTL, incremental bump on note
+write). Suggestions show usage counts; optional `item` param picks which pending save
+(default newest). The same index feeds an existing-tags hint into the analysis prompt so
+Claude reuses the established taxonomy instead of inventing near-duplicate tags.
 
 ---
 

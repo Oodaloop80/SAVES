@@ -15,6 +15,7 @@ from src.notes.formatter import format_note
 from src.utils.cookie_checker import check_all_cookies
 from src.utils.file_io import remove_url_from_inbox
 from src.utils.preferences import PreferencesStore
+from src.utils.tag_index import get_tag_index
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,8 @@ class ApprovalView(discord.ui.View):
             await interaction.response.send_message("No tags to remove.", ephemeral=True)
             return
         view = TagRemoveView(self.bot, self.pending_id, tags)
-        tag_list = "  ".join(f"`{t}`" for t in tags)
         await interaction.response.send_message(
-            f"**Current tags:**\n{tag_list}\n\nSelect tags to remove:",
+            "Tap a tag to remove it:",
             view=view,
             ephemeral=True,
         )
@@ -114,39 +114,99 @@ class ApprovalView(discord.ui.View):
 
 
 class TagRemoveView(discord.ui.View):
-    """Ephemeral view with a multi-select dropdown to remove individual tags."""
+    """Ephemeral view with one ✖ button per tag — tap a tag to remove it instantly.
+
+    Replaced the earlier multi-select dropdown: one tap per unwanted tag beats
+    open-dropdown → tick → confirm, especially on mobile. The view re-renders with the
+    removed button gone after each tap. Discord caps a view at 25 components (5 rows × 5),
+    so 24 tag buttons + Done; generated tags stay far below that."""
 
     def __init__(self, bot: "SAVESBot", pending_id: str, tags: list[str]):
-        super().__init__(timeout=120)
+        super().__init__(timeout=300)
         self.bot = bot
         self.pending_id = pending_id
-        options = [discord.SelectOption(label=t, value=t) for t in tags[:25]]
-        select = discord.ui.Select(
-            placeholder="Pick tags to remove (multi-select)…",
-            min_values=0,
-            max_values=len(options),
-            options=options,
-        )
-        select.callback = self._on_select
-        self.add_item(select)
+        for tag in tags[:24]:
+            self.add_item(self._make_tag_button(tag))
+        done = discord.ui.Button(label="Done", style=discord.ButtonStyle.primary)
+        done.callback = self._on_done
+        self.add_item(done)
 
-    async def _on_select(self, interaction: discord.Interaction):
-        to_remove = set(interaction.data["values"])
+    def _make_tag_button(self, tag: str) -> discord.ui.Button:
+        btn = discord.ui.Button(label=f"✖ {tag}"[:80], style=discord.ButtonStyle.secondary)
+
+        async def _remove(interaction: discord.Interaction, tag: str = tag):
+            pending = self.bot.store.get_by_id(self.pending_id)
+            if not pending:
+                await interaction.response.edit_message(content="Already processed.", view=None)
+                return
+            remaining = [t for t in (pending.ai_result.get("tags") or []) if t != tag]
+            pending.ai_result["tags"] = remaining
+            self.bot.store.update(pending)
+            if remaining:
+                await interaction.response.edit_message(
+                    content=f"Removed `{tag}` — tap more to remove, or **Done**.",
+                    view=TagRemoveView(self.bot, self.pending_id, remaining),
+                )
+            else:
+                await interaction.response.edit_message(
+                    content=f"Removed `{tag}`. No tags left.\nUse ✅ Approve when ready.",
+                    view=None,
+                )
+
+        btn.callback = _remove
+        return btn
+
+    async def _on_done(self, interaction: discord.Interaction):
         pending = self.bot.store.get_by_id(self.pending_id)
-        if not pending:
-            await interaction.response.edit_message(content="Already processed.", view=None)
-            return
-        pending.ai_result["tags"] = [
-            t for t in (pending.ai_result.get("tags") or []) if t not in to_remove
-        ]
-        self.bot.store.update(pending)
-        remaining = "  ".join(f"`{t}`" for t in pending.ai_result["tags"])
-        msg = (
-            f"Removed **{len(to_remove)}** tag(s).\n"
-            f"**Remaining:** {remaining or '*(none)*'}\n\n"
-            f"Use ✅ Approve when ready."
+        tags = (pending.ai_result.get("tags") or []) if pending else []
+        remaining = "  ".join(f"`{t}`" for t in tags)
+        await interaction.response.edit_message(
+            content=f"**Tags:** {remaining or '*(none)*'}\nUse ✅ Approve when ready.",
+            view=None,
         )
-        await interaction.response.edit_message(content=msg, view=None)
+
+
+class TagSwapView(discord.ui.View):
+    """Offered when a typed tag is a near-duplicate of an existing vault tag
+    (airfryer vs air-fryer) — one tap swaps to the established tag so the
+    vault taxonomy doesn't fork."""
+
+    def __init__(self, bot: "SAVESBot", pending_id: str, pairs: list[tuple[str, str]]):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.pending_id = pending_id
+        self.pairs = pairs[:5]
+        for typed, existing in self.pairs:
+            self.add_item(self._make_swap_button(typed, existing))
+
+    def _make_swap_button(self, typed: str, existing: str) -> discord.ui.Button:
+        btn = discord.ui.Button(
+            label=f"Use {existing} (not {typed})"[:80],
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def _swap(interaction: discord.Interaction, typed: str = typed, existing: str = existing):
+            pending = self.bot.store.get_by_id(self.pending_id)
+            if not pending:
+                await interaction.response.edit_message(content="Already processed.", view=None)
+                return
+            tags, seen = [], set()
+            for t in pending.ai_result.get("tags") or []:
+                t = existing if t == typed else t
+                if t not in seen:
+                    seen.add(t)
+                    tags.append(t)
+            pending.ai_result["tags"] = tags
+            self.bot.store.update(pending)
+            rest = [p for p in self.pairs if p != (typed, existing)]
+            preview = "  ".join(f"`{t}`" for t in tags)
+            await interaction.response.edit_message(
+                content=f"✅ Swapped `{typed}` → `{existing}`.\n**Tags:** {preview}",
+                view=TagSwapView(self.bot, self.pending_id, rest) if rest else None,
+            )
+
+        btn.callback = _swap
+        return btn
 
 
 class ApprovalViewWithWarning(ApprovalView):
@@ -209,20 +269,46 @@ class TagsModal(discord.ui.Modal, title="Edit Tags"):
             await interaction.response.send_message("Item already processed.", ephemeral=True)
             return
         tags = list(pending.ai_result.get("tags") or [])
+        added: list[str] = []
         for token in self.tag_edits.value.split():
             if token.startswith("+"):
                 t = token[1:].strip()
                 if t and t not in tags:
                     tags.append(t)
+                    added.append(t)
             elif token.startswith("-"):
                 t = token[1:].strip()
                 tags = [x for x in tags if x != t]
         pending.ai_result["tags"] = tags
         self.bot.store.update(pending)
+
+        # Guard against taxonomy forks: if a typed tag is a near-duplicate of an existing
+        # vault tag (airfryer vs air-fryer), offer a one-tap swap to the established one.
+        swap_pairs: list[tuple[str, str]] = []
+        try:
+            idx = get_tag_index(self.bot.config)
+            for t in added:
+                for cand in idx.close_matches(t):
+                    swap_pairs.append((t, cand))
+                    break  # top suggestion per typed tag is enough
+        except Exception as e:
+            logger.debug("Tag near-duplicate check skipped: %s", e)
+
         preview = " ".join(f"#{t}" for t in tags)
-        await interaction.response.send_message(
-            f"✅ Tags updated: {preview}\nUse ✅ Approve when ready.", ephemeral=True
-        )
+        msg = f"✅ Tags updated: {preview}\nUse ✅ Approve when ready."
+        if swap_pairs:
+            hints = "\n".join(
+                f"⚠️ `{typed}` is close to existing `{cand}` "
+                f"({get_tag_index(self.bot.config).count(cand)} notes use it)"
+                for typed, cand in swap_pairs
+            )
+            await interaction.response.send_message(
+                f"{msg}\n\n{hints}",
+                view=TagSwapView(self.bot, self.pending_id, swap_pairs),
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
 
 
 class SAVESBot(discord.Client):
@@ -237,6 +323,93 @@ class SAVESBot(discord.Client):
         paths = config.get("paths", {})
         self.store = PendingApprovalsStore(paths.get("pending_approvals_file", "pending_approvals.json"))
         self._discord_cfg = config.get("discord", {})
+        self._commands_synced = False
+        self._register_tag_commands()
+
+    # ---- /tag slash commands -------------------------------------------------------
+
+    def _newest_pending(self) -> PendingApproval | None:
+        items = self.store.get_all()
+        return max(items, key=lambda p: p.created_at) if items else None
+
+    def _tag_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
+        """Autocomplete choices for /tag add: existing vault tags matching what's typed,
+        most-used first, with usage counts. Empty input → the top tags."""
+        try:
+            matches = get_tag_index(self.config).search(current, limit=25)
+        except Exception as e:
+            logger.warning("Tag autocomplete failed: %s", e)
+            return []
+        return [
+            discord.app_commands.Choice(name=f"{t} ({c})"[:100], value=t[:100])
+            for t, c in matches
+        ]
+
+    def _pending_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
+        """Autocomplete choices for /tag add's optional item param: pending saves by
+        title, newest first."""
+        items = sorted(self.store.get_all(), key=lambda p: p.created_at, reverse=True)
+        cur = (current or "").lower()
+        out: list[discord.app_commands.Choice[str]] = []
+        for p in items:
+            title = p.ai_result.get("title") or p.url
+            if cur and cur not in title.lower():
+                continue
+            out.append(discord.app_commands.Choice(name=title[:100], value=p.id))
+            if len(out) == 25:
+                break
+        return out
+
+    async def _tag_add_impl(self, interaction: discord.Interaction, tag: str, item: str | None):
+        pending = self.store.get_by_id(item) if item else self._newest_pending()
+        if not pending:
+            await interaction.response.send_message("No pending saves.", ephemeral=True)
+            return
+        t = tag.strip().lstrip("#")
+        if not t:
+            await interaction.response.send_message("Empty tag.", ephemeral=True)
+            return
+        tags = list(pending.ai_result.get("tags") or [])
+        if t not in tags:
+            tags.append(t)
+            pending.ai_result["tags"] = tags
+            self.store.update(pending)
+        preview = " ".join(f"#{x}" for x in tags)
+        title = (pending.ai_result.get("title") or pending.url)[:80]
+        await interaction.response.send_message(
+            f"✅ Added `{t}` to **{title}**\nTags: {preview}\nUse ✅ Approve when ready.",
+            ephemeral=True,
+        )
+
+    def _register_tag_commands(self) -> None:
+        """/tag add — the only Discord surface with real search-as-you-type: slash-command
+        option autocomplete. (Modal text inputs cannot autocomplete, so the Edit-Tags modal
+        gets a submit-time near-duplicate check instead.)"""
+        bot = self
+        tag_group = discord.app_commands.Group(
+            name="tag", description="Tag tools for pending saves"
+        )
+
+        @tag_group.command(
+            name="add",
+            description="Add a tag to a pending save — searches your existing vault tags as you type",
+        )
+        @discord.app_commands.describe(
+            tag="Tag to add (suggestions are existing vault tags with usage counts)",
+            item="Which pending save (default: newest)",
+        )
+        async def tag_add(interaction: discord.Interaction, tag: str, item: str | None = None):
+            await bot._tag_add_impl(interaction, tag, item)
+
+        @tag_add.autocomplete("tag")
+        async def _tag_ac(interaction: discord.Interaction, current: str):
+            return bot._tag_choices(current)
+
+        @tag_add.autocomplete("item")
+        async def _item_ac(interaction: discord.Interaction, current: str):
+            return bot._pending_choices(current)
+
+        self.tree.add_command(tag_group)
 
     def _build_view(self, pending: PendingApproval) -> ApprovalView:
         """Pick the approval-view variant for an item: the warning variant when fact-check or
@@ -297,6 +470,18 @@ class SAVESBot(discord.Client):
 
     async def on_ready(self):
         logger.info(f"Discord bot ready: {self.user}")
+        # Sync slash commands (/tag add) per-guild: guild-scoped sync is visible instantly,
+        # while a global sync can take up to an hour to propagate. Once per process; a sync
+        # failure (e.g. missing applications.commands scope) must not block approvals.
+        if not self._commands_synced:
+            try:
+                for guild in self.guilds:
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                self._commands_synced = True
+                logger.info("Slash commands synced to %d guild(s)", len(self.guilds))
+            except discord.HTTPException as e:
+                logger.warning("Slash-command sync failed (approvals unaffected): %s", e)
         await self._restore_pending()
 
     async def _restore_pending(self):
@@ -446,6 +631,13 @@ class SAVESBot(discord.Client):
         source_key = pending.ai_result.get("_source_key")
         final_path = pending.ai_result["folder_path"]
         self.prefs.set(source_key, final_path)
+
+        # Bump the tag index so this note's tags are immediately searchable in /tag add
+        # autocomplete (no wait for the TTL rescan). Non-fatal — the note is already saved.
+        try:
+            get_tag_index(self.config).add(pending.ai_result.get("tags") or [])
+        except Exception as e:
+            logger.debug("Tag index bump skipped: %s", e)
 
         remove_url_from_inbox(paths.get("inbox_file", ""), pending.url)
         self.store.remove(pending.id)

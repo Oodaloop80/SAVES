@@ -140,7 +140,15 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       instead of producing junk approval cards; `content[0].text` replaced with first-text-block
       extraction (thinking blocks / refusal-empty content handled cleanly); downloader
       newest-file fallback filtered to media extensions. All verified by no-token tests.
+- [x] Tag-editing UX batch (2026-07-05, Bora request): 🗑️ Remove Tags is now one ✖ button
+      per tag (tap to remove; replaced the multi-select dropdown); new `src/utils/tag_index.py`
+      scans vault frontmatter `tags:` (TTL rescan + incremental bump on note write) and powers
+      (a) `/tag add` slash command with search-as-you-type autocomplete + usage counts (guild
+      sync in on_ready), (b) Edit-Tags modal near-duplicate check with one-tap "Use existing"
+      swap buttons (airfryer → air-fryer), (c) an existing-tags taxonomy hint in the analysis
+      prompt so Claude reuses established tags. 56 no-token tests.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
+      (now incl. tap-to-remove tags + `/tag add` autocomplete)
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
 - [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `0 - INBOX/SAVES.md`

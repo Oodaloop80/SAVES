@@ -121,11 +121,12 @@ async def analyze_content(
     preferences_hint: str | None = None,
     image_blocks: list[dict] | None = None,
     existing_folders: list[str] | None = None,
+    existing_tags: list[str] | None = None,
 ) -> dict:
     import asyncio
     return await asyncio.to_thread(
         _analyze_sync, content, transcript, config, preferences_hint,
-        image_blocks, existing_folders,
+        image_blocks, existing_folders, existing_tags,
     )
 
 
@@ -136,6 +137,7 @@ def _analyze_sync(
     preferences_hint: str | None = None,
     image_blocks: list[dict] | None = None,
     existing_folders: list[str] | None = None,
+    existing_tags: list[str] | None = None,
 ) -> dict:
     client = _make_client(config)
 
@@ -155,12 +157,16 @@ def _analyze_sync(
     if image_blocks and ocr_text is not None:
         # Stage 2: text-only analysis on the main model, OCR text injected.
         user_text = build_user_prompt(
-            content, transcript, preferences_hint, existing_folders, image_text=ocr_text
+            content, transcript, preferences_hint, existing_folders,
+            image_text=ocr_text, existing_tags=existing_tags,
         )
         user_content: str | list = user_text
         image_blocks_for_analysis: list[dict] | None = None
     else:
-        user_text = build_user_prompt(content, transcript, preferences_hint, existing_folders)
+        user_text = build_user_prompt(
+            content, transcript, preferences_hint, existing_folders,
+            existing_tags=existing_tags,
+        )
         if image_blocks:
             n = len(image_blocks)
             vision_note = (

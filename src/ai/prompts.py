@@ -322,6 +322,7 @@ def build_user_prompt(
     preferences_hint: str | None = None,
     existing_folders: list[str] | None = None,
     image_text: str | None = None,
+    existing_tags: list[str] | None = None,
 ) -> str:
     parts = [
         f"Platform: {content.platform}",
@@ -345,6 +346,15 @@ def build_user_prompt(
             "of inventing SAVES/COOKING/BARBECUE/SMOKED). Only create a NEW path (following "
             "the conventions) when nothing here is a good fit — do not force a poor match:\n"
             + folder_list
+        )
+
+    if existing_tags:
+        parts.append(
+            "Existing vault tags (most-used first). STRONGLY prefer reusing these exact "
+            "tags when they apply, instead of inventing near-duplicates (e.g. reuse "
+            "air-fryer rather than inventing airfryer or air_fryer). Only create a new "
+            "tag when nothing here fits the content:\n  "
+            + ", ".join(existing_tags)
         )
 
     meta_lines = []
