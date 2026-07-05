@@ -307,15 +307,31 @@ final folder back. The system literally learns your filing habits per source.
 Channels: `#SAVES-approvals` (cards), `#SAVES-logs` (successes, duplicates), `#SAVES-alerts`
 (failures, cookie expiry).
 
+Button order (Bora, 2026-07-05): Approve, Add Tags, Remove Tags, Change Path, NL Edit
+(Deep fact-check on the second row when the topic is checkable).
+
 | Button | What it does |
 |---|---|
 | ✅ **Approve** | Writes the note, learns the folder preference, marks done, removes the inbox line |
-| 📁 **Change Path** | Modal → new folder path → that path is what gets learned on approve |
-| 🏷️ **Edit Tags** | Modal with `+add -remove` syntax |
-| 🗑️ **Remove Tags** | Quick tag removal |
+| 🏷️ **Add Tags** | Modal; just type tags (space/comma separated, no `+` prefix). Add-only — removal is the next button. Typed tags are fuzzy-checked against the vault tag index; near-duplicates (airfryer vs air-fryer) get a one-tap "Use existing" swap. custom_id stays `edit_tags` so pre-rename cards still route. |
+| 🗑️ **Remove Tags** | Ephemeral view with one ✖ button per tag — tap to remove instantly |
+| 📁 **Change Path** | Modal **prepopulated with the current path**; input is force-uppercased + slash-normalized (`clean_folder_path()`) so case-variant duplicate folders can't happen |
 | ✏️ **NL Edit** | Type instructions in plain English ("move to COOKING/BBQ and retitle …") — a second Claude call parses it into a structured edit; then click Approve |
 | 🔍 **Deep fact-check** | The *only* trigger for web-searched fact-checking (health 6 / finance 3 / political 1 searches) — updates the card with findings |
 | ⚠️ **Approve + Include Warning** | Appears only when the local fact-check or travel check disputed something; writes the note with a `> [!warning]` callout embedded |
+
+**Every edit re-renders the original card in place** (`SAVESBot._refresh_card`: fetches the
+card by `discord_message_id`, re-edits embed + buttons). Add/Remove/swap tags, `/tag add`,
+Change Path, and NL Edit all call it — so the card the ✅ Approve button sits on always shows
+exactly what will be written, and the embed lists *all* tags (no preview cap).
+
+**Slash commands** (guild-synced in `on_ready`; Discord modals can't autocomplete, so these
+are the only search-as-you-type surfaces):
+
+| Command | What it does |
+|---|---|
+| `/tag add <tag> [item]` | Adds a tag to a pending save. `tag` autocompletes over the **vault tag index** (frontmatter `tags:`/`tag:` + inline body `#tags`, usage-count ranked); `item` picks which pending save (default newest). |
+| `/forget <url>` | Drops a URL from `processing_state.json` so it can be saved again — deleting the note in Obsidian does **not** do this (state, not the vault, is the dedup authority). `url` autocompletes over saved history (done + permanently-failed). |
 
 `auto_approve_on_timeout` exists in config (default **off**) — if ever enabled, unclicked
 cards self-approve after `auto_approve_timeout_hours` (48).
@@ -440,3 +456,55 @@ restart the app/container after edits.
 10. **Recipes are injected everywhere** — any note type with `recipe_*` fields gets the
     styled Recipe section (nutrition label, unit conversions, translation); that's by design,
     not a `web_recipe` bug.
+
+---
+
+## 11. Scaling — what holds and what bites at tens of thousands of saves
+
+The dedup/tag/autocomplete machinery is fine at today's scale (hundreds of saves) but three
+paths degrade as the vault grows into the tens of thousands. None is a correctness bug; all
+are performance cliffs. Ranked by when they bite:
+
+**① Tag-index full rescan on the event loop — the sharp edge (fix first).**
+`TagIndex.refresh()` does an `os.walk` of the whole vault and reads up to 256 KB of *every*
+`.md` file, then regexes the body for inline `#tags`. It's TTL-gated (5 min) and swaps the
+`Counter` atomically, so *correctness* is fine. The problem is *where* it runs: the processor
+calls it inside `asyncio.to_thread` (safe), but the Discord **autocomplete callbacks**
+(`_tag_choices`, and indirectly `close_matches`) call `search()`/`top()` **directly on the
+event loop**. At ~30k notes a TTL-expired rescan triggered by a single keystroke reads hundreds
+of MB synchronously and freezes the *entire* bot — every button, every approval — for seconds.
+- **Trigger:** first `/tag add` keystroke after any 5-min idle, once the vault is large.
+- **Fixes (cheap → structural):** (a) wrap the autocomplete index reads in `asyncio.to_thread`
+  so a rescan can't block the loop; (b) persist the index to a small JSON/SQLite sidecar and do
+  **incremental mtime-based** updates instead of re-reading unchanged notes; (c) longer TTL.
+  (a) is a few lines and removes the freeze; (b) removes the O(vault) read entirely.
+
+**② `processing_state.json` write amplification.** Reads are O(1) dict lookups — `is_done()`
+scales forever. But `_save()` rewrites the **whole** file (json.dump + atomic replace) on every
+`mark_pending`/`mark_done`/`mark_failed`/`forget`. At ~150 bytes/entry that's 1.5 MB at 10k,
+15 MB at 100k — re-serialized and rewritten on *every single URL*. Processing is serial and
+human-approval-paced, so it's not a throughput wall, but it's O(n) work per save and grows
+unbounded.
+- **Fix path:** move the state to SQLite (per-key upsert, no full rewrite) when it gets
+  uncomfortable. The public surface (`is_done`/`mark_done`/`forget`/`entries`) is small, so the
+  swap is localized to `queue_manager.py`. Not worth doing before ~low tens of thousands.
+
+**③ Autocomplete sorts per keystroke.** `/forget`'s `_forget_choices` copies the entire state
+dict and sorts it by timestamp **on every keystroke**; `TagIndex.search()` runs `most_common()`
+(sorts all distinct tags) per keystroke; `close_matches()` scans all tags per Add-Tags submit.
+Discord gives autocomplete a hard **3-second** deadline and these run on the event loop, so at
+tens of thousands of entries/tags they risk both missing the deadline and stalling the bot.
+(`_pending_choices` is bounded by the *pending* backlog, not total saves — it's fine.)
+- **Fix path:** keep the forget history pre-sorted / capped to recent-N, and thread the reads
+  as in ①.
+
+**What does *not* need attention:** normalized-URL dedup lookups (O(1) dict, fine at any size);
+`pending_approvals.json` (holds only *unapproved* cards — bounded by approval throughput, not
+total saves); `preferences.json` (one entry per *source*, grows far slower than saves);
+`scan_saves_folders` (folders scale much slower than notes and it's already capped at 400 +
+depth 5, run in a thread). The Anthropic prompt only ever receives the top-50 tags and ≤400
+folders, so **prompt size is already bounded** regardless of vault size.
+
+> None of ①–③ is urgent today. ① is the one to do proactively (it's a latent bot-freeze, and
+> the thread-wrap fix is trivial); ②–③ are "when the numbers get real" and are tracked in
+> ROADMAP → Scaling.

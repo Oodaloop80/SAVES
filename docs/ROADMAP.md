@@ -190,6 +190,27 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 
 ---
 
+## Phase 7 — Scaling (tens of thousands of saves/tags)  *(not urgent; full analysis in ARCHITECTURE §11)*
+> Raised by Bora (2026-07-05): the vault will eventually hold tens of thousands of saves and
+> an unknown number of tags. Dedup lookups (O(1) dict) and prompt size (top-50 tags / ≤400
+> folders) scale fine; three paths degrade. Correctness is unaffected — these are perf cliffs.
+- [ ] **① Tag-index rescan off the event loop (do proactively — latent bot-freeze).**
+      `TagIndex.refresh()` reads every note in the vault synchronously; the processor already
+      threads it, but the Discord autocomplete callbacks (`_tag_choices`, `close_matches`) call
+      it **on the event loop**, so a TTL-expired rescan on a keystroke freezes the whole bot at
+      scale. Cheap fix: wrap the autocomplete index reads in `asyncio.to_thread`. Structural
+      fix: persist the index to a sidecar + incremental mtime-based updates (no O(vault) read).
+- [ ] **② `processing_state.json` → SQLite** when it gets uncomfortable (~low tens of
+      thousands). Today every mark_*/forget rewrites the whole file (O(n) per save); SQLite gives
+      per-key upserts. Localized to `queue_manager.py` — small public surface
+      (`is_done`/`mark_done`/`forget`/`entries`).
+- [ ] **③ Autocomplete sorts per keystroke.** `/forget`'s `_forget_choices` sorts the entire
+      state dict per keystroke; `search()`/`close_matches()` sort/scan all tags. Risk Discord's
+      3s autocomplete deadline + stall the loop at scale. Pre-sort/cap the forget history to
+      recent-N and thread the reads (folds into ①).
+
+---
+
 ## Verified review fixes (fill in as Phase 1 review runs)
 | # | File:line | Issue | Severity | Status |
 |---|-----------|-------|----------|--------|
