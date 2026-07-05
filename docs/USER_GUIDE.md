@@ -95,8 +95,12 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
 - **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly.
 - **📁 Change Path** — prepopulated with the current path; tweak, don't retype. Whatever
   you enter is normalized to ALL CAPS + forward slashes automatically.
-- **✏️ NL Edit** — plain English ("move this to cooking/bbq and add a smoker tag");
-  costs one extra Claude call.
+- **✏️ NL Edit** — plain English; costs one extra Claude call. One instruction can do
+  several things ("move this to cooking/bbq and add a smoker tag"), and it can reference
+  the note's **content**, not just its metadata ("tag every coffee type mentioned in the
+  summary" works — the summary and takeaways are sent along). If it replies "cancelled",
+  it includes the reason; if it replies "couldn't map that instruction", nothing changed —
+  rephrase and try again (the edit session stays open).
 - **🔍 Deep fact-check** — on-demand, web-searched; slow (1–3 min) on health/finance.
 - **⚠️ Approve + Include Warning** — only appears when a fact-check/location dispute was
   found; writes the note with a `> [!warning]` callout.

@@ -445,22 +445,40 @@ def build_user_prompt(
 
 
 NL_EDIT_SYSTEM_PROMPT = """\
-You parse natural language edit instructions for a pending note and return a single structured action.
-Respond with ONLY valid JSON, one of these forms:
+You parse natural language edit instructions for a pending note and return structured actions.
+Respond with ONLY valid JSON — no markdown fences, no prose:
+{"actions": [<one or more action objects>]}
+
+Action objects:
 {"action": "change_path", "value": "SAVES/NEW/PATH"}
 {"action": "add_tags", "value": ["tag1", "tag2"]}
 {"action": "remove_tags", "value": ["oldtag"]}
 {"action": "rename_title", "value": "New Title"}
-{"action": "cancel"}
+
+A single instruction may map to several actions ("move to COOKING/BBQ and add a smoker tag"
+→ change_path + add_tags). The note's summary and key takeaways are provided: instructions
+may reference the content itself — e.g. "tag every coffee type mentioned in the summary"
+means read the summary, extract the coffee types, and return them as add_tags. Tags are
+lowercase-hyphenated (flat-white, cold-brew).
+
+Only when the user is clearly aborting ("cancel", "never mind") or the instruction cannot
+be expressed with the actions above, respond instead with:
+{"action": "cancel", "reason": "<one short sentence the user will see>"}
 """
 
 
 def build_nl_edit_prompt(current_state: dict, instruction: str) -> str:
+    # Summary + takeaways give the model the note CONTENT, not just its metadata —
+    # instructions like "tag every coffee type in the summary" are unanswerable without
+    # them (that exact failure shipped: the model saw no summary and returned cancel).
+    takeaways = current_state.get("key_takeaways") or []
     return (
         f"Current note state:\n"
         f"  title: {current_state.get('title')}\n"
         f"  folder_path: {current_state.get('folder_path')}\n"
-        f"  tags: {current_state.get('tags')}\n\n"
+        f"  tags: {current_state.get('tags')}\n"
+        f"  summary: {(current_state.get('summary') or '')[:1500]}\n"
+        f"  key_takeaways: {takeaways}\n\n"
         f"User instruction: {instruction}\n\n"
         f"Return the appropriate action JSON."
     )

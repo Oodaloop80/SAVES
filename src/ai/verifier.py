@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 
@@ -50,7 +49,14 @@ def _location_check_sync(content, ai_result: dict, config: dict) -> dict | None:
         # pick the first text block. An empty raw falls through to json.loads → caught by
         # the except below → clean non-fatal None, matching this check's design.
         raw = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
-        result = json.loads(raw)
+        # Lenient: tolerate ```json fences / surrounding prose — a raw json.loads here
+        # failed with "Expecting value: line 1 column 1" whenever the model fenced its
+        # answer, silently skipping the location check.
+        from src.ai.claude_client import _loads_lenient
+
+        result = _loads_lenient(raw)
+        if result is None:
+            raise ValueError(f"unparseable location-check response: {raw[:200]!r}")
         # Surface the result when there's a location dispute OR any advisory worth showing.
         if result.get("location_disputed") or result.get("advisories"):
             return result

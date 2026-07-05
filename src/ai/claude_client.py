@@ -241,10 +241,13 @@ def _nl_edit_sync(current_state: dict, instruction: str, config: dict) -> dict:
     client = _make_client(config)
     user_prompt = build_nl_edit_prompt(current_state, instruction)
     raw = _call(client, NL_EDIT_SYSTEM_PROMPT, user_prompt, config)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"action": "cancel"}
+    # Lenient parse (fences/prose tolerated). A parse failure is an ERROR, not a cancel:
+    # mapping it to {"action": "cancel"} made model formatting hiccups look like a
+    # deliberate "NL Edit cancelled" to the user, with no hint anything went wrong.
+    result = _loads_lenient(raw)
+    if result is None:
+        raise ValueError(f"model returned unparseable edit response: {raw[:200]!r}")
+    return result
 
 
 async def fact_check(

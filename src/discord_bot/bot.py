@@ -668,26 +668,55 @@ class SAVESBot(discord.Client):
                 "Type your instruction again to retry, or use the buttons instead."
             )
             return
-        action = result.get("action")
-        value = result.get("value")
+        # One instruction may map to several actions ("move to X and add tag Y"), so the
+        # model returns {"actions": [...]}; a bare single-action object (older prompt
+        # form, or the cancel case) is normalized into the same list.
+        actions = result.get("actions")
+        if not isinstance(actions, list):
+            actions = [result]
 
-        if action == "change_path" and value:
-            pending.ai_result["folder_path"] = clean_folder_path(value)
-        elif action == "add_tags" and value:
-            tags = list(pending.ai_result.get("tags") or [])
-            for t in value:
-                if t not in tags:
-                    tags.append(t)
-            pending.ai_result["tags"] = tags
-        elif action == "remove_tags" and value:
-            pending.ai_result["tags"] = [
-                t for t in (pending.ai_result.get("tags") or []) if t not in value
-            ]
-        elif action == "rename_title" and value:
-            pending.ai_result["title"] = value
-        elif action == "cancel":
+        if any(a.get("action") == "cancel" for a in actions if isinstance(a, dict)):
             _nl_edit_sessions.pop(message.channel.id, None)
-            await message.reply("NL Edit cancelled.")
+            reason = next(
+                (a.get("reason") for a in actions if isinstance(a, dict) and a.get("reason")),
+                None,
+            )
+            await message.reply(f"NL Edit cancelled — {reason}" if reason else "NL Edit cancelled.")
+            return
+
+        applied = 0
+        for act in actions:
+            if not isinstance(act, dict):
+                continue
+            action = act.get("action")
+            value = act.get("value")
+            if action == "change_path" and value:
+                pending.ai_result["folder_path"] = clean_folder_path(value)
+                applied += 1
+            elif action == "add_tags" and value:
+                tags = list(pending.ai_result.get("tags") or [])
+                for t in value:
+                    if t not in tags:
+                        tags.append(t)
+                pending.ai_result["tags"] = tags
+                applied += 1
+            elif action == "remove_tags" and value:
+                pending.ai_result["tags"] = [
+                    t for t in (pending.ai_result.get("tags") or []) if t not in value
+                ]
+                applied += 1
+            elif action == "rename_title" and value:
+                pending.ai_result["title"] = value
+                applied += 1
+
+        if not applied:
+            # Nothing recognized — say so and keep the session open so a rephrase works,
+            # instead of replying "Applied" with an unchanged card.
+            await message.reply(
+                "⚠️ I couldn't map that instruction to an edit — nothing was changed.\n"
+                "Try rephrasing (e.g. \"add tags: espresso cold-brew\", "
+                "\"move to SAVES/COOKING\"), or use the buttons."
+            )
             return
 
         self.store.update(pending)

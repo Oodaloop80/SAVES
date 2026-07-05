@@ -262,7 +262,10 @@ Every approval message has (in this order — Bora, 2026-07-05):
   input is force-normalized by `clean_folder_path()` (vault_scanner) → ALL CAPS, forward
   slashes — applied at every entry point (AI generation, this modal, NL edit) so case-variant
   duplicate folders can't happen
-- **✏️ NL Edit** — natural language edit via a second Claude call
+- **✏️ NL Edit** — natural language edit via a second Claude call. Multi-action per
+  instruction; the note's summary/takeaways are in the prompt so content-referencing
+  instructions ("tag the coffee types in the summary") work. Lenient JSON parse
+  (`_loads_lenient`) — a parse failure is an error+retry, never a fake "cancelled"
 - **🔍 Deep fact-check** — on-demand web-searched claim verification
 
 **Every mutation re-renders the original approval card** (`SAVESBot._refresh_card`: fetches
