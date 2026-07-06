@@ -81,10 +81,12 @@ SAVES/
 │   ├── process_one.py             # CLI test: run full pipeline for one URL, print note
 │   ├── test_connection.py         # Smoke test: Anthropic API, Discord bot, Reddit JSON API
 │   ├── whisper_server.py          # Flask server (runs on WORKSTATION, not NAS)
-│   └── refresh_cookies.py         # Instructions for exporting browser cookies
+│   ├── refresh_cookies.py         # Instructions for exporting browser cookies
+│   └── preflight_nas.sh           # POSIX pre-deploy check (mounts/secrets/cookies/Whisper) — run on NAS
 ├── docker/
 │   ├── Dockerfile                 # python:3.11-slim + ffmpeg + chromium + playwright
 │   └── docker-compose.yml         # 8 volumes: vault, media, cookies, config, logs, state files
+├── .dockerignore                  # Trims build context + keeps secrets/state out of image layers
 ├── config.yaml                    # All configuration — canonical container paths only
 ├── config.local.yaml.example      # Template for bare-metal dev overrides (gitignored copy)
 ├── .env.example                   # Template: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
@@ -445,7 +447,10 @@ Whisper server (`python scripts\whisper_server.py --model large-v3-turbo`). `N:\
 view of the NAS when needed.
 
 **NAS (Synology, Docker):** `cp docker/.env.example docker/.env` (adjust paths), create the
-state dir, then `docker-compose up --build -d` from `docker/`.
+state dir, then `docker-compose up --build -d` from `docker/`. **Full runbook:
+`docs/DEPLOY_NAS.md`** (SSH, cookies, firewall, the DEV/PROD single-Discord-token conflict, live
+test); run `sh scripts/preflight_nas.sh` from the repo root first to catch a bad mount / missing
+secret / unreachable Whisper before the build.
 
 **Discord server:** "Bora's AI Ops"
 Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`

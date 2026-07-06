@@ -171,6 +171,9 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
       (now incl. card-refresh-on-edit, `/forget`, + `/tag add` autocomplete)
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
+      — runbook `docs/DEPLOY_NAS.md`; preflight `scripts/preflight_nas.sh`; `.dockerignore` added
+      (trims context + keeps secrets/state out of image). Go-live gate: stop DEV bot first
+      (one Discord token = one gateway connection).
 - [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
 - [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `0 - INBOX/SAVES.md`
 - [x] Whisper runbook into HANDBOOK — **§9.1** (start, host/port, `/health` verify, config,

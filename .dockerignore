@@ -1,0 +1,38 @@
+# Build-context trim + secret hygiene. The Dockerfile only COPYs src/, scripts/,
+# config.yaml, requirements*.txt, and .env.example — everything else is just noise in the
+# build context (slows the upload to the Docker daemon on a NAS) or a secret that must
+# NEVER bake into an image layer. Runtime data (cookies, state, vault, media) is bind-
+# mounted at run time by docker-compose, so excluding it here does not affect the running
+# container — it only keeps it out of the image.
+
+# Version control + tooling
+.git
+.gitignore
+.github
+.claude
+.venv
+venv
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache
+.ruff_cache
+
+# Docs, dev scratch, screenshots, patches — not needed to run
+docs/
+patches/
+screenshots/
+*.md
+
+# Runtime state + logs (mounted at runtime, never baked in)
+logs/
+state/
+processing_state.json
+pending_approvals.json
+preferences.json
+
+# Secrets and host-specific overrides — MUST NOT enter an image layer
+.env
+docker/.env
+config.local.yaml
+cookies/
