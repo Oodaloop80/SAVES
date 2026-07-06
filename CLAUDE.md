@@ -452,6 +452,11 @@ state dir, then `docker-compose up --build -d` from `docker/`. **Full runbook:
 test); run `sh scripts/preflight_nas.sh` from the repo root first to catch a bad mount / missing
 secret / unreachable Whisper before the build.
 
+**Mobile capture:** iOS + Android share a URL into the local vault's `0 - INBOX/SAVES.md` via
+the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync bridges it to the NAS copy
+the container watches, and syncs the finished note back. No SMB/VPN. Setup:
+`docs/MOBILE_SHORTCUTS.md`. (Depends on an Obsidian client keeping the NAS vault synced.)
+
 **Discord server:** "Bora's AI Ops"
 Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
 

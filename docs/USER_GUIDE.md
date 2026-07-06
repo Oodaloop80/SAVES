@@ -16,6 +16,9 @@ should be here. (Architecture lives in `ARCHITECTURE.md`; the canonical system m
 - **The inbox is one file:** `0 - INBOX/SAVES.md` in the vault. Paste URLs there (one per
   line); the watcher picks them up within ~3 seconds. Nothing else in the vault triggers
   processing.
+- **From your phone:** share a link into the vault's inbox via the Obsidian **Advanced URI**
+  shortcut — Obsidian Sync carries it to the NAS, runs it, and syncs the finished note back.
+  Works off home Wi-Fi (no VPN). Full setup for iOS + Android: `docs/MOBILE_SHORTCUTS.md`.
 - **Everything is immediate.** Extraction, AI analysis, and the Discord approval card fire
   the moment a URL lands. Nothing is batched or deferred (locked decision — ROADMAP
   "Decisions locked").

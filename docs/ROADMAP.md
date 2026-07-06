@@ -39,6 +39,12 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   Add-Tags modal, `/tag add`, NL edit, near-dup swap) plus a write-time backstop in
   `bot._finalize()`. The lowercase mirror of the ALL-CAPS `clean_folder_path()` convention
   for folders. Don't add a tag entry point without routing it through `clean_tags()`.
+- **Mobile capture is Obsidian-Sync-mediated (Bora, 2026-07-06).** Both iOS and Android append
+  the shared URL to the *local* vault's `0 - INBOX/SAVES.md` via the Obsidian **Advanced URI**
+  plugin; Obsidian Sync propagates to the NAS copy the container watches and syncs the finished
+  note back. This **replaces** the earlier SMB-append-over-Tailscale plan — it works off the
+  home network with no VPN and is identical on both OSes. Dependency: an Obsidian client must
+  keep the NAS vault synced (the Sync↔NAS bridge). Runbook: `docs/MOBILE_SHORTCUTS.md`.
 
 ---
 
@@ -174,8 +180,13 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       — runbook `docs/DEPLOY_NAS.md`; preflight `scripts/preflight_nas.sh`; `.dockerignore` added
       (trims context + keeps secrets/state out of image). Go-live gate: stop DEV bot first
       (one Discord token = one gateway connection).
-- [ ] iOS share shortcut (Obsidian Actions URI) → `0 - INBOX/SAVES.md`
-- [ ] Android share (HTTP Shortcuts → SMB append via Tailscale) → `0 - INBOX/SAVES.md`
+- [ ] Mobile share capture — **both** phones append to the local vault's `0 - INBOX/SAVES.md`
+      via the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync carries it to the
+      NAS and the finished note + cleared inbox back. iOS = Shortcuts share sheet; Android =
+      Tasker/MacroDroid share trigger. Runbook: `docs/MOBILE_SHORTCUTS.md`.
+      **Design decision (Bora, 2026-07-06):** Obsidian-Sync-mediated, NOT the old SMB-over-
+      Tailscale plan — capture works off home network with no VPN, same mechanism on both OSes.
+      Dependency: an Obsidian client must keep the NAS vault synced (the Sync↔NAS bridge).
 - [x] Whisper runbook into HANDBOOK — **§9.1** (start, host/port, `/health` verify, config,
       client 300s+retry, firewall cmd, restart options, IP stability). Two owner facts to confirm
       live (firewall rule in place? restart mechanism?) tracked in §11.
