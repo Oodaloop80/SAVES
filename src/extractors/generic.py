@@ -1,5 +1,8 @@
+import json
 import logging
+import os
 import re
+import urllib.parse
 
 from src.extractors.base import BaseExtractor, ExtractedContent
 from src.utils.recipe_data import extract_recipe_jsonld
@@ -22,6 +25,7 @@ class GenericExtractor(BaseExtractor):
         self.timeout = pcfg.get("playwright_timeout_seconds", 30) * 1000
         self.wait_network_idle = pcfg.get("wait_for_network_idle", True)
         self.auto_click_banners = pcfg.get("auto_click_cookie_banners", True)
+        self.cookies_dir = config.get("paths", {}).get("cookies_dir", "cookies")
 
     def can_handle(self, url: str) -> bool:
         return True
@@ -55,12 +59,55 @@ class GenericExtractor(BaseExtractor):
             await context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
+            # Load a site-specific session for this domain if one exists. Prefer a
+            # _session.json (captured via scripts/capture_session.py — includes HttpOnly
+            # cookies and localStorage that .txt exporters can't reach) over a plain
+            # Netscape .txt file. The .txt path stays as a lightweight fallback for sites
+            # where a simple cookie export is sufficient.
+            session_state = _load_session_for_url(url, self.cookies_dir)
+            if session_state:
+                if "cookies" in session_state:
+                    await context.add_cookies(session_state["cookies"])
+                for origin in session_state.get("origins", []):
+                    entries = origin.get("localStorage", [])
+                    if entries:
+                        # localStorage must be seeded after navigation; defer to after goto.
+                        pass  # handled below after page.goto
+                logger.info("generic extractor: loaded session state for %s",
+                            urllib.parse.urlparse(url).netloc)
+            else:
+                pw_cookies = _load_cookies_for_url(url, self.cookies_dir)
+                if pw_cookies:
+                    await context.add_cookies(pw_cookies)
+                    logger.info("generic extractor: loaded %d cookie(s) for %s",
+                                len(pw_cookies), urllib.parse.urlparse(url).netloc)
             page = await context.new_page()
             wait = "networkidle" if self.wait_network_idle else "load"
             try:
                 await page.goto(url, wait_until=wait, timeout=self.timeout)
             except Exception:
                 await page.wait_for_timeout(3000)
+
+            # Seed localStorage entries from the session state. Must run after goto because
+            # localStorage is scoped to an origin and cannot be written before navigation.
+            if session_state:
+                for origin in session_state.get("origins", []):
+                    entries = origin.get("localStorage", [])
+                    if entries:
+                        for item in entries:
+                            try:
+                                await page.evaluate(
+                                    "([k, v]) => localStorage.setItem(k, v)",
+                                    [item["name"], item["value"]],
+                                )
+                            except Exception:
+                                pass
+                if any(origin.get("localStorage") for origin in session_state.get("origins", [])):
+                    # Reload so the app sees the seeded localStorage on startup
+                    try:
+                        await page.reload(wait_until=wait, timeout=self.timeout)
+                    except Exception:
+                        await page.wait_for_timeout(3000)
 
             # If Cloudflare's JS challenge is still running ("Just a moment..."), wait up
             # to 15 s for it to resolve before capturing the page.
@@ -421,5 +468,94 @@ def _html_to_text(html: str) -> str:
 
 
 def _domain(url: str) -> str:
-    import urllib.parse
     return urllib.parse.urlparse(url).netloc.lstrip("www.")
+
+
+def _load_session_for_url(url: str, cookies_dir: str) -> dict | None:
+    """Find a Playwright storageState JSON file for the given URL's domain.
+
+    Looks for <stem>_session.json where stem appears in the URL path or matches
+    the hostname. Returns the parsed dict (keys: cookies, origins) or None.
+    """
+    if not os.path.isdir(cookies_dir):
+        return None
+
+    parsed = urllib.parse.urlparse(url)
+    path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+    hostname = parsed.netloc.lower()
+    bare_host = hostname.lstrip("www.")
+
+    for fname in os.listdir(cookies_dir):
+        if not fname.endswith("_session.json"):
+            continue
+        stem = fname[: -len("_session.json")].lower()
+        if stem in [p.lower() for p in path_parts] or stem in (hostname, bare_host):
+            fpath = os.path.join(cookies_dir, fname)
+            try:
+                with open(fpath, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning("Failed to load session file %s: %s", fpath, e)
+
+    return None
+
+
+def _load_cookies_for_url(url: str, cookies_dir: str) -> list[dict]:
+    """Find and parse a Netscape cookie file for the given URL's domain.
+
+    Matches a cookie file to the URL by hostname (e.g. "provecho.co.txt" covers
+    every path on provecho.co — all creators — via the bare-hostname check) or,
+    as a narrower fallback, by a path segment (e.g. "somecreator.txt" matches
+    provecho.co/somecreator). Prefer the hostname form for a site whose login
+    spans multiple creators/sections.
+    Returns a list of Playwright-format cookie dicts, or [] if no file matches.
+    """
+    if not os.path.isdir(cookies_dir):
+        return []
+
+    parsed = urllib.parse.urlparse(url)
+    # Candidates: path segments + hostname variations, all lowercased
+    path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+    hostname = parsed.netloc.lower()
+    bare_host = hostname.lstrip("www.")
+
+    for fname in os.listdir(cookies_dir):
+        if not fname.endswith(".txt"):
+            continue
+        stem = fname[:-4].lower()
+        # Match if the cookie file stem equals the hostname / bare hostname
+        # (e.g. "provecho.co" — covers all creator paths on the domain) or appears
+        # as a URL path segment (narrower per-creator/section match).
+        if stem in [p.lower() for p in path_parts] or stem in (hostname, bare_host):
+            fpath = os.path.join(cookies_dir, fname)
+            cookies = _parse_netscape_cookies(fpath)
+            if cookies:
+                return cookies
+
+    return []
+
+
+def _parse_netscape_cookies(path: str) -> list[dict]:
+    """Parse a Netscape-format cookie file into Playwright add_cookies() dicts."""
+    cookies = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    continue
+                domain, _, cookie_path, secure, expires, name, value = parts[:7]
+                cookies.append({
+                    "name": name,
+                    "value": value,
+                    "domain": domain.lstrip("."),
+                    "path": cookie_path,
+                    "secure": secure.upper() == "TRUE",
+                    "expires": int(expires) if expires.isdigit() else -1,
+                })
+    except Exception as e:
+        logger.warning("Failed to parse cookie file %s: %s", path, e)
+    return cookies

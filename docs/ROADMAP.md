@@ -195,6 +195,40 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] Feed real URLs via `/save`; refine quality + routing; let `preferences.json` learn
 - [ ] Keep docs current per change; targeted single-agent reviews on risky edits only
 
+## Phase 5b — Discord-native saving & site crawlers  *(future feature, not yet scoped)*
+> Raised by Bora (2026-07-22). Two related ideas to explore together:
+
+- **Discord-native saving:** Instead of pasting URLs into the Obsidian inbox file, post the URL
+  directly in a Discord channel (e.g., `#SAVES-queue`) and the bot picks it up. This removes the
+  Obsidian inbox as the required entry point — any device with Discord can save without needing
+  the Advanced URI plugin or Obsidian installed. Implementation sketch: a `on_message` listener
+  that detects URLs in a designated channel, strips message noise, and routes them into
+  `QueueManager.enqueue_url()` exactly as the inbox watcher does. Dedup, approval flow, and
+  vault write are unchanged.
+
+- **Site crawlers (slash command `/crawl <profile-url>`):** Discover all recipe/content URLs on
+  a creator's profile or index page, deduplicate against `processing_state.json`, show a
+  "Found N recipes, M already saved — queue K?" confirm card in Discord, then enqueue survivors
+  one at a time through the existing pipeline. Each item gets its own normal approval card.
+
+  **Architecture note (Bora, 2026-07-22):** A generic `SiteCrawler` base class with a shared
+  `enqueue_discovered()` method handles the downstream pipeline for all sites. The only
+  site-specific part is `discover_urls()` — the method that finds and returns a list of content
+  URLs from the index/profile page. Public sites with simple HTML structure can use a generic
+  Playwright-based implementation; SPAs (Next.js/React) and login-required sites need a
+  site-specific subclass. First target: `provecho.co` (login via `cookies/provecho.co.txt` —
+  a domain-wide session so recipes from *any* creator are reachable, not one profile; 65+
+  recipes, Next.js SPA). Rate limiting (configurable delay between enqueues) and a dry-run
+  mode (lists found URLs without queueing) are required from day one.
+
+  **Embedded video (Bora, 2026-07-28):** some provecho.co recipes embed a video. Those must be
+  downloaded and transcribed like any other media save — the generic path currently extracts
+  article Markdown + images only (`GenericExtractor` sets no video `media_urls`, and vision/OCR
+  is skipped for the `generic` platform). So the crawler/generic enhancement must: detect the
+  embedded video (`<video>`/player embed → resolvable URL, or hand the recipe URL to yt-dlp),
+  route it through the existing `download_media()` → `transcribe()` steps, and embed + transcript
+  the note the same way Instagram/TikTok saves do. This is net-new work; it does not exist yet.
+
 ## Phase 6 — Cost optimization (post-stabilization)  *(gated: only once quality is dialed in)*
 > Deferred here on purpose (Bora, 2026-07-01): batching removes instant results, which would
 > cripple the tweaking/testing loop. Do NOT start until saves are consistently high-quality
