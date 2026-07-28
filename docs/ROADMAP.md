@@ -220,17 +220,25 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   limiting (configurable delay between enqueues) and a dry-run mode (lists found URLs
   without queueing) are required from day one.
 
-  **Auth finding (Bora, 2026-07-28):** provecho gates full recipes behind login and keeps its
-  auth token in **`sessionStorage`**, which a Netscape `.txt` cookie export and even
-  Playwright's `storage_state()` do **not** capture (verified: a `.txt` session and a native
-  `storage_state` replay both returned the paywalled "This recipe is locked" page; the saved
-  state held only analytics cookies + a `platformVisitorAccountId` visitor id, no token). Fix:
-  `scripts/capture_session.py` now reads `sessionStorage` explicitly and saves it under each
-  origin; `GenericExtractor._seed_web_storage()` seeds both localStorage and sessionStorage
-  after navigation, then reloads so the SPA authenticates. Capture with
+  **Auth finding (Bora, 2026-07-28):** provecho gates full recipes behind **Firebase
+  Authentication**, which stores its refresh token in **IndexedDB** (`firebaseLocalStorageDb`)
+  — NOT in cookies, localStorage, or sessionStorage. This was proven step by step: a Netscape
+  `.txt` session, a Playwright `storage_state()` JSON (cookies + localStorage), and even one
+  that additionally captured sessionStorage all replayed to the paywalled "This recipe is
+  locked" page; the saved state held only analytics cookies + a `platformVisitorAccountId`
+  visitor id and UI-state keys, never a token. The origin exposes `firebaseLocalStorageDb`,
+  `firebase-installations-database`, `firebase-heartbeat-database` — a textbook Firebase-Auth
+  fingerprint. Since IndexedDB is not reachable by any portable-JSON capture, the fix is a
+  **persistent on-disk browser profile** (chosen by Bora, 2026-07-28):
+  `scripts/capture_session.py` now uses `launch_persistent_context(cookies/<host>_profile/)`
+  — you log in once and the profile keeps IndexedDB/cookies/localStorage on disk exactly like
+  a normal browser; `GenericExtractor` prefers a `<host>_profile/` (via `_profile_dir_for_url`)
+  and relaunches headless with it, so Firebase re-authenticates. Capture with
   `python scripts\capture_session.py https://www.provecho.co/platform/login provecho.co`
-  (log in, open a recipe to confirm it's unlocked, then press Enter) → writes
-  `cookies/provecho.co_session.json`, which the extractor prefers over the `.txt`.
+  (log in, open a recipe to confirm it's unlocked, then press Enter). Trade-off: the profile is
+  a machine-specific directory, so the NAS needs its own one-time login. The portable
+  `_session.json` (cookies + localStorage + sessionStorage) path remains supported for non-
+  IndexedDB sites but no longer authenticates provecho.
 
   **Embedded video (Bora, 2026-07-28):** some provecho.co recipes embed a video. Those must be
   downloaded and transcribed like any other media save — the generic path currently extracts

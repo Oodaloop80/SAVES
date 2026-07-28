@@ -5,6 +5,10 @@ cookies/instagram.txt
 cookies/tiktok.txt
 cookies/reddit.txt
 cookies/facebook.txt
+# Captured login state — contains auth tokens. Persistent profiles carry IndexedDB
+# (Firebase auth); _session.json carries cookies + localStorage + sessionStorage.
+cookies/*_profile/
+cookies/*_session.json
 
 # Local dev config overrides (never commit — contains machine-specific paths)
 config.local.yaml

@@ -34,49 +34,65 @@ class GenericExtractor(BaseExtractor):
         from playwright.async_api import async_playwright
         from readability import Document
 
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-service-autorun",
+            "--password-store=basic",
+        ]
+        context_opts = dict(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+            timezone_id="America/New_York",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
+
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-first-run",
-                    "--no-service-autorun",
-                    "--password-store=basic",
-                ],
-            )
-            context = await browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/126.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1920, "height": 1080},
-                locale="en-US",
-                timezone_id="America/New_York",
-                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-            )
+            # A captured persistent profile (cookies/<host>_profile/, made by
+            # scripts/capture_session.py) is preferred when one exists for this domain: it
+            # carries the FULL logged-in browser state on disk — crucially IndexedDB, where
+            # Firebase-auth sites (provecho.co) keep their token. Cookies, localStorage, and
+            # sessionStorage don't hold that token, so a portable .txt/_session.json can't
+            # authenticate those sites; a real on-disk profile does. Everything else uses the
+            # ephemeral launch + optional _session.json / .txt cookie loading below.
+            profile_dir = _profile_dir_for_url(url, self.cookies_dir)
+            session_state = None
+            if profile_dir:
+                context = await p.chromium.launch_persistent_context(
+                    profile_dir, headless=True, args=launch_args, **context_opts
+                )
+                browser = None
+                logger.info("generic extractor: using persistent profile %s for %s",
+                            profile_dir, urllib.parse.urlparse(url).netloc)
+            else:
+                browser = await p.chromium.launch(headless=True, args=launch_args)
+                context = await browser.new_context(**context_opts)
             # Mask the automation flag that Cloudflare and other bot-detection scripts check.
             await context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
-            # Load a site-specific session for this domain if one exists. Prefer a
-            # _session.json (captured via scripts/capture_session.py — includes HttpOnly
-            # cookies, localStorage, AND sessionStorage that .txt exporters can't reach)
-            # over a plain Netscape .txt file. The .txt path stays as a lightweight fallback
-            # for sites where a simple cookie export is sufficient.
-            session_state = _load_session_for_url(url, self.cookies_dir)
-            if session_state:
-                if "cookies" in session_state:
-                    await context.add_cookies(session_state["cookies"])
-                # localStorage + sessionStorage are origin-scoped and seeded after goto below.
-                logger.info("generic extractor: loaded session state for %s",
-                            urllib.parse.urlparse(url).netloc)
-            else:
-                pw_cookies = _load_cookies_for_url(url, self.cookies_dir)
-                if pw_cookies:
-                    await context.add_cookies(pw_cookies)
-                    logger.info("generic extractor: loaded %d cookie(s) for %s",
-                                len(pw_cookies), urllib.parse.urlparse(url).netloc)
+            # For non-profile domains, load a portable session if one exists for this domain:
+            # a _session.json (cookies + localStorage + sessionStorage, seeded after goto) is
+            # preferred over a plain Netscape .txt cookie file. Skipped entirely in profile
+            # mode — the profile already carries all of it.
+            if not profile_dir:
+                session_state = _load_session_for_url(url, self.cookies_dir)
+                if session_state:
+                    if "cookies" in session_state:
+                        await context.add_cookies(session_state["cookies"])
+                    logger.info("generic extractor: loaded session state for %s",
+                                urllib.parse.urlparse(url).netloc)
+                else:
+                    pw_cookies = _load_cookies_for_url(url, self.cookies_dir)
+                    if pw_cookies:
+                        await context.add_cookies(pw_cookies)
+                        logger.info("generic extractor: loaded %d cookie(s) for %s",
+                                    len(pw_cookies), urllib.parse.urlparse(url).netloc)
             page = await context.new_page()
             wait = "networkidle" if self.wait_network_idle else "load"
             try:
@@ -84,12 +100,11 @@ class GenericExtractor(BaseExtractor):
             except Exception:
                 await page.wait_for_timeout(3000)
 
-            # Seed localStorage + sessionStorage from the captured session. Must run after
-            # goto (both are origin-scoped and cannot be written before navigation), then
-            # reload so the SPA reads its auth token on startup. sessionStorage is the key
-            # one here: Playwright's storage_state() does NOT capture it, yet provecho.co
-            # (and many SPAs) keep the auth token there — capture_session.py grabs it
-            # explicitly so the token survives into this file.
+            # Seed localStorage + sessionStorage from a portable _session.json (non-profile
+            # domains only; session_state is None in profile mode). Must run after goto (both
+            # are origin-scoped and cannot be written before navigation), then reload so the
+            # page reads them on startup. NOTE: this does NOT cover IndexedDB-based auth
+            # (Firebase, e.g. provecho.co) — those require a persistent profile above.
             if session_state:
                 seeded = await _seed_web_storage(page, session_state)
                 if seeded:
@@ -229,7 +244,10 @@ class GenericExtractor(BaseExtractor):
                 except Exception:
                     pass
 
-            await browser.close()
+            if browser is not None:
+                await browser.close()
+            else:
+                await context.close()
 
         # Diagnostic: how many <img> tags carry a real http(s) src after lazy-resolution.
         # Compared with the inline-image count below, this localizes where images are lost:
@@ -458,6 +476,33 @@ def _html_to_text(html: str) -> str:
 
 def _domain(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.lstrip("www.")
+
+
+def _profile_dir_for_url(url: str, cookies_dir: str) -> str | None:
+    """Find a persistent browser-profile directory for the URL's domain.
+
+    Looks for a `<stem>_profile/` directory where stem equals the hostname / bare hostname or
+    appears as a URL path segment (same matching as the .txt / _session.json loaders). Returns
+    the directory path or None. Preferred over the portable session files because the on-disk
+    profile carries IndexedDB (where Firebase-auth sites keep their token), which JSON capture
+    cannot reach. Created by scripts/capture_session.py.
+    """
+    if not os.path.isdir(cookies_dir):
+        return None
+    parsed = urllib.parse.urlparse(url)
+    path_parts = [p.lower() for p in parsed.path.strip("/").split("/") if p]
+    hostname = parsed.netloc.lower()
+    bare_host = hostname.lstrip("www.")
+    for entry in os.listdir(cookies_dir):
+        if not entry.endswith("_profile"):
+            continue
+        full = os.path.join(cookies_dir, entry)
+        if not os.path.isdir(full):
+            continue
+        stem = entry[: -len("_profile")].lower()
+        if stem in path_parts or stem in (hostname, bare_host):
+            return full
+    return None
 
 
 async def _seed_web_storage(page, session_state: dict) -> bool:
