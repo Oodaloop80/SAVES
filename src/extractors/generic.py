@@ -61,18 +61,14 @@ class GenericExtractor(BaseExtractor):
             )
             # Load a site-specific session for this domain if one exists. Prefer a
             # _session.json (captured via scripts/capture_session.py — includes HttpOnly
-            # cookies and localStorage that .txt exporters can't reach) over a plain
-            # Netscape .txt file. The .txt path stays as a lightweight fallback for sites
-            # where a simple cookie export is sufficient.
+            # cookies, localStorage, AND sessionStorage that .txt exporters can't reach)
+            # over a plain Netscape .txt file. The .txt path stays as a lightweight fallback
+            # for sites where a simple cookie export is sufficient.
             session_state = _load_session_for_url(url, self.cookies_dir)
             if session_state:
                 if "cookies" in session_state:
                     await context.add_cookies(session_state["cookies"])
-                for origin in session_state.get("origins", []):
-                    entries = origin.get("localStorage", [])
-                    if entries:
-                        # localStorage must be seeded after navigation; defer to after goto.
-                        pass  # handled below after page.goto
+                # localStorage + sessionStorage are origin-scoped and seeded after goto below.
                 logger.info("generic extractor: loaded session state for %s",
                             urllib.parse.urlparse(url).netloc)
             else:
@@ -88,22 +84,15 @@ class GenericExtractor(BaseExtractor):
             except Exception:
                 await page.wait_for_timeout(3000)
 
-            # Seed localStorage entries from the session state. Must run after goto because
-            # localStorage is scoped to an origin and cannot be written before navigation.
+            # Seed localStorage + sessionStorage from the captured session. Must run after
+            # goto (both are origin-scoped and cannot be written before navigation), then
+            # reload so the SPA reads its auth token on startup. sessionStorage is the key
+            # one here: Playwright's storage_state() does NOT capture it, yet provecho.co
+            # (and many SPAs) keep the auth token there — capture_session.py grabs it
+            # explicitly so the token survives into this file.
             if session_state:
-                for origin in session_state.get("origins", []):
-                    entries = origin.get("localStorage", [])
-                    if entries:
-                        for item in entries:
-                            try:
-                                await page.evaluate(
-                                    "([k, v]) => localStorage.setItem(k, v)",
-                                    [item["name"], item["value"]],
-                                )
-                            except Exception:
-                                pass
-                if any(origin.get("localStorage") for origin in session_state.get("origins", [])):
-                    # Reload so the app sees the seeded localStorage on startup
+                seeded = await _seed_web_storage(page, session_state)
+                if seeded:
                     try:
                         await page.reload(wait_until=wait, timeout=self.timeout)
                     except Exception:
@@ -469,6 +458,34 @@ def _html_to_text(html: str) -> str:
 
 def _domain(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.lstrip("www.")
+
+
+async def _seed_web_storage(page, session_state: dict) -> bool:
+    """Seed localStorage + sessionStorage from a captured session onto the current page.
+
+    Both are origin-scoped and must be written AFTER navigating to the origin, so this runs
+    post-goto; the caller reloads if anything was seeded so the SPA reads it on startup.
+    sessionStorage matters because Playwright's storage_state() does not persist it, yet some
+    SPAs (provecho.co) keep their auth token there; capture_session.py saves it explicitly
+    under each origin's "sessionStorage" key. Returns True if any entry was seeded.
+    """
+    seeded = False
+    for origin in session_state.get("origins", []):
+        for item in origin.get("localStorage", []):
+            try:
+                await page.evaluate("([k, v]) => localStorage.setItem(k, v)",
+                                    [item["name"], item["value"]])
+                seeded = True
+            except Exception:
+                pass
+        for item in origin.get("sessionStorage", []):
+            try:
+                await page.evaluate("([k, v]) => sessionStorage.setItem(k, v)",
+                                    [item["name"], item["value"]])
+                seeded = True
+            except Exception:
+                pass
+    return seeded
 
 
 def _load_session_for_url(url: str, cookies_dir: str) -> dict | None:

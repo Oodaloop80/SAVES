@@ -216,10 +216,21 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   site-specific part is `discover_urls()` — the method that finds and returns a list of content
   URLs from the index/profile page. Public sites with simple HTML structure can use a generic
   Playwright-based implementation; SPAs (Next.js/React) and login-required sites need a
-  site-specific subclass. First target: `provecho.co` (login via `cookies/provecho.co.txt` —
-  a domain-wide session so recipes from *any* creator are reachable, not one profile; 65+
-  recipes, Next.js SPA). Rate limiting (configurable delay between enqueues) and a dry-run
-  mode (lists found URLs without queueing) are required from day one.
+  site-specific subclass. First target: `provecho.co` (65+ recipes, Next.js SPA). Rate
+  limiting (configurable delay between enqueues) and a dry-run mode (lists found URLs
+  without queueing) are required from day one.
+
+  **Auth finding (Bora, 2026-07-28):** provecho gates full recipes behind login and keeps its
+  auth token in **`sessionStorage`**, which a Netscape `.txt` cookie export and even
+  Playwright's `storage_state()` do **not** capture (verified: a `.txt` session and a native
+  `storage_state` replay both returned the paywalled "This recipe is locked" page; the saved
+  state held only analytics cookies + a `platformVisitorAccountId` visitor id, no token). Fix:
+  `scripts/capture_session.py` now reads `sessionStorage` explicitly and saves it under each
+  origin; `GenericExtractor._seed_web_storage()` seeds both localStorage and sessionStorage
+  after navigation, then reloads so the SPA authenticates. Capture with
+  `python scripts\capture_session.py https://www.provecho.co/platform/login provecho.co`
+  (log in, open a recipe to confirm it's unlocked, then press Enter) → writes
+  `cookies/provecho.co_session.json`, which the extractor prefers over the `.txt`.
 
   **Embedded video (Bora, 2026-07-28):** some provecho.co recipes embed a video. Those must be
   downloaded and transcribed like any other media save — the generic path currently extracts
