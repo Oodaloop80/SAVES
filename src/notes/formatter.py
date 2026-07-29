@@ -395,6 +395,35 @@ def _media_embeds(media_paths: list[str]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+# A localized image embed inside article_markdown: ```EmbedRelativeTo\nmedia://<path>\n```
+_EMBED_FENCE_RE = re.compile(r"```EmbedRelativeTo\s*\nmedia://([^\n]+)\n```")
+
+
+def _article_photo_embeds(content, exclude: list[str] | None = None, limit: int = 12) -> str:
+    """Render the recipe's own photos from the localized article_markdown.
+
+    `_render_web_recipe` shows the structured Recipe callout instead of the raw article body,
+    so the page's localized photos (hero + any step images) would otherwise be dropped. This
+    pulls their `media://` embeds out of article_markdown (after localization) and renders them
+    as a plain `## 📸 Photos` section — NOT a callout, because EmbedRelativeTo fences don't
+    render inside Obsidian callouts. `exclude` drops paths already shown elsewhere (e.g. a video
+    already embedded as the hero). Tiny ingredient-icon thumbnails were already stripped upstream
+    in the extractor, so what remains here is real photos.
+    """
+    md = (content.metadata or {}).get("article_markdown") or ""
+    exclude_set = set(exclude or [])
+    paths, seen = [], set()
+    for m in _EMBED_FENCE_RE.finditer(md):
+        p = m.group(1).strip()
+        if p and p not in seen and p not in exclude_set:
+            seen.add(p)
+            paths.append(p)
+    if not paths:
+        return ""
+    blocks = "\n\n".join(f"```EmbedRelativeTo\nmedia://{p}\n```" for p in paths[:limit])
+    return f"## 📸 Photos\n\n{blocks}\n"
+
+
 def _paragraphize(text: str, sentences_per: int = 4) -> list[str]:
     text = " ".join(text.split())
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
@@ -1197,9 +1226,15 @@ def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
 
 def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     # Section order per spec:
-    # Media → Summary → Recipe → Caption → Text from Images → Transcript → Sources & Metadata
+    # Media → Summary → Photos → Recipe → Caption → Text from Images → Transcript → Metadata
     saved_date = date.today().strftime("%Y-%m-%d")
     hero = media_paths[:1]
+
+    # The page's own photos (hero + any step images) — the web_recipe template renders the
+    # structured Recipe callout instead of the article body, so without this the recipe's
+    # pictures would be dropped. Exclude anything already shown as the hero media (e.g. an
+    # embedded recipe video) so it isn't embedded twice.
+    photos_section = _article_photo_embeds(content, exclude=hero)
 
     caption = content.body_text or ""
     caption_section = ""
@@ -1214,6 +1249,7 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     parts = [
         _media_embeds(hero),
         _summary_section(ai_result),
+        photos_section,
         _recipe_section(ai_result),
         caption_section,
         image_text_section,

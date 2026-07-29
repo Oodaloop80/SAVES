@@ -220,7 +220,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   - [x] `scripts/crawl_creator.py` — CLI: dry-run list, or `--to-inbox` to feed the running pipeline.
   - [x] `config.yaml` `crawl:` — `enabled`, `rate_limit_seconds`, `max_recipes`.
   - [ ] Discord `/crawl` slash command + confirm card (Queue / Dry-run / Cancel).
-  - [ ] Embedded video download+transcribe (see below) — needs a recipe-with-video to inspect.
+  - [x] Embedded video download+transcribe + recipe photos (see below) — LIVE-VERIFIED.
 
   **Per-creator scoping (Bora, 2026-07-28) — HARD REQUIREMENT.** provecho has many creators;
   crawling the whole site would be far too much. `/crawl` takes a single **creator page** and
@@ -266,17 +266,19 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   `_session.json` (cookies + localStorage + sessionStorage) path remains supported for non-
   IndexedDB sites but no longer authenticates provecho.
 
-  **Embedded video + pictures (Bora, 2026-07-28) — REQUIRED.** Some provecho recipes embed a
-  video, and recipes carry photos. Both must land in the note:
-  - **Pictures:** already flowing — the authenticated dry-run localized the recipe's images via
-    `localize_article_images()`. Re-verify they're the real recipe photos (not paywall
-    placeholders) now that auth works.
-  - **Video:** net-new. The generic path extracts article Markdown + images only (`GenericExtractor`
-    sets no video `media_urls`, vision/OCR skipped for `generic`). The enhancement must detect the
-    embedded player on an authenticated recipe page (inspect one with a video first: `<video>`/HLS
-    src, a Mux/Cloudflare/YouTube embed, or a URL yt-dlp can resolve), route it through the existing
-    `download_media()` → `transcribe()` steps, and embed + transcript the note the same way
-    Instagram/TikTok saves do.
+  **Embedded video + pictures (Bora, 2026-07-28) — ✅ DONE (2026-07-29), LIVE-VERIFIED.**
+  - **Video:** provecho embeds a plain direct MP4 (`<video src="…b-cdn.net/….mp4">` — BunnyCDN,
+    no HLS/Mux/DRM/signed tokens). `GenericExtractor._extract_video_urls()` collects `<video>`/
+    `<source>` srcs (skips blob:/data:) and prepends them to `media_urls`, so the existing
+    `download_media()` → `transcribe()` steps grab + Whisper them and the note embeds the player —
+    exactly like an IG/TikTok save. Verified: the mp4 downloaded via yt-dlp and embedded at the top
+    of the note. (Transcription needs the Whisper server up; it was down during the test, non-fatal.)
+  - **Pictures:** SPA recipe pages sprinkle a tiny `/w_100/` Cloudinary ingredient-icon next to every
+    ingredient (product/stock photos = noise). `_strip_thumbnail_images()` drops images whose
+    Cloudinary transform declares a small render size (< 200 px), keeping the hero (`w_800`) and any
+    real step photos. `web_recipe` renders the structured Recipe callout (not the article body), so
+    `formatter._article_photo_embeds()` pulls the surviving localized photos into a `## 📸 Photos`
+    section. Verified: 25 image refs → 1 (the hero dish photo) rendered under Photos.
 
 ## Phase 6 — Cost optimization (post-stabilization)  *(gated: only once quality is dialed in)*
 > Deferred here on purpose (Bora, 2026-07-01): batching removes instant results, which would

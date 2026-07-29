@@ -191,7 +191,7 @@ credentials:
 | `tiktok_video` | TikTok | Video embed, Transcript↕, Caption, Summary, Metadata |
 | `facebook_video` | Facebook | Video embed, Transcript↕, Caption, Summary, Metadata |
 | `facebook_post` | Facebook | Summary, Original Content, Metadata |
-| `web_recipe` | Generic | Media, Summary, Recipe, Caption, Text from Images, Transcript, Sources & Metadata |
+| `web_recipe` | Generic | Media (embedded video), Summary, 📸 Photos, Recipe, Caption, Text from Images, Transcript, Sources & Metadata |
 | `web_travel` | Web | Summary, Key Details, Images, Metadata |
 | `web_article` | Web | Summary, Takeaways, Article body (Markdown with inline images), Metadata |
 | `web_generic` | Web | Summary, Takeaways, Article body (Markdown), Metadata |
@@ -381,6 +381,16 @@ loaded images; image-wrapper CSS classes are stripped so trafilatura's discard r
 prune them. The og:image feature/hero image is prepended to the article body and also goes
 through the localizer. Vision/OCR is skipped for `generic` platform — body text is already
 extracted as structured Markdown.
+
+**Embedded video + thumbnail stripping (generic):** `_extract_video_urls()` collects any
+`<video>`/`<source>` src (skipping blob:/data: MSE streams) and prepends it to `media_urls`, so
+a recipe/article that embeds a direct video (e.g. provecho's BunnyCDN `.mp4`) gets downloaded +
+Whisper-transcribed + embedded like any other media save — no separate video pipeline.
+`_strip_thumbnail_images()` drops inline images whose Cloudinary transform declares a small
+render size (< 200 px) — the ingredient-icon thumbnails SPA recipe pages put next to each
+ingredient — keeping the hero and real step photos. Because `web_recipe` renders the structured
+Recipe callout instead of the article body, `formatter._article_photo_embeds()` surfaces the
+surviving localized photos in a `## 📸 Photos` section.
 
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —

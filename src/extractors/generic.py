@@ -244,6 +244,12 @@ class GenericExtractor(BaseExtractor):
                 except Exception:
                     pass
 
+            # Grab any embedded <video> so the crawler/recipe note downloads + transcribes it
+            # like an Instagram/TikTok save. provecho recipe pages carry a plain
+            # <video src="…b-cdn.net/….mp4"> (a direct MP4, no HLS/DRM). Skip blob:/data: URLs
+            # (MSE stream handles yt-dlp can't fetch). Captured while the page is still open.
+            video_urls = await _extract_video_urls(page)
+
             if browser is not None:
                 await browser.close()
             else:
@@ -267,6 +273,12 @@ class GenericExtractor(BaseExtractor):
         if article_markdown:
             article_markdown = _normalize_markdown(article_markdown)
             article_markdown = _trim_trailing_chrome(article_markdown)
+            # Drop tiny ingredient-icon thumbnails: SPA recipe pages (provecho) render a small
+            # Cloudinary thumbnail (/w_100/) next to every ingredient — product/stock photos that
+            # are visual noise in the note, not recipe photos. Only images whose Cloudinary
+            # transform declares a small render size are removed; the hero (w_800) and any real
+            # step photos survive.
+            article_markdown = _strip_thumbnail_images(article_markdown)
 
             # Lead the article body with the feature image (og:image), routed through the
             # SAME local-image pipeline as the inline images (downloaded + embedded by the
@@ -293,6 +305,12 @@ class GenericExtractor(BaseExtractor):
         # long story preamble). Benefits direct recipe-page pastes and followed bio recipes.
         recipe_data = extract_recipe_jsonld(html)
 
+        # Prepend embedded video(s) to media_urls so download_media fetches them and the
+        # transcription step (which transcribes any audio/video in the downloaded paths)
+        # picks them up — the inline images stay embedded via article_markdown, so this
+        # adds only the video that the markdown path would otherwise drop.
+        media_urls = video_urls + media_urls
+
         return ExtractedContent(
             url=url,
             platform="generic",
@@ -307,6 +325,7 @@ class GenericExtractor(BaseExtractor):
                 # Surfaced into the note's frontmatter `posted:` line.
                 "upload_date": og.get("article:published_time") or meta.get("date"),
                 "possible_paywall": possible_paywall,
+                "has_video": bool(video_urls),
                 "domain": _domain(url),
             },
             media_urls=media_urls[:10],
@@ -454,6 +473,32 @@ def _normalize_markdown(md: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
+# An inline Markdown image: ![alt](url ...). Group 1 = the URL.
+_IMG_MD_RE = re.compile(r'!\[[^\]]*\]\((https?://[^)\s]+)(?:\s+[^)]*)?\)')
+# A Cloudinary render-size directive in the transform segment: /w_100/ or ,h_1100, etc.
+# Anchored to the transform delimiters (/ or ,) so it matches the OUTER render size, not a
+# stray number in an encoded source URL.
+_CLOUDINARY_DIM_RE = re.compile(r'[/,_](?:w|h)_(\d{2,4})(?=[/,])')
+
+
+def _strip_thumbnail_images(md: str, min_px: int = 200) -> str:
+    """Remove inline images whose Cloudinary transform declares a small render size (< min_px).
+
+    Targets the ingredient-icon thumbnails SPA recipe pages sprinkle through the body (e.g.
+    provecho's ``…/upload/w_100/…`` product/stock icons). Images with a large declared size
+    (the hero ``w_800``/``h_1100``, real step photos) or NO declared size are kept — so a
+    normal article's images are untouched. Collapses the blank lines left behind.
+    """
+    def _keep(m: "re.Match") -> str:
+        dims = [int(d) for d in _CLOUDINARY_DIM_RE.findall(m.group(1))]
+        if dims and max(dims) < min_px:
+            return ""  # a small thumbnail — drop it
+        return m.group(0)
+
+    out = _IMG_MD_RE.sub(_keep, md)
+    return re.sub(r'\n{3,}', '\n\n', out).strip()
+
+
 def _markdown_to_text(md: str) -> str:
     """Strip Markdown syntax to plain text for Claude's analysis + the paywall check."""
     text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', md)          # images
@@ -476,6 +521,44 @@ def _html_to_text(html: str) -> str:
 
 def _domain(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.lstrip("www.")
+
+
+async def _extract_video_urls(page) -> list[str]:
+    """Collect direct video URLs from <video>/<source> elements on the page.
+
+    Returns http(s) URLs only, de-duplicated, order preserved. Skips blob:/data: sources
+    (Media-Source-Extensions streams that yt-dlp can't fetch from a bare URL). Best-effort:
+    any evaluate failure yields an empty list so extraction never breaks over a missing video.
+    """
+    try:
+        found = await page.evaluate(
+            """() => {
+                const out = [];
+                document.querySelectorAll('video').forEach((v) => {
+                    const cur = v.currentSrc || v.getAttribute('src') || '';
+                    if (cur) out.push(cur);
+                    v.querySelectorAll('source').forEach((s) => {
+                        const ss = s.getAttribute('src') || '';
+                        if (ss) out.push(ss);
+                    });
+                });
+                return out;
+            }"""
+        )
+    except Exception:
+        return []
+    urls, seen = [], set()
+    for u in found or []:
+        if not u or u.startswith("blob:") or u.startswith("data:"):
+            continue
+        if not u.startswith("http"):
+            continue
+        if u not in seen:
+            seen.add(u)
+            urls.append(u)
+    if urls:
+        logger.info("generic extractor: found %d embedded video URL(s)", len(urls))
+    return urls
 
 
 def _profile_dir_for_url(url: str, cookies_dir: str) -> str | None:
