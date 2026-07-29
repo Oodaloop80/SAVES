@@ -64,6 +64,12 @@ def format_note(
 
     note_type = ai_result.get("note_type", "web_generic")
 
+    # Ingredient icons (provecho): stash the (text, icon-url) pairs on ai_result so the shared
+    # _ingredients_md() can render each ingredient with its inline thumbnail, mimicking the site.
+    icons = (content.metadata or {}).get("recipe_ingredient_icons")
+    if icons:
+        ai_result["_ingredient_icons"] = icons
+
     # A TikTok photo/slideshow post has still images and a caption but no video or transcript.
     # The extractor marks it with is_photo_post; if the model still tagged it as a video type,
     # render it as an image post (embeds + caption + summary, no empty transcript block).
@@ -1039,11 +1045,63 @@ def _blockquote(md: str) -> str:
     return "\n".join((">" if not line.strip() else f"> {line}") for line in md.splitlines())
 
 
+# Quantity/prep words ignored when matching an ingredient line to its captured icon, so
+# "1 lb sliced turkey breast" still matches the page's "turkey breast" icon row.
+_ING_STOPWORDS = {
+    "of", "a", "an", "the", "and", "or", "to", "for", "with", "sliced", "chopped", "fresh",
+    "diced", "minced", "grated", "shredded", "package", "packages", "can", "cans", "jar",
+    "head", "large", "small", "medium", "whole", "ground", "cup", "cups", "tbsp", "tsp",
+    "tablespoon", "teaspoon", "lb", "lbs", "oz", "g", "kg", "ml", "l", "pinch", "clove",
+    "cloves", "stick", "sticks", "handful", "bunch", "each", "taste",
+}
+
+
+def _ing_words(text: str) -> set:
+    words = re.sub(r"[^\w\s]", " ", (text or "").lower()).split()
+    return {w for w in words if w not in _ING_STOPWORDS and not w.isdigit() and len(w) > 1}
+
+
+def _icon_prefix(item: str, icons: list, used: set) -> str:
+    """Best-matching ingredient icon as an inline, size-capped remote image, or ''.
+
+    Matches the ingredient text to a captured (text, icon) pair by word overlap (ignoring
+    quantities/prep words), each icon used at most once. Remote URL + `|24` width so it renders
+    small and inline inside the recipe callout."""
+    tw = _ing_words(item)
+    if not tw or not icons:
+        return ""
+    best_idx, best_score = -1, 0.0
+    for idx, pair in enumerate(icons):
+        if idx in used:
+            continue
+        pw = _ing_words(pair.get("text", ""))
+        shared = len(tw & pw)
+        if not shared:
+            continue
+        score = shared / min(len(tw), len(pw))
+        if score > best_score:
+            best_score, best_idx = score, idx
+    if best_idx >= 0 and best_score >= 0.5:
+        used.add(best_idx)
+        url = (icons[best_idx].get("icon") or "").strip()
+        if url:
+            return f"![|24]({url}) "
+    return ""
+
+
 def _ingredients_md(ai_result: dict) -> str:
     """Ingredients as Markdown — grouped under their section titles ('For the garlic confit',
     'For the pasta', 'To finish', …) when the structured data carried them, otherwise a single
     flat bulleted list. Preserving these titles is a hard requirement: a recipe's ingredients
-    belong to specific components and must not be flattened into one anonymous list."""
+    belong to specific components and must not be flattened into one anonymous list. When the
+    source supplied per-ingredient icons (provecho), each line is prefixed with its inline
+    thumbnail."""
+    icons = list(ai_result.get("_ingredient_icons") or [])
+    used: set = set()
+
+    def _line(item) -> str:
+        return f"- {_icon_prefix(str(item), icons, used)}{convert_measurements(str(item))}"
+
     groups = ai_result.get("recipe_ingredient_groups")
     if groups:
         blocks = []
@@ -1051,13 +1109,13 @@ def _ingredients_md(ai_result: dict) -> str:
             items = g.get("items") or []
             if not items:
                 continue
-            lines = "\n".join(f"- {convert_measurements(str(i))}" for i in items)
+            lines = "\n".join(_line(i) for i in items)
             name = (g.get("name") or "").strip().rstrip(":")
             blocks.append(f"**{name}**\n\n{lines}" if name else lines)
         if blocks:
             return "\n\n".join(blocks)
     flat = ai_result.get("recipe_ingredients") or []
-    return "\n".join(f"- {convert_measurements(str(i))}" for i in flat)
+    return "\n".join(_line(i) for i in flat)
 
 
 def _instructions_md(ai_result: dict) -> str:

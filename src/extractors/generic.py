@@ -268,6 +268,13 @@ class GenericExtractor(BaseExtractor):
             # <video src="…b-cdn.net/….mp4"> (a direct MP4, no HLS/DRM). Skip blob:/data: URLs
             # (MSE stream handles yt-dlp can't fetch). Captured while the page is still open.
             video_urls = await _extract_video_urls(page)
+            # provecho renders each ingredient with a small icon image; capture the
+            # (text, icon-url) pairs so the recipe callout can show them inline, mimicking the
+            # site. Gated to provecho (the DOM walk keys off its "Ingredients" list structure).
+            ingredient_icons = (
+                await _extract_ingredient_icons(page)
+                if _platform_for_url(url) == "provecho" else []
+            )
 
             if browser is not None:
                 await browser.close()
@@ -359,6 +366,7 @@ class GenericExtractor(BaseExtractor):
                 "upload_date": og.get("article:published_time") or meta.get("date"),
                 "possible_paywall": possible_paywall,
                 "has_video": bool(video_urls),
+                "recipe_ingredient_icons": ingredient_icons or None,
                 "domain": _domain(url),
             },
             media_urls=media_urls[:10],
@@ -617,6 +625,56 @@ async def _extract_video_urls(page) -> list[str]:
     if urls:
         logger.info("generic extractor: found %d embedded video URL(s)", len(urls))
     return urls
+
+
+async def _extract_ingredient_icons(page) -> list[dict]:
+    """Collect (ingredient text, icon URL) pairs from a provecho recipe's Ingredients list.
+
+    provecho shows a small stock/product thumbnail beside each ingredient. Finds the
+    "Ingredients" heading, climbs to the list container, and pairs each <img> with its row's
+    text. Returns [{"text": ..., "icon": <remote url>}]; best-effort (empty on any failure).
+    The icons stay REMOTE (Cloudinary CDN) because the note renders them inline next to each
+    ingredient, and inline rendering needs a real image URL — the local media:// embeds only
+    render as block fences.
+    """
+    try:
+        rows = await page.evaluate(
+            r"""() => {
+                const heads = Array.from(document.querySelectorAll('*')).filter(
+                    el => el.children.length === 0 && /^\s*Ingredients\s*$/i.test(el.textContent || ''));
+                if (!heads.length) return [];
+                let cont = heads[0];
+                for (let i = 0; i < 6 && cont.parentElement; i++) {
+                    cont = cont.parentElement;
+                    if (cont.querySelectorAll('img').length >= 3) break;
+                }
+                const out = [];
+                cont.querySelectorAll('img').forEach((img) => {
+                    let row = img.closest('li') || img.parentElement;
+                    for (let i = 0; i < 4 && row; i++) {
+                        if ((row.textContent || '').trim().length > 2) break;
+                        row = row.parentElement;
+                    }
+                    const text = row ? (row.textContent || '').trim().replace(/\s+/g, ' ') : '';
+                    const src = img.getAttribute('src') || img.currentSrc || '';
+                    if (text && src) out.push({ text: text.slice(0, 80), src });
+                });
+                return out;
+            }"""
+        )
+    except Exception:
+        return []
+    out = []
+    seen = set()
+    for r in rows or []:
+        text = (r.get("text") or "").strip()
+        src = (r.get("src") or "").strip()
+        if text and src.startswith("http") and not src.startswith("data:") and text not in seen:
+            seen.add(text)
+            out.append({"text": text, "icon": src})
+    if out:
+        logger.info("generic extractor: captured %d ingredient icon(s)", len(out))
+    return out
 
 
 def _profile_dir_for_url(url: str, cookies_dir: str) -> str | None:

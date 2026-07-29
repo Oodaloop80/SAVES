@@ -411,6 +411,13 @@ the `generic`/`unknown` catch-alls). For `provecho`, `_render_web_recipe` suppre
 section — the page's raw text there is just the recipe re-dumped (redundant with the Recipe
 callout); blog recipes with a real story keep it.
 
+**Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
+`_extract_ingredient_icons()` captures the (text, icon-url) pairs; `formatter._ingredients_md()`
+matches each Recipe-callout ingredient to its icon by word overlap and prefixes the line with an
+inline `![|24](url)`. The icon URLs stay REMOTE (Cloudinary CDN) on purpose — inline rendering
+needs a real image URL, and the local `media://` embeds only render as block fences, not inline
+next to text.
+
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —
 carries IndexedDB, so it's the only thing that works for Firebase-auth SPAs like `provecho.co`
