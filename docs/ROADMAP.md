@@ -206,22 +206,37 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   `QueueManager.enqueue_url()` exactly as the inbox watcher does. Dedup, approval flow, and
   vault write are unchanged.
 
-- **Site crawlers (slash command `/crawl <profile-url>`):** Discover all recipe/content URLs on
-  a creator's profile or index page, deduplicate against `processing_state.json`, show a
-  "Found N recipes, M already saved — queue K?" confirm card in Discord, then enqueue survivors
-  one at a time through the existing pipeline. Each item gets its own normal approval card.
+- **Site crawlers (slash command `/crawl <creator-url>`):** Discover all recipe URLs for **one
+  creator**, deduplicate against `processing_state.json`, show a "Found N recipes, M already
+  saved — queue K?" confirm card in Discord, then enqueue survivors one at a time through the
+  existing pipeline. Each item gets its own normal approval card.
+
+  **Per-creator scoping (Bora, 2026-07-28) — HARD REQUIREMENT.** provecho has many creators;
+  crawling the whole site would be far too much. `/crawl` takes a single **creator page** and
+  must NOT traverse beyond that creator's own recipes. URL structure:
+  - Creator page: `https://www.provecho.co/platform/creator/<handle>`
+    (e.g. `.../creator/davespizzaoven` = 65 recipes, `.../creator/seans_pizza` = 147 recipes)
+  - Recipe page: `https://www.provecho.co/platform/recipe/<id>`
+  `discover_urls(creator_url)` collects ONLY `/platform/recipe/<id>` links found within that
+  creator page's recipe grid, and never follows links to other creators or a global discover
+  feed. The creator page is a Next.js SPA that lazy-loads its grid, so discovery must scroll /
+  paginate until all N recipes are present before collecting (and can cross-check the count the
+  page shows). Requires the authenticated persistent profile (see Auth finding below).
 
   **Architecture note (Bora, 2026-07-22):** A generic `SiteCrawler` base class with a shared
   `enqueue_discovered()` method handles the downstream pipeline for all sites. The only
   site-specific part is `discover_urls()` — the method that finds and returns a list of content
   URLs from the index/profile page. Public sites with simple HTML structure can use a generic
   Playwright-based implementation; SPAs (Next.js/React) and login-required sites need a
-  site-specific subclass. First target: `provecho.co` (65+ recipes, Next.js SPA). Rate
-  limiting (configurable delay between enqueues) and a dry-run mode (lists found URLs
-  without queueing) are required from day one.
+  site-specific subclass (`ProvechoCrawler` is the first). Rate limiting (configurable delay
+  between enqueues) and a dry-run mode (lists found URLs without queueing) are required from
+  day one.
 
-  **Auth finding (Bora, 2026-07-28):** provecho gates full recipes behind **Firebase
-  Authentication**, which stores its refresh token in **IndexedDB** (`firebaseLocalStorageDb`)
+  **Auth finding (Bora, 2026-07-28) — ✅ VERIFIED WORKING.** After capturing a persistent
+  profile and re-running the dry-run, a previously-paywalled recipe returned its real
+  ingredients/directions — the auth gate is cleared and the crawler is unblocked. provecho
+  gates full recipes behind **Firebase Authentication**, which stores its refresh token in
+  **IndexedDB** (`firebaseLocalStorageDb`)
   — NOT in cookies, localStorage, or sessionStorage. This was proven step by step: a Netscape
   `.txt` session, a Playwright `storage_state()` JSON (cookies + localStorage), and even one
   that additionally captured sessionStorage all replayed to the paywalled "This recipe is
@@ -240,13 +255,17 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   `_session.json` (cookies + localStorage + sessionStorage) path remains supported for non-
   IndexedDB sites but no longer authenticates provecho.
 
-  **Embedded video (Bora, 2026-07-28):** some provecho.co recipes embed a video. Those must be
-  downloaded and transcribed like any other media save — the generic path currently extracts
-  article Markdown + images only (`GenericExtractor` sets no video `media_urls`, and vision/OCR
-  is skipped for the `generic` platform). So the crawler/generic enhancement must: detect the
-  embedded video (`<video>`/player embed → resolvable URL, or hand the recipe URL to yt-dlp),
-  route it through the existing `download_media()` → `transcribe()` steps, and embed + transcript
-  the note the same way Instagram/TikTok saves do. This is net-new work; it does not exist yet.
+  **Embedded video + pictures (Bora, 2026-07-28) — REQUIRED.** Some provecho recipes embed a
+  video, and recipes carry photos. Both must land in the note:
+  - **Pictures:** already flowing — the authenticated dry-run localized the recipe's images via
+    `localize_article_images()`. Re-verify they're the real recipe photos (not paywall
+    placeholders) now that auth works.
+  - **Video:** net-new. The generic path extracts article Markdown + images only (`GenericExtractor`
+    sets no video `media_urls`, vision/OCR skipped for `generic`). The enhancement must detect the
+    embedded player on an authenticated recipe page (inspect one with a video first: `<video>`/HLS
+    src, a Mux/Cloudflare/YouTube embed, or a URL yt-dlp can resolve), route it through the existing
+    `download_media()` → `transcribe()` steps, and embed + transcript the note the same way
+    Instagram/TikTok saves do.
 
 ## Phase 6 — Cost optimization (post-stabilization)  *(gated: only once quality is dialed in)*
 > Deferred here on purpose (Bora, 2026-07-01): batching removes instant results, which would

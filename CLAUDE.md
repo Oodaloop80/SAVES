@@ -49,7 +49,10 @@ SAVES/
 │   │   ├── facebook.py            # yt-dlp + cookies; detects embedded articles
 │   │   └── generic.py             # Playwright → trafilatura Markdown (headings/links/images);
 │   │                              # lazy-image resolve, <picture>/discard-class fix, feature
-│   │                              # image, markdown normalize; readability-lxml fallback
+│   │                              # image, markdown normalize; readability-lxml fallback.
+│   │                              # AUTH: prefers a persistent profile cookies/<host>_profile/
+│   │                              # (login-gated/Firebase-IndexedDB sites, e.g. provecho.co),
+│   │                              # else <host>_session.json, else <host>.txt cookies
 │   ├── media/
 │   │   ├── downloader.py          # download_media() → {media_root}/{platform}/{author}/{slug}/
 │   │   │                          # abs_to_obsidian_embed() returns BARE relative path (no ![[]])
@@ -82,6 +85,8 @@ SAVES/
 │   ├── test_connection.py         # Smoke test: Anthropic API, Discord bot, Reddit JSON API
 │   ├── whisper_server.py          # Flask server (runs on WORKSTATION, not NAS)
 │   ├── refresh_cookies.py         # Instructions for exporting browser cookies
+│   ├── capture_session.py         # Login-once persistent profile → cookies/<host>_profile/
+│   │                              # (captures IndexedDB Firebase auth that .txt/JSON can't)
 │   └── preflight_nas.sh           # POSIX pre-deploy check (mounts/secrets/cookies/Whisper) — run on NAS
 ├── docker/
 │   ├── Dockerfile                 # python:3.11-slim + ffmpeg + chromium + playwright
@@ -370,6 +375,17 @@ loaded images; image-wrapper CSS classes are stripped so trafilatura's discard r
 prune them. The og:image feature/hero image is prepended to the article body and also goes
 through the localizer. Vision/OCR is skipped for `generic` platform — body text is already
 extracted as structured Markdown.
+
+**Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
+in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —
+carries IndexedDB, so it's the only thing that works for Firebase-auth SPAs like `provecho.co`
+whose token lives in IndexedDB), then a portable `cookies/<host>_session.json` (cookies +
+localStorage + sessionStorage, seeded after navigation), then a Netscape `cookies/<host>.txt`.
+Match is by bare hostname (covers all paths on the domain) or a URL path segment. Capture a
+profile with `python scripts\capture_session.py <login-url> <host>` (log in once). Profiles and
+`_session.json` are gitignored (they hold auth tokens) and are machine-specific — the NAS needs
+its own one-time capture. `_profile_dir_for_url()` / `_load_session_for_url()` / the `.txt`
+loader all live in `generic.py`.
 
 **Whisper transcription:** Runs on the Windows workstation (Ryzen 9 7950X, 64GB RAM).
 Start with: `python scripts\whisper_server.py --model large-v3-turbo`
