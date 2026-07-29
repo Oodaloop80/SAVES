@@ -20,14 +20,29 @@ def _get_channel(bot: discord.Client, channel_name: str) -> discord.TextChannel 
     return None
 
 
+def _chunk_tags(tags: list[str], limit: int = 1024) -> list[str]:
+    """Join `#tag` tokens into space-separated strings, each <= limit chars (Discord's field
+    value cap), so a long tag list (every recipe ingredient) is shown in full across multiple
+    fields rather than truncated. A single token longer than limit is hard-truncated."""
+    chunks: list[str] = []
+    cur = ""
+    for tag in tags:
+        if not cur:
+            cur = tag[:limit]
+        elif len(cur) + 1 + len(tag) <= limit:
+            cur += " " + tag
+        else:
+            chunks.append(cur)
+            cur = tag[:limit]
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def build_approval_embed(pending) -> discord.Embed:
     """Build the approval embed for a pending item. Extracted so it can be re-rendered when
     the on-demand deep fact-check completes and populates `_fact_check` with fresh results."""
     ai = pending.ai_result
-    # ALL tags, not a preview slice — a [:8] cap here made tags added via NL edit /
-    # Add Tags invisible on the card (they append at the end of the list). Discord's
-    # 512-char field cap below still bounds the extreme case.
-    tags_preview = " ".join(f"#{t}" for t in (ai.get("tags") or []))
     summary = ai.get("summary", "")[:300]
 
     embed = discord.Embed(
@@ -38,8 +53,12 @@ def build_approval_embed(pending) -> discord.Embed:
     embed.add_field(name="From", value=f"{pending.platform} — {pending.content_summary.get('author') or 'unknown'}", inline=True)
     embed.add_field(name="Path", value=ai.get("folder_path", "SAVES/")[:256], inline=True)
     embed.add_field(name="Type", value=ai.get("note_type", "?"), inline=True)
-    if tags_preview:
-        embed.add_field(name="Tags", value=tags_preview[:512], inline=False)
+    # Show EVERY tag so the user approves the complete set (recipes carry every ingredient as a
+    # tag, so the list is long). Discord caps a single field value at 1024 chars, so chunk the
+    # tags across as many "Tags" fields as needed instead of truncating.
+    tags = [f"#{t}" for t in (ai.get("tags") or [])]
+    for i, chunk in enumerate(_chunk_tags(tags, limit=1024)):
+        embed.add_field(name="Tags" if i == 0 else "Tags (cont.)", value=chunk, inline=False)
     if summary:
         embed.add_field(name="Summary", value=summary, inline=False)
 

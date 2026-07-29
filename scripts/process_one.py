@@ -38,7 +38,7 @@ from src.media.downloader import (  # noqa: E402
 from src.media.transcriber import is_audio_video, transcribe  # noqa: E402
 from src.media.vision import prepare_images_for_claude  # noqa: E402
 from src.notes.file_manager import write_note  # noqa: E402
-from src.notes.formatter import format_note  # noqa: E402
+from src.notes.formatter import augment_tags, format_note  # noqa: E402
 from src.utils.recipe_data import apply_structured_recipe  # noqa: E402
 from src.utils.url_parser import detect_platform, normalize_url  # noqa: E402
 from src.utils.vault_scanner import scan_saves_folders  # noqa: E402
@@ -151,6 +151,9 @@ async def run(url: str, dry_run: bool = False, deep: bool = False):
         existing_folders=existing_folders,
     )
     ai_result = apply_structured_recipe(ai_result, content)
+    # Fold in ingredient + identity tags now (same as the processor does before the Discord
+    # card) so the printed tag list and the written note match exactly.
+    augment_tags(ai_result, content)
     if content.metadata.get("followed_recipe_data"):
         rd = content.metadata["followed_recipe_data"]
         print(f"  Applied schema.org recipe: {len(rd.get('ingredients') or [])} ingredient(s), "

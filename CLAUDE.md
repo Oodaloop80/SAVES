@@ -305,7 +305,9 @@ Every approval message has (in this order — Bora, 2026-07-05):
 the card by `discord_message_id`, re-edits embed + buttons). Add/Remove/swap tags, `/tag add`,
 Change Path, and NL Edit all call it — so the card the ✅ Approve button sits on always shows
 exactly what will be written. (Before 2026-07-05, edits updated only the store; the stale card
-made approvals look unedited.) The embed lists ALL tags (no 8-tag preview cap).
+made approvals look unedited.) The embed lists ALL tags — no preview cap, and chunked across
+multiple "Tags" fields (`_chunk_tags`) so a long recipe tag list (every ingredient ×2 + identity
+tags) is shown in full rather than truncated at Discord's 1024-char field limit.
 
 Discord modals **cannot autocomplete** (platform limitation) — search-as-you-type for tags
 exists only on the `/tag add` slash command below.
@@ -419,8 +421,8 @@ maps recognized generic hosts to a real platform name (`provecho.co` → `provec
 (routing/vision/download still key off `detect_platform()`, which stays `generic`). Author comes
 from og:author / name="author" (read in one DOM pass — robust on a busy SPA) with a provecho
 fallback that parses the handle from og:description (`"<handle>'s <title>."`). `formatter.
-_merge_identity_tags()` adds the platform + slugged author handle as tags on EVERY note (skipping
-the `generic`/`unknown` catch-alls). `_render_web_recipe` shows the raw-text "Caption" section
+_merge_identity_tags()` (via `augment_tags()`) adds the platform + slugged author handle as tags
+on EVERY note (skipping the `generic`/`unknown` catch-alls), merged upstream so they show on the card. `_render_web_recipe` shows the raw-text "Caption" section
 ONLY when it isn't redundant with the Recipe callout: `_caption_is_recipe_redundant()` compares
 the body's meaningful words against the recipe's ingredients+instructions+notes and suppresses
 the Caption only when the recipe covers ~all of it AND few unique words remain (dual guard).
@@ -433,10 +435,13 @@ detailed and a simplified form (e.g. "shredded whole milk mozzarella" → `shred
 AND `mozzarella`). The model emits these in a dedicated `ingredient_tags` field (the simplified
 core needs semantic understanding — a last-word rule breaks on "boneless skinless chicken breast"
 → should be `chicken` not `breast`); the analysis prompt requires it whenever `recipe_ingredients`
-is non-null, IN ADDITION to the curated 10–20 `tags`. `formatter._recipe_ingredient_tags()` folds
-them into the note's tags at write time (via `_frontmatter`, alongside the identity tags), slugged
-+ de-duplicated. If the model omits the field, a deterministic DETAILED-only fallback derives a
-slug per ingredient (strip leading quantity/unit + parentheticals + trailing prep note).
+is non-null, IN ADDITION to the curated 10–20 `tags`. `formatter._recipe_ingredient_tags()` supplies
+them (with a deterministic DETAILED-only fallback — strip leading quantity/unit + parentheticals +
+trailing prep note — when the model omits the field). They're merged into `ai_result['tags']` by
+`formatter.augment_tags()`, called in the **processor / process_one right after analysis, BEFORE
+the approval card is built** — so the card shows exactly what will be written and Add/Remove Tags
+act on the full set (Bora, 2026-07-29). `augment_tags` is idempotent (`_frontmatter` calls it again
+as a write-time safety net).
 
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
 `_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.prepare_ingredient_icon_data_uris()`

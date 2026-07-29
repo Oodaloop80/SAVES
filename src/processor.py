@@ -20,7 +20,8 @@ from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
 from src.utils.preferences import PreferencesStore, get_source_key
 from src.utils.recipe_data import apply_structured_recipe
-from src.utils.tag_index import clean_tags, get_tag_index
+from src.notes.formatter import augment_tags
+from src.utils.tag_index import get_tag_index
 from src.utils.url_parser import detect_platform, normalize_url
 from src.utils.vault_scanner import clean_folder_path, scan_saves_folders
 
@@ -216,8 +217,11 @@ async def _process_one(
     # lowercase slip from the model can't create a case-variant duplicate folder.
     if ai_result.get("folder_path"):
         ai_result["folder_path"] = clean_folder_path(ai_result["folder_path"])
-    # Tags are all-lowercase by convention (Bora, 2026-07-05) — same guard, opposite case.
-    ai_result["tags"] = clean_tags(ai_result.get("tags"))
+    # Finalize tags BEFORE the approval card is built: fold in every recipe-ingredient tag
+    # (detailed + simplified) and the platform/author identity tags, cleaned + lowercased +
+    # de-duped. The card then shows EXACTLY what will be written, and Add/Remove Tags act on
+    # the full set (Bora, 2026-07-29).
+    augment_tags(ai_result, content)
 
     # 7. Fact-check (health/political/finance) and travel location check in parallel.
     # The automatic pass is LOCAL ONLY (allow_web_search=False) — it surfaces the cheap,

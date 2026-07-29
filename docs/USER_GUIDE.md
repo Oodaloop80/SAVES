@@ -129,9 +129,10 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
   tags can't happen.
 - **Recipe notes tag every ingredient — twice.** Each ingredient becomes a tag in both a
   detailed and a simplified form (e.g. `shredded-whole-milk-mozzarella` *and* `mozzarella`),
-  so you can find a recipe by the exact item or the general one. These are added to the
-  written note automatically (on top of the normal curated tags); they don't clutter the
-  approval card. Expect recipe notes to carry a lot of tags — that's intended.
+  so you can find a recipe by the exact item or the general one. These — plus the platform and
+  author identity tags — are folded in **before** the approval card is built, so the card shows
+  the complete tag set (across multiple "Tags" fields when it's long) and 🗑️ Remove Tags can
+  drop any you don't want before approving. Expect recipe notes to carry a lot of tags — intended.
 - **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly. Removed one by
   accident? **↩ Undo All** restores the tag list exactly as it was when you opened the
   remover, so you can start over. The message names the save it belongs to and has a

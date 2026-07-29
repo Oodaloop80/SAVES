@@ -210,6 +210,21 @@ def _recipe_ingredient_tags(ai_result: dict) -> list[str]:
     return [s for s in (_tag_slug(str(t)) for t in raw) if s]
 
 
+def augment_tags(ai_result: dict, content: "ExtractedContent") -> None:
+    """Fold recipe-ingredient tags + source-identity (platform, author) tags into
+    `ai_result['tags']`, in place.
+
+    Called in the processor / process_one right after analysis — BEFORE the Discord approval
+    card is built — so the card, the Add/Remove-Tags buttons, and the written note all show the
+    exact same complete tag set (the user approves everything). Idempotent: dedups via
+    `clean_tags`, so re-running it (e.g. `_frontmatter`'s safety call, or after an edit) never
+    duplicates. No-op-safe when there's no recipe or identity to add.
+    """
+    from src.utils.tag_index import clean_tags
+    base = list(ai_result.get("tags") or []) + _recipe_ingredient_tags(ai_result)
+    ai_result["tags"] = clean_tags(_merge_identity_tags(base, content))
+
+
 def _merge_identity_tags(tags: list[str], content: ExtractedContent) -> list[str]:
     """Append platform + author identity tags to the model's tags (lowercased, de-duped).
 
@@ -236,11 +251,12 @@ def _merge_identity_tags(tags: list[str], content: ExtractedContent) -> list[str
 
 
 def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
-    # Tags = the model's curated tags + every recipe ingredient (detailed + simplified forms)
-    # + source-identity tags (platform, creator handle). Merged, lowercased, de-duplicated;
-    # catch-all/unknown identity values skipped.
-    base_tags = list(ai_result.get("tags") or []) + _recipe_ingredient_tags(ai_result)
-    tags = _merge_identity_tags(base_tags, content)
+    # Tags are finalized UPSTREAM by augment_tags() (processor / process_one) — folding in the
+    # recipe-ingredient tags and source-identity tags before the Discord card is built, so the
+    # card shows exactly what will be written. Here we just render whatever is on ai_result
+    # (with a safety call in case a write path didn't run augment_tags — it's idempotent).
+    augment_tags(ai_result, content)
+    tags = list(ai_result.get("tags") or [])
     title = _sanitize_yaml_str(ai_result.get("title", "")).replace('"', "'")
     author = content.author or "unknown"
     m = content.metadata or {}
