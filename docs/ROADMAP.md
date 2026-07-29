@@ -219,7 +219,8 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
         the page's "65 Recipes" header.
   - [x] `scripts/crawl_creator.py` — CLI: dry-run list, or `--to-inbox` to feed the running pipeline.
   - [x] `config.yaml` `crawl:` — `enabled`, `rate_limit_seconds`, `max_recipes`.
-  - [ ] Discord `/crawl` slash command + confirm card (Queue / Dry-run / Cancel).
+  - [x] Discord `/crawl` slash command + confirm card (✅ Queue / 📋 List / ✖ Cancel),
+        `CrawlConfirmView` in `bot.py`; backgrounds the enqueue paced by `crawl.rate_limit_seconds`.
   - [x] Embedded video download+transcribe + recipe photos (see below) — LIVE-VERIFIED.
 
   **Per-creator scoping (Bora, 2026-07-28) — HARD REQUIREMENT.** provecho has many creators;

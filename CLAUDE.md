@@ -311,6 +311,14 @@ reuses the established taxonomy instead of inventing near-duplicate tags.
 **`/forget` slash command** — drops a URL from `processing_state.json` (+ session dedup sets)
 so it can be saved again; see Duplicate detection above.
 
+**`/crawl <creator-url>` slash command** — crawl ONE creator's recipes and queue the new ones
+(`src/crawlers/`; `CrawlConfirmView` in `bot.py`). Discovers every recipe on the creator page, dedups
+against `processing_state.json`, and posts a confirm card (Found/Already-saved/New) with
+**✅ Queue** / **📋 List** (ephemeral dry-run list) / **✖ Cancel**. Queue enqueues each URL through
+the normal pipeline in the background (one approval card per recipe; paced by
+`crawl.rate_limit_seconds`). Per-creator scoped — never traverses to other creators. Needs the
+authenticated `cookies/provecho.co_profile/`. CLI equivalent: `scripts/crawl_creator.py`.
+
 ---
 
 ## Learned Folder Preferences (`preferences.json`)

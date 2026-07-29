@@ -5,6 +5,7 @@ import re
 import discord
 from discord.ext import tasks
 
+from src.crawlers import get_crawler
 from src.discord_bot.approval import PendingApproval, PendingApprovalsStore
 from src.discord_bot.notifications import (
     _get_channel,
@@ -406,6 +407,61 @@ class AddTagsModal(discord.ui.Modal, title="Add Tags"):
         await self.bot._refresh_card(pending)
 
 
+class CrawlConfirmView(discord.ui.View):
+    """Confirm card for a `/crawl`: shows found/saved/new counts, then Queue / List / Cancel.
+
+    In-process only (like DuplicateNoticeView) — after a bot restart the buttons go dead; the
+    user just re-runs `/crawl`. Enqueue runs in the background so the button returns instantly
+    even when the configured rate-limit paces a large batch.
+    """
+
+    def __init__(self, bot: "SAVESBot", crawler, new_urls: list[str], timeout: float = 900):
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self.crawler = crawler
+        self.new_urls = new_urls
+
+    @discord.ui.button(label="✅ Queue", style=discord.ButtonStyle.success)
+    async def queue(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        n = len(self.new_urls)
+        await interaction.response.edit_message(content=f"⏳ Queuing {n} recipe(s)…", view=self)
+
+        async def _bg():
+            rl = self.bot.config.get("crawl", {}).get("rate_limit_seconds", 0.0)
+            res = await self.crawler.enqueue_discovered(
+                self.new_urls, self.bot.queue_manager, rate_limit_seconds=rl
+            )
+            try:
+                await interaction.followup.send(
+                    f"✅ Queued {res['queued']} recipe(s) — an approval card will appear "
+                    f"as each finishes processing.",
+                )
+            except Exception:
+                logger.info("crawl: queued %d recipe(s) (followup notice failed)", res["queued"])
+
+        asyncio.create_task(_bg())
+        self.stop()
+
+    @discord.ui.button(label="📋 List", style=discord.ButtonStyle.secondary)
+    async def show_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        shown = self.new_urls[:50]
+        text = "\n".join(shown)
+        if len(self.new_urls) > len(shown):
+            text += f"\n… +{len(self.new_urls) - len(shown)} more"
+        await interaction.response.send_message(f"```\n{text}\n```", ephemeral=True)
+
+    @discord.ui.button(label="✖ Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="✖ Crawl cancelled — nothing queued.", view=self
+        )
+        self.stop()
+
+
 class SAVESBot(discord.Client):
     def __init__(self, config: dict, prefs: PreferencesStore, state=None):
         intents = discord.Intents.default()
@@ -538,6 +594,70 @@ class SAVESBot(discord.Client):
                 f"Nothing in the saved history matches `{target}`.", ephemeral=True
             )
 
+    async def _crawl_impl(self, interaction: discord.Interaction, url: str):
+        """/crawl one creator's recipes: discover → dedup → confirm card → queue.
+
+        Discovery drives a headless browser (scrolls the SPA grid), so it defers first
+        (Discord's 3 s ack window) and answers via followup. Per-creator scoping is enforced
+        by the crawler's discover_urls; this method only orchestrates dedup + the confirm card.
+        """
+        url = (url or "").strip()
+        if not self.config.get("crawl", {}).get("enabled", True):
+            await interaction.response.send_message("Crawling is disabled in config.", ephemeral=True)
+            return
+        crawler = get_crawler(url, self.config)
+        if crawler is None:
+            await interaction.response.send_message(
+                "No crawler supports that URL. Provide a provecho.co creator page — "
+                "`https://www.provecho.co/platform/creator/<handle>`.",
+                ephemeral=True,
+            )
+            return
+        if self.queue_manager is None or self.state is None:
+            await interaction.response.send_message(
+                "Queue/state tracking isn't available in this process.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            urls = await crawler.discover_urls(url)
+        except (ValueError, RuntimeError) as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+            return
+        except Exception as e:
+            logger.exception("crawl discovery failed for %s", url)
+            await interaction.followup.send(f"⚠️ Crawl failed: {e}", ephemeral=True)
+            return
+
+        if not urls:
+            await interaction.followup.send(
+                "No recipes found on that page (is it a creator page, and is the login profile "
+                "still valid?).", ephemeral=True
+            )
+            return
+
+        new, dup = crawler.partition(urls, self.state)
+        max_recipes = self.config.get("crawl", {}).get("max_recipes", 300)
+        capped = new[:max_recipes]
+
+        embed = discord.Embed(title=f"🕸️ Crawl — {crawler.name}", description=url)
+        embed.add_field(name="Found", value=str(len(urls)))
+        embed.add_field(name="Already saved", value=str(len(dup)))
+        embed.add_field(name="New to queue", value=str(len(capped)))
+        if len(capped) < len(new):
+            embed.set_footer(text=f"capped at crawl.max_recipes={max_recipes} "
+                                  f"({len(new) - len(capped)} more not queued)")
+
+        if not capped:
+            await interaction.followup.send(
+                "Everything found here is already saved — nothing new to queue.", embed=embed
+            )
+            return
+
+        view = CrawlConfirmView(self, crawler, capped)
+        await interaction.followup.send(embed=embed, view=view)
+
     def _register_commands(self) -> None:
         """Slash commands. /tag add — the only Discord surface with real search-as-you-type:
         slash-command option autocomplete. (Modal text inputs cannot autocomplete — a Discord
@@ -585,6 +705,18 @@ class SAVESBot(discord.Client):
             return bot._forget_choices(current)
 
         self.tree.add_command(forget_cmd)
+
+        @discord.app_commands.command(
+            name="crawl",
+            description="Crawl one creator's recipes and queue the new ones (per-creator only)",
+        )
+        @discord.app_commands.describe(
+            url="Creator page URL, e.g. https://www.provecho.co/platform/creator/<handle>"
+        )
+        async def crawl_cmd(interaction: discord.Interaction, url: str):
+            await bot._crawl_impl(interaction, url)
+
+        self.tree.add_command(crawl_cmd)
 
     def _build_view(self, pending: PendingApproval) -> ApprovalView:
         """Pick the approval-view variant for an item: the warning variant when fact-check or
