@@ -1318,6 +1318,57 @@ def _bio_recipe_section(ai_result: dict, content: ExtractedContent) -> str:
     )
 
 
+# Structural/boilerplate words ignored when checking whether the body is just the recipe.
+_CAPTION_STOPWORDS = {
+    "the", "and", "for", "with", "this", "that", "your", "you", "into", "from", "then",
+    "until", "over", "all", "its", "are", "was", "will", "can", "add", "each", "onto",
+    "ingredients", "directions", "instructions", "method", "steps", "step", "recipe", "notes",
+    "make", "makes", "serves", "serving", "servings", "prep", "cook", "total", "min", "mins",
+    "minutes", "hour", "hours",
+}
+
+
+def _content_words(text: str) -> set:
+    """Meaningful lowercase words in `text` (letters only, so step numbers/measurements drop
+    out), minus boilerplate — the basis for comparing the body against the recipe."""
+    return {
+        w for w in re.findall(r"[a-z]+", (text or "").lower())
+        if len(w) > 2 and w not in _CAPTION_STOPWORDS
+    }
+
+
+def _caption_is_recipe_redundant(body_text: str, ai_result: dict) -> bool:
+    """True when the page body is essentially just the recipe re-dumped (so a Caption would
+    duplicate the Recipe callout). Compares the body's meaningful words against the recipe's
+    ingredients + instructions + notes: only when the recipe covers ~all of them AND there are
+    few uncovered words is it deemed redundant. Any real extra content (a description, story,
+    tips) leaves enough uncovered words that the Caption is KEPT — so post content is never lost.
+    """
+    body_words = _content_words(body_text)
+    if not body_words:
+        return True  # nothing meaningful to show
+
+    parts: list = []
+    parts += ai_result.get("recipe_ingredients") or []
+    parts += ai_result.get("recipe_instructions") or []
+    for g in ai_result.get("recipe_ingredient_groups") or []:
+        parts += g.get("items") or []
+        parts.append(g.get("name") or "")
+    for g in ai_result.get("recipe_instruction_groups") or []:
+        parts += g.get("steps") or []
+        parts.append(g.get("name") or "")
+    parts.append(ai_result.get("recipe_notes") or "")
+    recipe_words = _content_words(" ".join(str(p) for p in parts))
+    if not recipe_words:
+        return False  # no structured recipe to compare against → keep the body
+
+    uncovered = body_words - recipe_words
+    coverage = 1 - (len(uncovered) / len(body_words))
+    # Redundant only if the recipe covers ~all the body AND little unique text remains — the
+    # dual guard avoids suppressing a short description just because the recipe is long.
+    return coverage >= 0.9 and len(uncovered) < 12
+
+
 def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     # Section order per spec:
     # Media → Summary → Photos → Recipe → Caption → Text from Images → Transcript → Metadata
@@ -1330,13 +1381,15 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     # embedded recipe video) so it isn't embedded twice.
     photos_section = _article_photo_embeds(content, exclude=hero)
 
-    # The "Caption" here is the page's raw extracted text. On a structured recipe site
-    # (provecho) that text is just the ingredients + directions re-dumped — redundant with the
-    # clean 🍽️ Recipe callout above and hard to read (ingredient chips repeat after each step),
-    # so it's suppressed. Blog recipes, whose body carries a real story/intro, keep it.
+    # The "Caption" here is the page's raw extracted text. Show it ONLY when it adds something
+    # beyond the recipe: on a structured recipe page (provecho) the body is just the ingredients
+    # + directions re-dumped — redundant with the clean 🍽️ Recipe callout above and hard to read
+    # (ingredient chips repeat after each step) — so it's dropped. But if the post carries extra
+    # content the recipe doesn't (a description, story, tips), the Caption is KEPT so nothing is
+    # lost. Redundancy is measured by how much of the body's wording the recipe already covers.
     caption = content.body_text or ""
     caption_section = ""
-    if caption and content.platform != "provecho":
+    if caption and not _caption_is_recipe_redundant(caption, ai_result):
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         caption_section = f"> [!quote] Caption\n{quoted}\n"
 

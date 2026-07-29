@@ -419,9 +419,13 @@ maps recognized generic hosts to a real platform name (`provecho.co` → `provec
 from og:author / name="author" (read in one DOM pass — robust on a busy SPA) with a provecho
 fallback that parses the handle from og:description (`"<handle>'s <title>."`). `formatter.
 _merge_identity_tags()` adds the platform + slugged author handle as tags on EVERY note (skipping
-the `generic`/`unknown` catch-alls). For `provecho`, `_render_web_recipe` suppresses the "Caption"
-section — the page's raw text there is just the recipe re-dumped (redundant with the Recipe
-callout); blog recipes with a real story keep it.
+the `generic`/`unknown` catch-alls). `_render_web_recipe` shows the raw-text "Caption" section
+ONLY when it isn't redundant with the Recipe callout: `_caption_is_recipe_redundant()` compares
+the body's meaningful words against the recipe's ingredients+instructions+notes and suppresses
+the Caption only when the recipe covers ~all of it AND few unique words remain (dual guard).
+A structured recipe page (provecho) whose body is just the recipe re-dumped is dropped; a post
+that carries extra content (description, story, tips) keeps the Caption so nothing is lost —
+content-based, not hardcoded per platform.
 
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
 `_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.download_ingredient_icons()`
