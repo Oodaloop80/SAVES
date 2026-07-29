@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import logging
 import os
@@ -284,63 +285,82 @@ async def localize_article_images(
                 len(url_to_embed), len(urls), md_key)
 
 
-def _download_url_to(url: str, dest: str) -> bool:
-    """Download `url` to the exact path `dest`. Returns True on success."""
+def _fetch_bytes(url: str) -> bytes | None:
+    """GET `url` and return the raw bytes (or None on failure)."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
-        if not data:
-            return False
-        with open(dest, "wb") as f:
-            f.write(data)
-        return True
+        return data or None
     except Exception:
-        return False
+        return None
 
 
-async def download_ingredient_icons(content, vault_root: str, saves_root: str) -> None:
-    """Download per-ingredient icons INTO THE VAULT so they survive the source going away and
-    still render inline next to each ingredient.
+def _icon_to_data_uri(data: bytes, max_px: int = 28) -> str | None:
+    """Downscale an icon to <= max_px on its longest side and return a base64 data URI.
 
-    Self-containment rule (Hard Constraint #3): a note never links a remote asset for display.
-    These icons must render INLINE (beside the ingredient text), and the external `media://`
-    store only renders as block fences — so the icons live in-vault under
-    `SAVES/_assets/ingredient-icons/` and are embedded with a native `![[path|width]]` wikilink.
-    Deduped by URL hash (a shared 'salt'/'bacon' icon downloads once). Mutates each pair in
-    `content.metadata['recipe_ingredient_icons']`, setting `local` to the vault-relative path;
-    pairs that fail to download get no `local` (the formatter then shows text only — never the
-    remote URL). No-op when there are no icons.
+    Downscaling keeps the note lean (icons display at ~24 px anyway). Re-encodes to WEBP; if
+    Pillow/decoding fails, falls back to embedding the ORIGINAL bytes so the icon still shows.
+    The point is self-containment — the image lives inside the note, nothing external to lose.
+    """
+    try:
+        import io
+
+        from PIL import Image
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
+        w, h = im.size
+        scale = min(1.0, max_px / max(w, h)) if max(w, h) else 1.0
+        if scale < 1.0:
+            im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="WEBP", quality=80, method=6)
+        out = buf.getvalue()
+        if out and len(out) <= len(data):  # keep the smaller of re-encoded vs original
+            return "data:image/webp;base64," + base64.b64encode(out).decode()
+    except Exception:
+        pass
+    # Fallback: embed the original bytes as-is (mime guessed from the magic bytes).
+    mime = "image/webp"
+    if data[:3] == b"\xff\xd8\xff":
+        mime = "image/jpeg"
+    elif data[:8] == b"\x89PNG\r\n\x1a\n":
+        mime = "image/png"
+    elif data[:4] == b"GIF8":
+        mime = "image/gif"
+    return f"data:{mime};base64," + base64.b64encode(data).decode()
+
+
+async def prepare_ingredient_icon_data_uris(content) -> None:
+    """Embed each ingredient icon directly in the note as an inline base64 data URI.
+
+    Self-containment (Hard Constraint #3): the icon bytes live INSIDE the note — no external
+    file, no vault folder, no remote link — so the icon can never go missing. Downloads each
+    icon, downscales it, and stores `data_uri` on the pair; `formatter._icon_prefix` renders it
+    inline as `![|24](data:…)`. Deduped by URL within the post. A download/encode failure is
+    skipped (that ingredient shows text only). No-op when there are no icons.
     """
     icons = (content.metadata or {}).get("recipe_ingredient_icons")
     if not icons:
         return
-    # Store under the SAVES root so the files live inside the Obsidian vault. The note embeds
-    # them by BARE FILENAME (![[<hash>.webp|24]]) — Obsidian resolves a unique basename no
-    # matter where the vault root actually sits (in DEV the vault is opened at .../OBSIDIAN/SAVES,
-    # in PROD at the vault root above it), so a folder-qualified path would break in one of them.
-    icons_dir = os.path.join(saves_root, "_assets", "ingredient-icons")
-    os.makedirs(icons_dir, exist_ok=True)
-
-    saved = 0
+    cache: dict[str, str] = {}
+    made = 0
     for pair in icons:
         url = (pair.get("icon") or "").strip()
-        if not url or pair.get("local"):
+        if not url or pair.get("data_uri"):
             continue
-        try:
-            fname = hashlib.md5(url.encode()).hexdigest()[:16]
-            ext = os.path.splitext(urllib.parse.urlparse(url).path)[1].lower() or ".webp"
-            dest = os.path.join(icons_dir, fname + ext)
-            if not os.path.exists(dest):
-                ok = await asyncio.to_thread(_download_url_to, url, dest)
-                if not ok:
-                    continue
-            pair["local"] = f"{fname}{ext}"  # bare filename for the ![[…]] embed
-            saved += 1
-        except Exception as e:
-            logger.warning("Ingredient icon download failed for %s: %s", url, e)
-    if saved:
-        logger.info("Archived %d ingredient icon(s) into the vault (_assets/ingredient-icons)", saved)
+        if url in cache:
+            pair["data_uri"] = cache[url]
+            continue
+        data = await asyncio.to_thread(_fetch_bytes, url)
+        if not data:
+            continue
+        uri = await asyncio.to_thread(_icon_to_data_uri, data)
+        if uri:
+            pair["data_uri"] = uri
+            cache[url] = uri
+            made += 1
+    if made:
+        logger.info("Embedded %d ingredient icon(s) as inline data URIs", made)
 
 
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:

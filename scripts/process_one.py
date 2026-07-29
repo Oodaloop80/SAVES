@@ -31,9 +31,9 @@ from src.extractors.enrich import enrich_embedded_media  # noqa: E402
 from src.extractors.profile_recipe import follow_profile_recipe  # noqa: E402
 from src.media.downloader import (  # noqa: E402
     abs_to_obsidian_embed,
-    download_ingredient_icons,
     download_media,
     localize_article_images,
+    prepare_ingredient_icon_data_uris,
 )
 from src.media.transcriber import is_audio_video, transcribe  # noqa: E402
 from src.media.vision import prepare_images_for_claude  # noqa: E402
@@ -114,10 +114,9 @@ async def run(url: str, dry_run: bool = False, deep: bool = False):
         print("  Localized followed-recipe page images into the vault")
 
     if content.metadata.get("recipe_ingredient_icons"):
-        saves_root = paths.get("saves_root") or os.path.join(vault_root, "SAVES")
-        await download_ingredient_icons(content, vault_root, saves_root)
-        n = sum(1 for p in content.metadata["recipe_ingredient_icons"] if p.get("local"))
-        print(f"  Archived {n} ingredient icon(s) into the vault")
+        await prepare_ingredient_icon_data_uris(content)
+        n = sum(1 for p in content.metadata["recipe_ingredient_icons"] if p.get("data_uri"))
+        print(f"  Embedded {n} ingredient icon(s) as inline data URIs")
 
     transcript = None
     if content.captions:

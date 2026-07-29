@@ -11,9 +11,9 @@ from src.extractors.enrich import enrich_embedded_media
 from src.extractors.profile_recipe import follow_profile_recipe
 from src.media.downloader import (
     abs_to_obsidian_embed,
-    download_ingredient_icons,
     download_media,
     localize_article_images,
+    prepare_ingredient_icon_data_uris,
 )
 from src.media.transcriber import is_audio_video, transcribe
 from src.media.vision import prepare_images_for_claude
@@ -153,14 +153,13 @@ async def _process_one(
         except Exception as e:
             logger.warning(f"Followed-recipe image localization failed (non-fatal): {e}")
 
-    # 3d. Archive per-ingredient icons into the vault (provecho) so they render inline AND
-    # survive the source going away — Hard Constraint #3 (no remote links in a written note).
+    # 3d. Embed per-ingredient icons (provecho) as inline data URIs so they render beside each
+    # ingredient AND live inside the note — Hard Constraint #3 (self-contained, no remote links).
     if content.metadata.get("recipe_ingredient_icons"):
         try:
-            saves_root = config.get("paths", {}).get("saves_root") or os.path.join(vault_root, "SAVES")
-            await download_ingredient_icons(content, vault_root, saves_root)
+            await prepare_ingredient_icon_data_uris(content)
         except Exception as e:
-            logger.warning(f"Ingredient icon archival failed (non-fatal): {e}")
+            logger.warning(f"Ingredient icon embedding failed (non-fatal): {e}")
 
     # 4. Transcribe
     transcript = None

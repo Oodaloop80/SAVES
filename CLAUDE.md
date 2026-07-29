@@ -28,15 +28,16 @@ to a Synology NAS vault.
 
 3. **Full self-containment — a save must survive the source going away (Bora, 2026-07-29).**
    Everything a note shows MUST be stored locally: the note NEVER links to a remote asset for
-   display. Every image/video/icon/attachment is downloaded and referenced by a local path so
-   the note renders completely even after the original site/post/reel/video is deleted. Two
-   local tiers: (a) block-level media (videos, hero/article photos) → the external `media://`
-   store via `download_media()` / `localize_article_images()`; (b) assets that must render
-   INLINE next to text (e.g. per-ingredient icons) → **inside the vault** under
-   `SAVES/_assets/…`, referenced with a native `![[path|width]]` embed (the `media://` store
-   only renders as block fences, so it can't do inline). If a new feature surfaces any source
-   asset, add a localization step for it — no remote `![](http…)` / `<img src="http…">` in a
-   written note, ever. New asset kinds get their own `SAVES/_assets/<kind>/` folder.
+   display. Every image/video/icon/attachment is captured locally so the note renders completely
+   even after the original site/post/reel/video is deleted. Two mechanisms: (a) block-level media
+   (videos, hero/article photos) → the external `media://` store via `download_media()` /
+   `localize_article_images()`, embedded with `EmbedRelativeTo` fences (block only — the
+   `media://` plugin cannot render inline); (b) small assets that must render INLINE next to text
+   (e.g. per-ingredient icons) → **base64 data URIs embedded directly in the note** via
+   `prepare_ingredient_icon_data_uris()` (`![|24](data:image/webp;base64,…)`), so the bytes live
+   inside the note — no external file, no vault folder. If a new feature surfaces any source
+   asset, add a local-capture step for it — no remote `![](http…)` / `<img src="http…">` in a
+   written note, ever.
 
 ---
 
@@ -428,17 +429,16 @@ that carries extra content (description, story, tips) keeps the Caption so nothi
 content-based, not hardcoded per platform.
 
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
-`_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.download_ingredient_icons()`
-downloads each **into the vault** at `<saves_root>/_assets/ingredient-icons/<hash>.<ext>` (deduped
-by URL hash) and records `local` = the **bare filename**; `formatter._ingredients_md()` matches each
-Recipe-callout ingredient to its icon by word overlap and prefixes the line with an inline
-`![[<filename>|24]]` wikilink. **Bare filename on purpose:** the DEV Obsidian vault is opened at
-`…/OBSIDIAN/SAVES` while PROD opens the root above it, so a folder-qualified path would resolve in
-only one; a unique basename resolves in both (Obsidian's default link resolution). In-vault (not the
-external `media://` store) because the External-File-Embed plugin can only BLOCK-embed external
-files (its inline feature is clickable links, not inline images) — inline images must live in the
-vault. Per Hard Constraint #3 the icon is stored locally, never linked remotely; an icon that fails
-to download shows no icon (text only). Wired into `processor.py` (step 3d) and `process_one.py`.
+`_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.prepare_ingredient_icon_data_uris()`
+downloads each, **downscales it to ~28 px (Pillow → WEBP)**, and stores a base64 `data_uri` on the
+pair (deduped by URL within the post); `formatter._ingredients_md()` matches each Recipe-callout
+ingredient to its icon by word overlap and prefixes the line with an inline
+`![|24](data:image/webp;base64,…)`. **Data URIs, not files:** the icon bytes live INSIDE the note —
+no external file, no vault folder, nothing to lose (the strongest form of Hard Constraint #3), and
+they render inline (the `media://` plugin can only block-embed external files — its inline feature
+is clickable links, not images). Downscaling keeps it to a few KB per note. An icon that fails to
+download/encode shows no icon (text only), never a remote URL. Wired into `processor.py` (step 3d)
+and `process_one.py`.
 
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —
