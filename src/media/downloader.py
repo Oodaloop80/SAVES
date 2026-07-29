@@ -315,8 +315,10 @@ async def download_ingredient_icons(content, vault_root: str, saves_root: str) -
     icons = (content.metadata or {}).get("recipe_ingredient_icons")
     if not icons:
         return
-    saves_rel = os.path.relpath(saves_root, vault_root).replace("\\", "/")
-    subdir_rel = f"{saves_rel}/_assets/ingredient-icons"
+    # Store under the SAVES root so the files live inside the Obsidian vault. The note embeds
+    # them by BARE FILENAME (![[<hash>.webp|24]]) — Obsidian resolves a unique basename no
+    # matter where the vault root actually sits (in DEV the vault is opened at .../OBSIDIAN/SAVES,
+    # in PROD at the vault root above it), so a folder-qualified path would break in one of them.
     icons_dir = os.path.join(saves_root, "_assets", "ingredient-icons")
     os.makedirs(icons_dir, exist_ok=True)
 
@@ -333,12 +335,12 @@ async def download_ingredient_icons(content, vault_root: str, saves_root: str) -
                 ok = await asyncio.to_thread(_download_url_to, url, dest)
                 if not ok:
                     continue
-            pair["local"] = f"{subdir_rel}/{fname}{ext}"
+            pair["local"] = f"{fname}{ext}"  # bare filename for the ![[…]] embed
             saved += 1
         except Exception as e:
             logger.warning("Ingredient icon download failed for %s: %s", url, e)
     if saved:
-        logger.info("Archived %d ingredient icon(s) into the vault (%s)", saved, subdir_rel)
+        logger.info("Archived %d ingredient icon(s) into the vault (_assets/ingredient-icons)", saved)
 
 
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:

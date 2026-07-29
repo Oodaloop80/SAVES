@@ -425,13 +425,16 @@ callout); blog recipes with a real story keep it.
 
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
 `_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.download_ingredient_icons()`
-downloads each **into the vault** at `SAVES/_assets/ingredient-icons/<hash>.<ext>` (deduped by URL
-hash) and records the vault-relative `local` path; `formatter._ingredients_md()` matches each
+downloads each **into the vault** at `<saves_root>/_assets/ingredient-icons/<hash>.<ext>` (deduped
+by URL hash) and records `local` = the **bare filename**; `formatter._ingredients_md()` matches each
 Recipe-callout ingredient to its icon by word overlap and prefixes the line with an inline
-`![[<local>|24]]` wikilink. In-vault (not the external `media://` store) because inline rendering
-needs a real embeddable path and `media://` only renders as block fences — and per Hard Constraint
-#3 the icon is stored locally, never linked remotely. An icon that fails to download shows no icon
-(text only), never a remote URL. Wired into `processor.py` (step 3d) and `process_one.py`.
+`![[<filename>|24]]` wikilink. **Bare filename on purpose:** the DEV Obsidian vault is opened at
+`…/OBSIDIAN/SAVES` while PROD opens the root above it, so a folder-qualified path would resolve in
+only one; a unique basename resolves in both (Obsidian's default link resolution). In-vault (not the
+external `media://` store) because the External-File-Embed plugin can only BLOCK-embed external
+files (its inline feature is clickable links, not inline images) — inline images must live in the
+vault. Per Hard Constraint #3 the icon is stored locally, never linked remotely; an icon that fails
+to download shows no icon (text only). Wired into `processor.py` (step 3d) and `process_one.py`.
 
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —
