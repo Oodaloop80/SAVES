@@ -91,6 +91,31 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
   searchable within ~5 minutes (index TTL), or immediately if SAVES wrote the note.
 - `item` picks which pending save to tag (autocompletes by title); default is the newest.
 
+### `/crawl <creator-url>` — bulk-save one creator's recipes (provecho.co)
+
+- Give it a **creator page**, not a recipe: `https://www.provecho.co/platform/creator/<handle>`
+  (e.g. `.../creator/davespizzaoven`). A single recipe URL won't match.
+- **Scoped to that one creator only** — it never crawls other creators or the wider site, even
+  though the page shows "Related Recipes" from other people. This is deliberate: provecho hosts
+  many creators, and a site-wide crawl would be far too much.
+- Discovers every recipe on the page, checks each against your saved history, then posts a
+  summary card: *Found N · Already saved M · New K*, with three buttons:
+  - **✅ Queue** — enqueues the new recipes into the normal pipeline (paced by
+    `crawl.rate_limit_seconds` so they don't all fire at once). Each one gets its own ordinary
+    approval card as it finishes — nothing skips review.
+  - **📋 List** — shows the new URLs without queuing anything (ephemeral, only you see it).
+  - **✖ Cancel** — queues nothing.
+  - Like the duplicate-notice buttons, this card is in-memory only — **dead after a bot
+    restart**; just run `/crawl` again.
+- **Needs a logged-in session first.** provecho gates full recipes behind login, and its auth
+  token only survives in a captured browser profile — run
+  `python scripts/capture_session.py https://www.provecho.co/platform/login provecho.co` once
+  (log in, confirm a recipe shows unlocked, press Enter) before `/crawl` will work.
+- A creator can have 60–150+ recipes — queuing "New K" means K approval cards and K Claude
+  calls. Consider `📋 List` first, or a smaller creator, before queuing a big one.
+- CLI equivalent (no Discord needed): `python scripts/crawl_creator.py <creator-url>` (add
+  `--to-inbox` to actually feed the pipeline; without it, it only lists).
+
 ## Approval cards — button nuances
 
 - **The card always shows exactly what will be written.** Every mutation (Add/Remove tags,
