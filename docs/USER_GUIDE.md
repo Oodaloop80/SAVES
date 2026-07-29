@@ -71,15 +71,22 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
 
 ### `/forget <url>` — make SAVES forget a URL so it can be saved again
 
-- Drops the URL from `processing_state.json` and the in-session dedup sets. After it, the
-  URL is a brand-new save: paste it into the inbox and it reprocesses from scratch.
-- **Autocompletes over your saved history** — start typing any part of the URL and pick
-  from the list. Offers `done` entries and permanently-failed ones (shown as `[failed]`);
-  URLs over 100 characters can't be offered (Discord limit) — paste those in full.
-- Use it when: the note came out wrong and you want a re-run, you changed cookies/prompts
-  and want a fresh pass, or you deleted a note in Obsidian and want the URL saveable again.
-- Does **not** touch the vault: the old note (if any) stays where it is. The duplicate
-  notice's 🔁 Re-save button is the "also retire the old note" variant.
+- Drops the URL from `processing_state.json` and the in-session dedup sets, **removes any
+  stale approval card** for it, and **re-scans the inbox** — so if the URL is still sitting in
+  `00 - FILE.md` (e.g. a save you never approved), it re-queues *immediately* and a fresh card
+  appears. If the URL isn't in the inbox, paste it in to reprocess.
+- **Autocompletes over your saved history** — start typing any part of the URL and pick from
+  the list. Offers `done`, permanently-failed (`[failed]`), and stuck-awaiting-approval
+  (`[pending]`) entries; URLs over 100 characters can't be offered (Discord limit) — paste
+  those in full.
+- Use it when: the note came out wrong and you want a re-run, you changed cookies/prompts and
+  want a fresh pass (e.g. after **restarting the bot** to pick up new code), a save is stuck on
+  an old card, or you deleted a note in Obsidian and want the URL saveable again.
+- Does **not** touch the vault: the old note (if any) stays where it is. The duplicate notice's
+  🔁 Re-save button is the "also retire the old note" variant.
+- **Reminder:** the bot only runs the code it was started with. If you changed prompts/tagging/
+  behavior, **restart `python src\main.py`** *before* `/forget` — otherwise the regenerated
+  card comes from the old code too.
 
 ### `/tag add <tag> [item]` — add a tag with real autocomplete
 

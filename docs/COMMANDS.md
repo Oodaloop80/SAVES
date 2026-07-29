@@ -17,7 +17,7 @@ bot (commands register at startup).
 | Command | What it does |
 |---|---|
 | `/tag add <tag> [item]` | Add a tag to a pending save. Autocompletes over your existing vault tags (usage counts, most-used first). `item` picks which pending save (default: newest). |
-| `/forget <url>` | Drop a URL from `processing_state.json` (+ session dedup) so it can be saved again. Autocompletes over saved history (`done` + `[failed]` entries). Does **not** touch the vault. |
+| `/forget <url>` | Drop a URL from `processing_state.json` (+ session dedup) so it can be saved again, remove any stale approval card for it, and re-scan the inbox so a URL still sitting there re-queues immediately. Autocompletes over saved history (`done`, `[failed]`, `[pending]`). Does **not** touch the vault. |
 | `/crawl <creator-url>` | Discover + bulk-queue one provecho creator's recipes. URL must be a creator page (`…/platform/creator/<handle>`). **Per-creator scoped** — never crawls other creators. Posts a confirm card before queuing. Needs a captured login profile first (see `capture_session.py`). |
 
 ---

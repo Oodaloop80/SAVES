@@ -94,6 +94,10 @@ async def main():
                 # inbox; keeping the guard prevents a notice on every file change.)
                 queue_manager.duplicate_cleared(raw_url)
 
+    # Let /forget trigger the same inbox scan, so forgetting a URL that's still sitting in the
+    # inbox re-queues it immediately (the watcher otherwise only fires on a file change).
+    bot.rescan_inbox = scan_inbox
+
     def on_file_change():
         asyncio.ensure_future(scan_inbox())
 

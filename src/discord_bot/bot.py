@@ -478,6 +478,9 @@ class SAVESBot(discord.Client):
         # Wired by main.py after construction; lets /forget clear the session-local
         # enqueue-dedup sets so a forgotten URL re-pasted in the same process re-queues.
         self.queue_manager = None
+        # Wired by main.py: re-runs the inbox scan so /forget can immediately re-queue a URL
+        # that's still sitting in the inbox (the file watcher only fires on a file change).
+        self.rescan_inbox = None
         self._register_commands()
 
     # ---- /tag slash commands -------------------------------------------------------
@@ -545,9 +548,10 @@ class SAVESBot(discord.Client):
 
     def _forget_choices(self, current: str) -> list[discord.app_commands.Choice[str]]:
         """Autocomplete for /forget: URLs from the processing state, newest first. Offers
-        'done' (the duplicate-notice case) and 'failed_permanent' (retry a dead extract)
-        entries; other statuses re-run by themselves. URLs longer than Discord's 100-char
-        Choice value limit are skipped — paste those in full instead."""
+        'done' (the duplicate-notice case), 'failed_permanent' (retry a dead extract), and
+        'pending' (a save that's stuck awaiting approval — e.g. an old-code card you want to
+        regenerate). URLs longer than Discord's 100-char Choice value limit are skipped — paste
+        those in full instead."""
         if self.state is None:
             return []
         cur = (current or "").lower()
@@ -556,14 +560,15 @@ class SAVESBot(discord.Client):
             key=lambda kv: kv[1].get("timestamp", 0),
             reverse=True,
         )
+        labels = {"failed_permanent": "[failed] ", "pending": "[pending] "}
         out: list[discord.app_commands.Choice[str]] = []
         for url, entry in entries:
             status = entry.get("status")
-            if status not in ("done", "failed_permanent") or len(url) > 100:
+            if status not in ("done", "failed_permanent", "pending") or len(url) > 100:
                 continue
             if cur and cur not in url.lower():
                 continue
-            name = url if status == "done" else f"[failed] {url}"
+            name = f"{labels.get(status, '')}{url}"
             out.append(discord.app_commands.Choice(name=name[:100], value=url))
             if len(out) == 25:
                 break
@@ -584,14 +589,43 @@ class SAVESBot(discord.Client):
             existed = self.state.forget(raw)
         if self.queue_manager is not None:
             self.queue_manager.forget(target)
-        if existed:
+
+        # Drop any stale approval card(s) for this URL so a re-process doesn't leave two cards
+        # (and so an old-code card can't be approved by mistake). Match on normalized URL.
+        dropped = 0
+        for item in self.store.get_all():
+            if normalize_url(item.url) == target:
+                self.store.remove(item.id)
+                dropped += 1
+
+        if not existed and dropped == 0:
             await interaction.response.send_message(
-                f"🧹 Forgot `{target}` — paste it into the inbox to reprocess it.",
+                f"Nothing in the saved history matches `{target}`.", ephemeral=True
+            )
+            return
+
+        # Re-scan the inbox so a URL still sitting there re-queues right now — without this the
+        # file watcher only fires on a file change, so a forgotten-but-still-present URL would
+        # never reprocess. If it's not in the inbox, the scan is a harmless no-op (re-paste it).
+        rescanned = False
+        if self.rescan_inbox is not None:
+            try:
+                await self.rescan_inbox()
+                rescanned = True
+            except Exception as e:
+                logger.warning("Inbox rescan after /forget failed: %s", e)
+
+        card_note = f" Removed {dropped} stale card(s)." if dropped else ""
+        if rescanned:
+            await interaction.response.send_message(
+                f"🧹 Forgot `{target}`.{card_note} Re-scanned the inbox — if it's still there, "
+                f"a fresh card is on the way; otherwise paste it in to reprocess.",
                 ephemeral=True,
             )
         else:
             await interaction.response.send_message(
-                f"Nothing in the saved history matches `{target}`.", ephemeral=True
+                f"🧹 Forgot `{target}`.{card_note} Paste it into the inbox to reprocess it.",
+                ephemeral=True,
             )
 
     async def _crawl_impl(self, interaction: discord.Interaction, url: str):
