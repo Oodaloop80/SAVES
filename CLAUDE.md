@@ -400,6 +400,17 @@ ingredient — keeping the hero and real step photos. Because `web_recipe` rende
 Recipe callout instead of the article body, `formatter._article_photo_embeds()` surfaces the
 surviving localized photos in a `## 📸 Photos` section.
 
+**Platform labeling + identity tags + caption suppression (generic):** `_platform_for_url()`
+maps recognized generic hosts to a real platform name (`provecho.co` → `provecho`) via
+`_GENERIC_PLATFORM_HOSTS`, so the note's `platform:` and metadata say `provecho` not `generic`
+(routing/vision/download still key off `detect_platform()`, which stays `generic`). Author comes
+from og:author / name="author" (read in one DOM pass — robust on a busy SPA) with a provecho
+fallback that parses the handle from og:description (`"<handle>'s <title>."`). `formatter.
+_merge_identity_tags()` adds the platform + slugged author handle as tags on EVERY note (skipping
+the `generic`/`unknown` catch-alls). For `provecho`, `_render_web_recipe` suppresses the "Caption"
+section — the page's raw text there is just the recipe re-dumped (redundant with the Recipe
+callout); blog recipes with a real story keep it.
+
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —
 carries IndexedDB, so it's the only thing that works for Firebase-auth SPAs like `provecho.co`

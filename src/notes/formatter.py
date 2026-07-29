@@ -165,8 +165,42 @@ def _sanitize_yaml_str(value: str) -> str:
     return re.sub(r'[\r\n\t]+', ' ', value).strip()
 
 
+def _tag_slug(text: str) -> str:
+    """Lowercase kebab-case slug for a tag (e.g. an author handle/name)."""
+    s = re.sub(r"[^\w\s-]", "", text.lower())
+    return re.sub(r"[\s_]+", "-", s).strip("-")
+
+
+def _merge_identity_tags(tags: list[str], content: ExtractedContent) -> list[str]:
+    """Append platform + author identity tags to the model's tags (lowercased, de-duped).
+
+    Skips the catch-all `generic` platform and an unknown author so notes don't collect noise
+    tags. The author handle is slugged (`Jane Doe` → `jane-doe`, `domtuttobene` stays as-is).
+    """
+    extra: list[str] = []
+    plat = (content.platform or "").strip().lower()
+    if plat and plat not in ("generic", "unknown"):
+        extra.append(plat)
+    author = (content.author or "").strip()
+    if author and author.lower() != "unknown":
+        slug = _tag_slug(author)
+        if slug:
+            extra.append(slug)
+
+    merged, seen = [], set()
+    for t in list(tags) + extra:
+        t = str(t).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            merged.append(t)
+    return merged
+
+
 def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
-    tags = ai_result.get("tags") or []
+    # Every note carries source-identity tags — the platform and the creator handle — so saves
+    # are filterable by where they came from and who made them. Merged with the model's tags,
+    # lowercased + de-duplicated, catch-all/unknown values skipped.
+    tags = _merge_identity_tags(ai_result.get("tags") or [], content)
     title = _sanitize_yaml_str(ai_result.get("title", "")).replace('"', "'")
     author = content.author or "unknown"
     m = content.metadata or {}
@@ -1236,9 +1270,13 @@ def _render_web_recipe(ai_result, content, media_paths, transcript, collapse):
     # embedded recipe video) so it isn't embedded twice.
     photos_section = _article_photo_embeds(content, exclude=hero)
 
+    # The "Caption" here is the page's raw extracted text. On a structured recipe site
+    # (provecho) that text is just the ingredients + directions re-dumped — redundant with the
+    # clean 🍽️ Recipe callout above and hard to read (ingredient chips repeat after each step),
+    # so it's suppressed. Blog recipes, whose body carries a real story/intro, keep it.
     caption = content.body_text or ""
     caption_section = ""
-    if caption:
+    if caption and content.platform != "provecho":
         quoted = "\n".join(f"> {line}" for line in caption[:8000].splitlines())
         caption_section = f"> [!quote] Caption\n{quoted}\n"
 

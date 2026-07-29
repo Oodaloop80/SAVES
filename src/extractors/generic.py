@@ -234,15 +234,34 @@ class GenericExtractor(BaseExtractor):
             html = await page.content()
             title = await page.title()
 
-            og = {}
-            for prop in ["og:title", "og:description", "og:image", "og:author",
-                         "article:published_time"]:
-                try:
-                    val = await page.get_attribute(f'meta[property="{prop}"]', "content", timeout=200)
-                    if val:
-                        og[prop] = val
-                except Exception:
-                    pass
+            # Read every <meta property=…>/<meta name=…> in one DOM pass. This is more robust
+            # than a per-selector get_attribute with a short timeout, which flakes on this busy
+            # SPA (networkidle never settles, so a 200ms wait can miss a tag that IS present).
+            # Property wins over name for the same key. Covers og:author AND name="author"
+            # (provecho exposes the creator via the latter).
+            try:
+                metas = await page.evaluate(
+                    """() => {
+                        const out = {};
+                        document.querySelectorAll('meta[property], meta[name]').forEach((m) => {
+                            const k = m.getAttribute('property') || m.getAttribute('name');
+                            const v = m.getAttribute('content');
+                            if (k && v && !(k in out)) out[k] = v;
+                        });
+                        return out;
+                    }"""
+                )
+            except Exception:
+                metas = {}
+            og = {
+                "og:title": metas.get("og:title"),
+                "og:description": metas.get("og:description"),
+                "og:image": metas.get("og:image"),
+                "og:author": metas.get("og:author") or metas.get("author"),
+                "og:site_name": metas.get("og:site_name") or metas.get("application-name"),
+                "article:published_time": metas.get("article:published_time"),
+            }
+            og = {k: v for k, v in og.items() if v}
 
             # Grab any embedded <video> so the crawler/recipe note downloads + transcribes it
             # like an Instagram/TikTok save. provecho recipe pages carry a plain
@@ -311,15 +330,29 @@ class GenericExtractor(BaseExtractor):
         # adds only the video that the markdown path would otherwise drop.
         media_urls = video_urls + media_urls
 
+        # Name the platform after the site when it's a recognized generic host (e.g.
+        # provecho.co → "provecho"), so the note's frontmatter/metadata + the auto platform
+        # tag say "provecho" instead of the catch-all "generic". Routing/vision/download still
+        # key off detect_platform() (which returns "generic"), so nothing downstream changes.
+        platform_name = _platform_for_url(url)
+
+        # Author: og:author / name="author" / trafilatura metadata, then a provecho-specific
+        # fallback — its og:description is "<creator>'s <title>." so the handle is recoverable
+        # even when the author meta tag hasn't hydrated yet.
+        author = og.get("og:author") or meta.get("author")
+        if not author and platform_name == "provecho":
+            author = _author_from_description(og.get("og:description"))
+
         return ExtractedContent(
             url=url,
-            platform="generic",
+            platform=platform_name,
             title=og.get("og:title") or meta.get("title") or title,
-            author=og.get("og:author") or meta.get("author"),
+            author=author,
             body_text=clean_text,
             metadata={
                 "article_markdown": article_markdown or None,
                 "recipe_data": recipe_data,
+                "site_name": og.get("og:site_name"),
                 "og_description": og.get("og:description") or meta.get("description"),
                 "published_time": og.get("article:published_time") or meta.get("date"),
                 # Surfaced into the note's frontmatter `posted:` line.
@@ -521,6 +554,31 @@ def _html_to_text(html: str) -> str:
 
 def _domain(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.lstrip("www.")
+
+
+# Recognized generic-web hosts that deserve a specific platform name on the note (instead of
+# the catch-all "generic"). Extend as more login-gated crawl sources are added. Routing and
+# vision-skip still key off detect_platform() (which stays "generic"), so this only LABELS the
+# note (frontmatter/metadata + the auto platform tag) and doesn't change pipeline behavior.
+_GENERIC_PLATFORM_HOSTS = {"provecho.co": "provecho"}
+
+
+def _platform_for_url(url: str) -> str:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return _GENERIC_PLATFORM_HOSTS.get(host, "generic")
+
+
+# provecho's og:description is "<creator handle>'s <recipe title>." — recover the handle.
+_AUTHOR_POSSESSIVE_RE = re.compile(r"^\s*([A-Za-z0-9_.\- ]{2,40}?)'s\b")
+
+
+def _author_from_description(desc: str | None) -> str | None:
+    if not desc:
+        return None
+    m = _AUTHOR_POSSESSIVE_RE.match(desc)
+    return m.group(1).strip() if m else None
 
 
 async def _extract_video_urls(page) -> list[str]:
