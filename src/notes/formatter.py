@@ -177,6 +177,39 @@ def _tag_slug(text: str) -> str:
     return re.sub(r"[\s_]+", "-", s).strip("-")
 
 
+# Leading "1 cup" / "2 tbsp" / "¼ lb" etc. — stripped so a fallback detailed tag is the
+# ingredient name, not the measurement.
+_QTY_UNIT_RE = re.compile(
+    r"^[\d¼½¾⅓⅔⅛⅜⅝⅞./\s-]*\s*"
+    r"(?:cups?|tbsps?|tsps?|tablespoons?|teaspoons?|lbs?|pounds?|ozs?|ounces?|grams?|g|kgs?|"
+    r"kg|mls?|ml|lit(?:er|re)s?|l|cloves?|cans?|jars?|packages?|pkgs?|sticks?|pinch(?:es)?|"
+    r"handfuls?|slices?|heads?|bunch(?:es)?|sprigs?|dashe?s?)?\.?\s*",
+    re.I,
+)
+
+
+def _recipe_ingredient_tags(ai_result: dict) -> list[str]:
+    """Tags for every recipe ingredient, both detailed and simplified.
+
+    Prefers the model's `ingredient_tags` (which carries BOTH the full descriptive name and the
+    simplified core per ingredient — the simplification needs semantic understanding, so it's
+    the model's job, e.g. 'shredded whole milk mozzarella' → also 'mozzarella'). Falls back to a
+    deterministic DETAILED-only slug per ingredient (strip the leading quantity/unit + trailing
+    prep note) when the model omitted the field. Everything is slugged so spaces/casing can't
+    produce an invalid tag."""
+    raw = list(ai_result.get("ingredient_tags") or [])
+    if not raw:
+        items = list(ai_result.get("recipe_ingredients") or [])
+        for g in ai_result.get("recipe_ingredient_groups") or []:
+            items += g.get("items") or []
+        for it in items:
+            name = re.sub(r"\([^)]*\)", " ", str(it))       # remove parentheticals anywhere
+            name = name.split(",")[0]                        # drop trailing prep note
+            name = _QTY_UNIT_RE.sub("", name, count=1)       # drop leading quantity + unit
+            raw.append(name)
+    return [s for s in (_tag_slug(str(t)) for t in raw) if s]
+
+
 def _merge_identity_tags(tags: list[str], content: ExtractedContent) -> list[str]:
     """Append platform + author identity tags to the model's tags (lowercased, de-duped).
 
@@ -203,10 +236,11 @@ def _merge_identity_tags(tags: list[str], content: ExtractedContent) -> list[str
 
 
 def _frontmatter(ai_result: dict, content: ExtractedContent, saved_date: str) -> str:
-    # Every note carries source-identity tags — the platform and the creator handle — so saves
-    # are filterable by where they came from and who made them. Merged with the model's tags,
-    # lowercased + de-duplicated, catch-all/unknown values skipped.
-    tags = _merge_identity_tags(ai_result.get("tags") or [], content)
+    # Tags = the model's curated tags + every recipe ingredient (detailed + simplified forms)
+    # + source-identity tags (platform, creator handle). Merged, lowercased, de-duplicated;
+    # catch-all/unknown identity values skipped.
+    base_tags = list(ai_result.get("tags") or []) + _recipe_ingredient_tags(ai_result)
+    tags = _merge_identity_tags(base_tags, content)
     title = _sanitize_yaml_str(ai_result.get("title", "")).replace('"', "'")
     author = content.author or "unknown"
     m = content.metadata or {}

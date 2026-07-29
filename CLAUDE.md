@@ -428,6 +428,16 @@ A structured recipe page (provecho) whose body is just the recipe re-dumped is d
 that carries extra content (description, story, tips) keeps the Caption so nothing is lost —
 content-based, not hardcoded per platform.
 
+**Ingredient tags (any recipe — Bora, 2026-07-29):** EVERY ingredient becomes a tag, in BOTH a
+detailed and a simplified form (e.g. "shredded whole milk mozzarella" → `shredded-whole-milk-mozzarella`
+AND `mozzarella`). The model emits these in a dedicated `ingredient_tags` field (the simplified
+core needs semantic understanding — a last-word rule breaks on "boneless skinless chicken breast"
+→ should be `chicken` not `breast`); the analysis prompt requires it whenever `recipe_ingredients`
+is non-null, IN ADDITION to the curated 10–20 `tags`. `formatter._recipe_ingredient_tags()` folds
+them into the note's tags at write time (via `_frontmatter`, alongside the identity tags), slugged
++ de-duplicated. If the model omits the field, a deterministic DETAILED-only fallback derives a
+slug per ingredient (strip leading quantity/unit + parentheticals + trailing prep note).
+
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
 `_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.prepare_ingredient_icon_data_uris()`
 downloads each, **downscales it to ~28 px (Pillow → WEBP)**, and stores a base64 `data_uri` on the

@@ -25,6 +25,7 @@ Always respond with ONLY valid JSON, no markdown fences, no explanation.
   "recipe_servings": null,
   "recipe_time": null,
   "recipe_notes": null,
+  "ingredient_tags": null,
   "source_language": "English",
   "translation": null,
   "nutrition": null
@@ -189,15 +190,27 @@ Use hyphens for multi-word tags. Prefer specific over generic.
 
 ## Recipe / Cooking Tagging (REQUIRED when content is food, cooking, or a recipe)
 When the content is a recipe or cooking video, ALWAYS add tags across these dimensions:
-- Key ingredients: the main components (e.g. chicken, shrimp, cheddar, biscuits, garlic,
-  heavy-cream, puff-pastry). Tag the notable ones, not every pantry staple.
 - Cooking method: baking, frying, deep-frying, air-frying, grilling, smoking, roasting,
   sauteing, braising, boiling, slow-cooking, sous-vide, no-cook — whichever apply.
 - Dish type: pot-pie, sandwich, pasta, soup, stew, casserole, salad, dessert, cake,
   cookies, breakfast, dip, sauce, side-dish — be specific.
 - Cuisine when identifiable: italian, mexican, cajun, southern, thai, indian, etc.
 - Meal/occasion: breakfast, lunch, dinner, snack, holiday, weeknight, meal-prep.
-Pull ingredient and method tags from the YouTube description / transcript when present.
+Pull method tags from the YouTube description / transcript when present.
+
+## Ingredient tags (REQUIRED whenever recipe_ingredients is non-null)
+Populate `ingredient_tags`: a flat, de-duplicated, kebab-case list that tags EVERY ingredient
+in the recipe (not just the notable ones) — and for each ingredient include BOTH:
+  1. the FULL descriptive name (drop the quantity/unit and any trailing prep note), and
+  2. the SIMPLIFIED core ingredient (the essential noun, with descriptors removed).
+Example: "1 cup shredded whole milk mozzarella, divided" →
+  add both `shredded-whole-milk-mozzarella` AND `mozzarella`.
+More examples: "2 boneless skinless chicken breasts" → `boneless-skinless-chicken-breast` +
+`chicken`; "3 tbsp extra virgin olive oil" → `extra-virgin-olive-oil` + `olive-oil`;
+"¼ cup packed brown sugar" → `brown-sugar` + `sugar`. When the full and simplified forms are
+identical (e.g. "salt"), include it once. All lowercase, hyphen-separated, singular where
+natural. These are IN ADDITION to the curated `tags` list above (do NOT also stuff every
+ingredient into `tags`).
 
 ## Folder Organization
 Place notes under SAVES/ using as many levels as needed — typically 4, going deeper

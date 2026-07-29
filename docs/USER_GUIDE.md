@@ -127,6 +127,11 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
   the AI generates — is normalized to lowercase at every entry point (Add Tags, `/tag
   add`, NL Edit, swaps) before it reaches the card or the note, so case-variant duplicate
   tags can't happen.
+- **Recipe notes tag every ingredient — twice.** Each ingredient becomes a tag in both a
+  detailed and a simplified form (e.g. `shredded-whole-milk-mozzarella` *and* `mozzarella`),
+  so you can find a recipe by the exact item or the general one. These are added to the
+  written note automatically (on top of the normal curated tags); they don't clutter the
+  approval card. Expect recipe notes to carry a lot of tags — that's intended.
 - **🗑️ Remove Tags** — one ✖ button per tag, tap to remove instantly. Removed one by
   accident? **↩ Undo All** restores the tag list exactly as it was when you opened the
   remover, so you can start over. The message names the save it belongs to and has a
