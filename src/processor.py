@@ -9,7 +9,12 @@ from src.discord_bot.notifications import send_alert
 from src.extractors import get_extractor
 from src.extractors.enrich import enrich_embedded_media
 from src.extractors.profile_recipe import follow_profile_recipe
-from src.media.downloader import abs_to_obsidian_embed, download_media, localize_article_images
+from src.media.downloader import (
+    abs_to_obsidian_embed,
+    download_ingredient_icons,
+    download_media,
+    localize_article_images,
+)
 from src.media.transcriber import is_audio_video, transcribe
 from src.media.vision import prepare_images_for_claude
 from src.queue_manager import ProcessingState
@@ -147,6 +152,15 @@ async def _process_one(
             )
         except Exception as e:
             logger.warning(f"Followed-recipe image localization failed (non-fatal): {e}")
+
+    # 3d. Archive per-ingredient icons into the vault (provecho) so they render inline AND
+    # survive the source going away — Hard Constraint #3 (no remote links in a written note).
+    if content.metadata.get("recipe_ingredient_icons"):
+        try:
+            saves_root = config.get("paths", {}).get("saves_root") or os.path.join(vault_root, "SAVES")
+            await download_ingredient_icons(content, vault_root, saves_root)
+        except Exception as e:
+            logger.warning(f"Ingredient icon archival failed (non-fatal): {e}")
 
     # 4. Transcribe
     transcript = None

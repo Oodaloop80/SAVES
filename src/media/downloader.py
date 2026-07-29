@@ -284,6 +284,63 @@ async def localize_article_images(
                 len(url_to_embed), len(urls), md_key)
 
 
+def _download_url_to(url: str, dest: str) -> bool:
+    """Download `url` to the exact path `dest`. Returns True on success."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        if not data:
+            return False
+        with open(dest, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+async def download_ingredient_icons(content, vault_root: str, saves_root: str) -> None:
+    """Download per-ingredient icons INTO THE VAULT so they survive the source going away and
+    still render inline next to each ingredient.
+
+    Self-containment rule (Hard Constraint #3): a note never links a remote asset for display.
+    These icons must render INLINE (beside the ingredient text), and the external `media://`
+    store only renders as block fences — so the icons live in-vault under
+    `SAVES/_assets/ingredient-icons/` and are embedded with a native `![[path|width]]` wikilink.
+    Deduped by URL hash (a shared 'salt'/'bacon' icon downloads once). Mutates each pair in
+    `content.metadata['recipe_ingredient_icons']`, setting `local` to the vault-relative path;
+    pairs that fail to download get no `local` (the formatter then shows text only — never the
+    remote URL). No-op when there are no icons.
+    """
+    icons = (content.metadata or {}).get("recipe_ingredient_icons")
+    if not icons:
+        return
+    saves_rel = os.path.relpath(saves_root, vault_root).replace("\\", "/")
+    subdir_rel = f"{saves_rel}/_assets/ingredient-icons"
+    icons_dir = os.path.join(saves_root, "_assets", "ingredient-icons")
+    os.makedirs(icons_dir, exist_ok=True)
+
+    saved = 0
+    for pair in icons:
+        url = (pair.get("icon") or "").strip()
+        if not url or pair.get("local"):
+            continue
+        try:
+            fname = hashlib.md5(url.encode()).hexdigest()[:16]
+            ext = os.path.splitext(urllib.parse.urlparse(url).path)[1].lower() or ".webp"
+            dest = os.path.join(icons_dir, fname + ext)
+            if not os.path.exists(dest):
+                ok = await asyncio.to_thread(_download_url_to, url, dest)
+                if not ok:
+                    continue
+            pair["local"] = f"{subdir_rel}/{fname}{ext}"
+            saved += 1
+        except Exception as e:
+            logger.warning("Ingredient icon download failed for %s: %s", url, e)
+    if saved:
+        logger.info("Archived %d ingredient icon(s) into the vault (%s)", saved, subdir_rel)
+
+
 def abs_to_obsidian_embed(abs_path: str, media_root: str, vault_root: str) -> str:
     """Return the media path RELATIVE TO media_root, with forward slashes.
 

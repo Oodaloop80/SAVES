@@ -26,6 +26,18 @@ to a Synology NAS vault.
    `call_soon_threadsafe`. Never create a second event loop or use
    `asyncio.run()` inside an already-running loop.
 
+3. **Full self-containment — a save must survive the source going away (Bora, 2026-07-29).**
+   Everything a note shows MUST be stored locally: the note NEVER links to a remote asset for
+   display. Every image/video/icon/attachment is downloaded and referenced by a local path so
+   the note renders completely even after the original site/post/reel/video is deleted. Two
+   local tiers: (a) block-level media (videos, hero/article photos) → the external `media://`
+   store via `download_media()` / `localize_article_images()`; (b) assets that must render
+   INLINE next to text (e.g. per-ingredient icons) → **inside the vault** under
+   `SAVES/_assets/…`, referenced with a native `![[path|width]]` embed (the `media://` store
+   only renders as block fences, so it can't do inline). If a new feature surfaces any source
+   asset, add a localization step for it — no remote `![](http…)` / `<img src="http…">` in a
+   written note, ever. New asset kinds get their own `SAVES/_assets/<kind>/` folder.
+
 ---
 
 ## Repository Structure
@@ -412,11 +424,14 @@ section — the page's raw text there is just the recipe re-dumped (redundant wi
 callout); blog recipes with a real story keep it.
 
 **Ingredient icons (provecho):** the site shows a small thumbnail beside each ingredient.
-`_extract_ingredient_icons()` captures the (text, icon-url) pairs; `formatter._ingredients_md()`
-matches each Recipe-callout ingredient to its icon by word overlap and prefixes the line with an
-inline `![|24](url)`. The icon URLs stay REMOTE (Cloudinary CDN) on purpose — inline rendering
-needs a real image URL, and the local `media://` embeds only render as block fences, not inline
-next to text.
+`_extract_ingredient_icons()` captures the (text, icon-url) pairs; `downloader.download_ingredient_icons()`
+downloads each **into the vault** at `SAVES/_assets/ingredient-icons/<hash>.<ext>` (deduped by URL
+hash) and records the vault-relative `local` path; `formatter._ingredients_md()` matches each
+Recipe-callout ingredient to its icon by word overlap and prefixes the line with an inline
+`![[<local>|24]]` wikilink. In-vault (not the external `media://` store) because inline rendering
+needs a real embeddable path and `media://` only renders as block fences — and per Hard Constraint
+#3 the icon is stored locally, never linked remotely. An icon that fails to download shows no icon
+(text only), never a remote URL. Wired into `processor.py` (step 3d) and `process_one.py`.
 
 **Authenticated generic sites (login-gated):** `GenericExtractor` resolves a per-domain login,
 in precedence order: a persistent browser profile `cookies/<host>_profile/` (PREFERRED —

@@ -1062,11 +1062,13 @@ def _ing_words(text: str) -> set:
 
 
 def _icon_prefix(item: str, icons: list, used: set) -> str:
-    """Best-matching ingredient icon as an inline, size-capped remote image, or ''.
+    """Best-matching ingredient icon as an inline, size-capped LOCAL embed, or ''.
 
     Matches the ingredient text to a captured (text, icon) pair by word overlap (ignoring
-    quantities/prep words), each icon used at most once. Remote URL + `|24` width so it renders
-    small and inline inside the recipe callout."""
+    quantities/prep words), each icon used at most once. Uses ONLY the vault-local copy
+    (`pair['local']`, an in-vault `![[path|24]]` embed that renders inline) — never the remote
+    URL, per the self-containment rule (Hard Constraint #3). If an icon wasn't archived locally,
+    the ingredient shows as text with no icon."""
     tw = _ing_words(item)
     if not tw or not icons:
         return ""
@@ -1083,9 +1085,9 @@ def _icon_prefix(item: str, icons: list, used: set) -> str:
             best_score, best_idx = score, idx
     if best_idx >= 0 and best_score >= 0.5:
         used.add(best_idx)
-        url = (icons[best_idx].get("icon") or "").strip()
-        if url:
-            return f"![|24]({url}) "
+        local = (icons[best_idx].get("local") or "").strip()
+        if local:
+            return f"![[{local}|24]] "
     return ""
 
 
