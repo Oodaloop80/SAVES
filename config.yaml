@@ -26,6 +26,12 @@ processing:
   follow_profile_recipes: true  # "recipe in bio" posts: follow the bio link to the real recipe
   extract_timeout_seconds: 180  # hard cap on a single extractor.extract() await
 
+crawl:
+  enabled: true
+  rate_limit_seconds: 2.0   # delay between enqueues from a /crawl (processing is serial
+                            # downstream, so this is gentle pacing, not the primary throttle)
+  max_recipes: 300          # safety cap on how many URLs one /crawl will queue
+
 media:
   download_video: true
   download_images: true

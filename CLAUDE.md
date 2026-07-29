@@ -53,6 +53,11 @@ SAVES/
 │   │                              # AUTH: prefers a persistent profile cookies/<host>_profile/
 │   │                              # (login-gated/Firebase-IndexedDB sites, e.g. provecho.co),
 │   │                              # else <host>_session.json, else <host>.txt cookies
+│   ├── crawlers/                  # /crawl: one index/creator page → many content URLs
+│   │   ├── base.py                # SiteCrawler ABC: shared partition() + enqueue_discovered()
+│   │   ├── __init__.py            # get_crawler(url, config) — routes to a site crawler or None
+│   │   └── provecho.py            # ProvechoCrawler — ONE creator's recipes (per-creator scoped,
+│   │                              # scrolls the SPA grid; needs provecho.co_profile auth)
 │   ├── media/
 │   │   ├── downloader.py          # download_media() → {media_root}/{platform}/{author}/{slug}/
 │   │   │                          # abs_to_obsidian_embed() returns BARE relative path (no ![[]])
@@ -87,6 +92,7 @@ SAVES/
 │   ├── refresh_cookies.py         # Instructions for exporting browser cookies
 │   ├── capture_session.py         # Login-once persistent profile → cookies/<host>_profile/
 │   │                              # (captures IndexedDB Firebase auth that .txt/JSON can't)
+│   ├── crawl_creator.py           # CLI: crawl one creator; dry-run list or --to-inbox feed
 │   └── preflight_nas.sh           # POSIX pre-deploy check (mounts/secrets/cookies/Whisper) — run on NAS
 ├── docker/
 │   ├── Dockerfile                 # python:3.11-slim + ffmpeg + chromium + playwright

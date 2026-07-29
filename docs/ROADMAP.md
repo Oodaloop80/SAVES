@@ -211,6 +211,17 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   saved — queue K?" confirm card in Discord, then enqueue survivors one at a time through the
   existing pipeline. Each item gets its own normal approval card.
 
+  **Status (2026-07-29):**
+  - [x] `SiteCrawler` base (`src/crawlers/base.py`) — shared `partition()` (dedup vs
+        `processing_state.json`, normalized) + `enqueue_discovered()` (one-at-a-time, rate-limited).
+  - [x] `ProvechoCrawler` (`src/crawlers/provecho.py`) + `get_crawler()` router. `discover_urls()`
+        LIVE-VERIFIED: `.../creator/davespizzaoven` → 65 recipes, 0 cross-creator bleed, count matches
+        the page's "65 Recipes" header.
+  - [x] `scripts/crawl_creator.py` — CLI: dry-run list, or `--to-inbox` to feed the running pipeline.
+  - [x] `config.yaml` `crawl:` — `enabled`, `rate_limit_seconds`, `max_recipes`.
+  - [ ] Discord `/crawl` slash command + confirm card (Queue / Dry-run / Cancel).
+  - [ ] Embedded video download+transcribe (see below) — needs a recipe-with-video to inspect.
+
   **Per-creator scoping (Bora, 2026-07-28) — HARD REQUIREMENT.** provecho has many creators;
   crawling the whole site would be far too much. `/crawl` takes a single **creator page** and
   must NOT traverse beyond that creator's own recipes. URL structure:
