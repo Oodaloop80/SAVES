@@ -2,8 +2,8 @@
 
 This is the "how do I actually use it" doc — every non-obvious behavior, gotcha, and
 recovery path in one place. If you ever think *"wait, why did it do that?"*, the answer
-should be here. (Architecture lives in `ARCHITECTURE.md`; the canonical system map in
-`CLAUDE.md`; plans in `ROADMAP.md`.)
+should be here. (A one-line-per-command cheat sheet is in `COMMANDS.md`; architecture lives in
+`ARCHITECTURE.md`; the canonical system map in `CLAUDE.md`; plans in `ROADMAP.md`.)
 
 > **Rule (see CLAUDE.md → Documentation discipline):** every user-facing nuance — slash
 > command, button, surprising default, recovery path — gets documented HERE in the same

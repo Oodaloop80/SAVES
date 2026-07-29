@@ -560,6 +560,10 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
 - `CLAUDE.md` (this file) — the canonical map: repo tree, data flow, note types, button/slash
   behavior, platform notes, hard constraints, config. If a new file, note type, button, slash
   command, config key, or flow appears (or one is renamed/removed), fix it here.
+- `docs/COMMANDS.md` — the quick-reference cheat sheet: a one-line-per-entry table of EVERY
+  slash command, Discord button, and CLI script. Whenever a command/button/script is added,
+  renamed, or removed, update its row here in the same commit (this is the terse index;
+  `USER_GUIDE.md` holds the detailed behavior).
 - `docs/USER_GUIDE.md` — the user-facing nuances: every slash command, button, surprising
   default, and recovery path, written for the person *using* the bot. Any new or changed
   user-visible behavior (a command, a button, a gotcha like "deleting the note doesn't
