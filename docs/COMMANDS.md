@@ -8,6 +8,12 @@ paths live in `docs/USER_GUIDE.md` — this is just the cheat sheet.
 
 ---
 
+## Paste-to-save channel
+
+| Surface | What it does |
+|---|---|
+| **`#SAVES-inbox`** (paste a URL, or POST via a Discord webhook from Android/Tasker) | Queues the URL like an inbox-file line — a provecho **creator** URL triggers `/crawl` instead. Bot reacts: ✅ queued · 🔁 duplicate · 🕸️ crawl · 🤔 no URL. Optional channel (`discord.channel_inbox`). Mobile one-tap setup: `docs/MOBILE_SHORTCUTS.md`. |
+
 ## Discord slash commands
 
 Typed in the message box of any channel in the "Bora's AI Ops" server — type `/`, then pick the

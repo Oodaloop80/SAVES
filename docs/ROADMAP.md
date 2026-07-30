@@ -203,16 +203,17 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [ ] Feed real URLs via `/save`; refine quality + routing; let `preferences.json` learn
 - [ ] Keep docs current per change; targeted single-agent reviews on risky edits only
 
-## Phase 5b — Discord-native saving & site crawlers  *(future feature, not yet scoped)*
-> Raised by Bora (2026-07-22). Two related ideas to explore together:
+## Phase 5b — Discord-native saving & site crawlers
+> Raised by Bora (2026-07-22). Both shipped.
 
-- **Discord-native saving:** Instead of pasting URLs into the Obsidian inbox file, post the URL
-  directly in a Discord channel (e.g., `#SAVES-queue`) and the bot picks it up. This removes the
-  Obsidian inbox as the required entry point — any device with Discord can save without needing
-  the Advanced URI plugin or Obsidian installed. Implementation sketch: a `on_message` listener
-  that detects URLs in a designated channel, strips message noise, and routes them into
-  `QueueManager.enqueue_url()` exactly as the inbox watcher does. Dedup, approval flow, and
-  vault write are unchanged.
+- [x] **Discord-native saving (shipped 2026-07-30):** paste a URL in **`#SAVES-inbox`** (or POST
+  via a Discord **webhook** from Android/Tasker — a webhook is just a message) and the bot's
+  `on_message` → `_handle_inbox_message` routes it into `QueueManager.enqueue_url()` exactly as
+  the inbox watcher does (a creator URL triggers `/crawl` via the shared `_crawl_core`). Dedup,
+  approval flow, and vault write are unchanged; a reaction acks each message. `on_message` skips
+  only the bot's own posts, so webhook messages are processed — that's what lets the Android
+  one-tap share (share sheet → single target → POST to the webhook) work with **no new server or
+  port on the NAS**. Optional (`discord.channel_inbox`); mobile setup in `docs/MOBILE_SHORTCUTS.md`.
 
 - **Site crawlers (slash command `/crawl <creator-url>`):** Discover all recipe URLs for **one
   creator**, deduplicate against `processing_state.json`, show a "Found N recipes, M already

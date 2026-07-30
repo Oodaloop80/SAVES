@@ -117,6 +117,67 @@ the same `obsidian://` URI.
 
 ---
 
+## Alternative: one-tap share via a Discord webhook (Android / Tasker)
+
+This path skips Obsidian entirely: the phone POSTs the shared URL straight to a **Discord
+webhook** for the **#SAVES-inbox** channel, and the bot's message listener queues it. No Sync
+bridge, no NAS file — the moment the container is running, the save is queued.
+
+```
+ Phone: Share → [one target] → HTTP POST to the Discord webhook
+    │
+    ▼  Discord (cloud)
+ #SAVES-inbox gains the message  →  SAVES bot's on_message queues the URL
+    │                                 (a provecho creator URL triggers /crawl instead)
+    ▼
+ Discord approval card in #SAVES-approvals → approve → note written
+```
+
+The bot reacts to your pasted/POSTed message so you get a lightweight ack:
+**✅ queued · 🔁 already saved (a Re-save notice is posted) · 🕸️ crawl started · 🤔 no URL found.**
+
+### Setup
+
+1. **Create the channel + webhook (one time).**
+   - In Discord, make a text channel named **`SAVES-inbox`** (matches `discord.channel_inbox`
+     in `config.yaml`; rename there if you prefer another name).
+   - Channel → **Edit Channel → Integrations → Webhooks → New Webhook** → **Copy Webhook URL**.
+     (Treat this URL like a password — anyone with it can post to the channel.)
+   - Restart the bot if it was already running, so it picks up the channel.
+
+2. **Add a single share target on Android.** Any of these makes the share sheet show **one**
+   target that fires the POST with no second dialog:
+   - **HTTP Shortcuts** app (simplest, no Tasker): create a shortcut → **POST** to the webhook
+     URL, **Request body → JSON**: `{"content": "<the shared text>"}` (map its "shared text"
+     variable into `content`), enable **"Show in share menu."** Share a link → tap the shortcut
+     → done.
+   - **Tasker + AutoShare** (the Tasker route): AutoShare adds one entry to the share sheet.
+     Configure AutoShare to pass the shared text to a Tasker task; the task runs one
+     **HTTP Request** action → **Method POST**, **URL** = the webhook, **Headers**
+     `Content-Type: application/json`, **Body** `{"content": "%astext"}` (AutoShare puts the
+     shared URL in `%astext`). Share → tap **AutoShare** → done.
+   - **MacroDroid** (no plugin): macro with **Trigger = Share**, **Action = HTTP Request POST**
+     to the webhook, body `{"content": "[shared_text]"}`. "MacroDroid" shows as the share target.
+
+   > Android's share sheet always lists targets — there is no OS way to auto-pick one. The goal
+   > (and what these achieve) is a **single tap with no follow-up dialog**: tap the target, the
+   > POST fires, nothing else to confirm. That's the practical floor for share-to-anything.
+
+3. **(Optional) Send several URLs at once** — put one URL per line in the message `content`;
+   the listener extracts and queues each. With the serial queue on, you still review them one
+   at a time.
+
+### Which method should I use?
+
+- **Obsidian Advanced URI** (above): keeps everything inside your vault; the URL and finished
+  note live together; works even if you never open Discord. Depends on the Sync bridge.
+- **Discord webhook** (this section): fewest moving parts on the phone, independent of Obsidian
+  Sync, and the same one-tap feel. The URL lands in Discord, not your vault inbox.
+
+Both can run at the same time — use whichever is in front of you.
+
+---
+
 ## Verifying end to end
 
 1. Make sure the **SAVES container is running** on the NAS and the **bridging Obsidian client**

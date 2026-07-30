@@ -87,8 +87,9 @@ SAVES/
 │   │   ├── approval.py            # PendingApproval dataclass, PendingApprovalsStore (JSON)
 │   │   ├── notifications.py       # send_approval_request(), send_log(), send_alert(),
 │   │   │                          # duplicate notice + DuplicateNoticeView (🔁 Re-save/✖ Dismiss)
-│   │   └── bot.py                 # SAVESBot; ApprovalView (6 buttons + conditional ⚠️);
-│   │                              # TagRemoveView (✖ per tag, ↩ Undo All); _finalize() writes note
+│   │   └── bot.py                 # SAVESBot; ApprovalView (7 buttons: +⏭️ Skip, conditional ⚠️);
+│   │                              # TagRemoveView (✖ per tag, ↩ Undo All); _finalize() writes note;
+│   │                              # on_message: #SAVES-inbox paste/webhook → enqueue (or crawl)
 │   ├── notes/
 │   │   ├── formatter.py           # format_note() dispatches to 13 per-type renderers
 │   │   └── file_manager.py        # write_note() atomic; move_note() with SHA256 verify
@@ -124,10 +125,11 @@ SAVES/
 ## Data Flow
 
 ```
-0 - INBOX/SAVES.md
-    │  (watchdog, 3s debounce)
-    ▼
-asyncio.Queue
+0 - INBOX/SAVES.md ──(watchdog, 3s debounce)──┐
+#SAVES-inbox paste / Discord webhook ─────────┤  (bot on_message → enqueue_url;
+    (Android/Tasker POST; creator URL → /crawl)│   creator URL → crawl confirm)
+                                               ▼
+                                          asyncio.Queue
     │  (processor.py — serial, one URL at a time)
     ▼
 1. extractor.extract(url)           → ExtractedContent
@@ -195,6 +197,8 @@ processing:
                           # each save reuse the folder+tags just approved. false = old all-at-once.
 
 discord:
+  channel_inbox: "SAVES-inbox"     # OPTIONAL paste-to-save channel (+ Android/Tasker webhook).
+                                   # Unset to disable. Not in validation's required-channels.
   auto_approve_on_timeout: false   # DECISION (Bora, 2026-07-04): stays false — approvals are
   auto_approve_timeout_hours: 48   # reviewed fresh, never auto'd. See ROADMAP "Decisions locked".
 
@@ -348,10 +352,32 @@ against `processing_state.json`, and posts a confirm card (Found/Already-saved/N
 **✅ Queue** / **📋 List** (ephemeral dry-run list) / **✖ Cancel**. Queue enqueues each URL through
 the normal pipeline in the background (one approval card per recipe; paced by
 `crawl.rate_limit_seconds`). Per-creator scoped — never traverses to other creators. Needs the
-authenticated `cookies/provecho.co_profile/`. CLI equivalent: `scripts/crawl_creator.py`.
+authenticated `cookies/provecho.co_profile/`. CLI equivalent: `scripts/crawl_creator.py`. Also
+triggered by **pasting a creator URL into `#SAVES-inbox`** (shared `_crawl_core`; see
+"Discord-native saving").
 
 **`/queue` slash command** — reports the serial review queue (see below): the save currently up
 for approval + how many wait behind it. Reads `QueueManager.status()`. Ephemeral.
+
+---
+
+## Discord-native saving (`#SAVES-inbox`, `discord.channel_inbox`, optional)
+
+A second way in besides the Obsidian inbox file: paste a URL into `#SAVES-inbox` (or POST via a
+Discord **webhook** from Android/Tasker — same thing, a webhook is just a message). `SAVESBot.
+on_message` → `_is_inbox_channel` → `_handle_inbox_message`:
+- Extracts URLs (`extract_urls`); non-URL chatter is ignored.
+- A provecho **creator** URL (`get_crawler` matches) → `_crawl_from_message` runs the crawl
+  confirm flow (shared `_crawl_core` with `/crawl`).
+- Otherwise → `queue_manager.enqueue_url(raw)`; an already-saved URL posts the normal
+  `send_duplicate_notice` (with 🔁 Re-save) to `#SAVES-approvals`.
+- Feedback is a **reaction** on the message: ✅ queued · 🔁 duplicate · 🕸️ crawl · 🤔 no URL/nothing new.
+
+`on_message` skips only the bot's OWN messages (`self.user`), so **webhook posts are processed**
+(they have `author.bot=True`) — that's what makes the Android/Tasker → Discord-webhook path work
+with no new server/port on the NAS. The channel is a paste log; messages aren't deleted (the
+reaction is the ack). Disabled unless `channel_inbox` is set; not a validation-required channel.
+Mobile setup (Obsidian Advanced URI **and** the webhook/Tasker one-tap share): `docs/MOBILE_SHORTCUTS.md`.
 
 ---
 
@@ -596,7 +622,11 @@ the container watches, and syncs the finished note back. No SMB/VPN. Setup:
 `docs/MOBILE_SHORTCUTS.md`. (Depends on an Obsidian client keeping the NAS vault synced.)
 
 **Discord server:** "Bora's AI Ops"
-Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`
+Required channels: `#SAVES-approvals`, `#SAVES-logs`, `#SAVES-alerts`.
+Optional: `#SAVES-inbox` (`discord.channel_inbox`) — paste a URL there, or POST via a Discord
+webhook from Android/Tasker, to queue a save without touching the Obsidian inbox file; a
+provecho **creator** URL pasted there triggers `/crawl`. See "Discord-native saving" below and
+`docs/MOBILE_SHORTCUTS.md`.
 
 ---
 

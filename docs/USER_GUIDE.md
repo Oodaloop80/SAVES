@@ -16,9 +16,17 @@ should be here. (A one-line-per-command cheat sheet is in `COMMANDS.md`; archite
 - **The inbox is one file:** `0 - INBOX/SAVES.md` in the vault. Paste URLs there (one per
   line); the watcher picks them up within ~3 seconds. Nothing else in the vault triggers
   processing.
-- **From your phone:** share a link into the vault's inbox via the Obsidian **Advanced URI**
-  shortcut — Obsidian Sync carries it to the NAS, runs it, and syncs the finished note back.
-  Works off home Wi-Fi (no VPN). Full setup for iOS + Android: `docs/MOBILE_SHORTCUTS.md`.
+- **Or paste in `#SAVES-inbox` (Discord).** Drop a URL into that channel and it's queued just
+  like an inbox line — no Obsidian round-trip. The bot **reacts** so you know what happened:
+  ✅ queued · 🔁 already saved (you get a Re-save notice) · 🕸️ crawl started (a creator URL) ·
+  🤔 no URL found. Paste several (one per line) and each is queued. This is the same channel the
+  Android one-tap share posts to (below). Optional — only active if the channel exists and is
+  set as `discord.channel_inbox`.
+- **From your phone — two options** (`docs/MOBILE_SHORTCUTS.md` has both):
+  - **Obsidian Advanced URI** — share into the vault inbox; Obsidian Sync carries it to the NAS.
+    Keeps everything in your vault; depends on the Sync bridge being up.
+  - **Discord webhook (Android/Tasker)** — a single share-sheet target POSTs the URL to a
+    webhook for `#SAVES-inbox`; the bot queues it instantly. No Obsidian, no Sync bridge. One tap.
 - **Everything is immediate.** Extraction, AI analysis, and the Discord approval card fire
   the moment a URL lands. Nothing is batched or deferred (locked decision — ROADMAP
   "Decisions locked").
