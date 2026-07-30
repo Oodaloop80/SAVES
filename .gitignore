@@ -20,7 +20,12 @@ state/
 # Runtime state
 processing_state.json
 pending_approvals.json
+queue_state.json
+preferences.json
 logs/
+
+# Debug / inspection screenshots (may show authenticated account state — never commit)
+screenshots/
 
 # Python
 __pycache__/
