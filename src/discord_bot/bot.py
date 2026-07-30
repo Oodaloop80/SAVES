@@ -13,6 +13,7 @@ from src.discord_bot.notifications import (
     send_alert,
     send_approval_request,
     send_cookie_warning,
+    send_duplicate_notice,
     send_log,
 )
 from src.notes.file_manager import write_note
@@ -21,7 +22,7 @@ from src.utils.cookie_checker import check_all_cookies
 from src.utils.file_io import remove_url_from_inbox
 from src.utils.preferences import PreferencesStore
 from src.utils.tag_index import clean_tags, get_tag_index
-from src.utils.url_parser import normalize_url
+from src.utils.url_parser import extract_urls, normalize_url
 from src.utils.vault_scanner import clean_folder_path
 
 logger = logging.getLogger(__name__)
@@ -649,48 +650,36 @@ class SAVESBot(discord.Client):
                 ephemeral=True,
             )
 
-    async def _crawl_impl(self, interaction: discord.Interaction, url: str):
-        """/crawl one creator's recipes: discover → dedup → confirm card → queue.
-
-        Discovery drives a headless browser (scrolls the SPA grid), so it defers first
-        (Discord's 3 s ack window) and answers via followup. Per-creator scoping is enforced
-        by the crawler's discover_urls; this method only orchestrates dedup + the confirm card.
-        """
+    async def _crawl_core(self, url: str):
+        """Shared crawl logic for both /crawl and a creator URL pasted in #SAVES-inbox: discover
+        → dedup → build the confirm card. Returns (embed, view, note): `view` is a
+        CrawlConfirmView when there's something new to queue; `note` is a status/error string
+        (embed may accompany it, e.g. "everything already saved"). Never raises — discovery
+        errors come back as a note."""
         url = (url or "").strip()
         if not self.config.get("crawl", {}).get("enabled", True):
-            await interaction.response.send_message("Crawling is disabled in config.", ephemeral=True)
-            return
+            return None, None, "Crawling is disabled in config."
         crawler = get_crawler(url, self.config)
         if crawler is None:
-            await interaction.response.send_message(
+            return None, None, (
                 "No crawler supports that URL. Provide a provecho.co creator page — "
-                "`https://www.provecho.co/platform/creator/<handle>`.",
-                ephemeral=True,
+                "`https://www.provecho.co/platform/creator/<handle>`."
             )
-            return
         if self.queue_manager is None or self.state is None:
-            await interaction.response.send_message(
-                "Queue/state tracking isn't available in this process.", ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(thinking=True)
+            return None, None, "Queue/state tracking isn't available in this process."
         try:
             urls = await crawler.discover_urls(url)
         except (ValueError, RuntimeError) as e:
-            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
-            return
+            return None, None, f"⚠️ {e}"
         except Exception as e:
             logger.exception("crawl discovery failed for %s", url)
-            await interaction.followup.send(f"⚠️ Crawl failed: {e}", ephemeral=True)
-            return
+            return None, None, f"⚠️ Crawl failed: {e}"
 
         if not urls:
-            await interaction.followup.send(
+            return None, None, (
                 "No recipes found on that page (is it a creator page, and is the login profile "
-                "still valid?).", ephemeral=True
+                "still valid?)."
             )
-            return
 
         new, dup = crawler.partition(urls, self.state)
         max_recipes = self.config.get("crawl", {}).get("max_recipes", 300)
@@ -705,13 +694,25 @@ class SAVESBot(discord.Client):
                                   f"({len(new) - len(capped)} more not queued)")
 
         if not capped:
-            await interaction.followup.send(
-                "Everything found here is already saved — nothing new to queue.", embed=embed
-            )
-            return
+            return embed, None, "Everything found here is already saved — nothing new to queue."
+        return embed, CrawlConfirmView(self, crawler, capped), None
 
-        view = CrawlConfirmView(self, crawler, capped)
-        await interaction.followup.send(embed=embed, view=view)
+    async def _crawl_impl(self, interaction: discord.Interaction, url: str):
+        """/crawl one creator's recipes: discover → dedup → confirm card → queue.
+
+        Discovery drives a headless browser (scrolls the SPA grid), so it defers first
+        (Discord's 3 s ack window) and answers via followup. Per-creator scoping is enforced
+        by the crawler's discover_urls; this method only orchestrates dedup + the confirm card.
+        (Pasting a creator URL directly into #SAVES-inbox does the same via _crawl_from_message.)
+        """
+        await interaction.response.defer(thinking=True)
+        embed, view, note = await self._crawl_core(url)
+        if view is not None:
+            await interaction.followup.send(embed=embed, view=view)
+        elif embed is not None:
+            await interaction.followup.send(note, embed=embed)
+        else:
+            await interaction.followup.send(note)
 
     async def _queue_impl(self, interaction: discord.Interaction):
         """/queue — how many saves are waiting for review, and which one is up now."""
@@ -922,7 +923,23 @@ class SAVESBot(discord.Client):
             pending.discord_message_id = msg_id
             self.store.update(pending)
 
+    def _is_inbox_channel(self, channel) -> bool:
+        """True if `channel` is the configured #SAVES-inbox (paste-to-save) channel. Off unless
+        `discord.channel_inbox` is set — so existing deploys are unaffected until the channel is
+        created and configured."""
+        inbox = self._discord_cfg.get("channel_inbox")
+        return bool(inbox) and getattr(channel, "name", None) == inbox
+
     async def on_message(self, message: discord.Message):
+        # Never act on our OWN posts (avoid loops). Webhook posts (e.g. the Android/Tasker
+        # share → Discord webhook) and human pastes in #SAVES-inbox ARE processed below, so
+        # this must come before the generic bot-author skip.
+        if self.user and message.author.id == self.user.id:
+            return
+        if self._is_inbox_channel(message.channel):
+            await self._handle_inbox_message(message)
+            return
+        # Everywhere else: only a human message drives an NL-edit session.
         if message.author.bot:
             return
         pending_id = _nl_edit_sessions.get(message.channel.id)
@@ -930,6 +947,53 @@ class SAVESBot(discord.Client):
             pending = self.store.get_by_id(pending_id)
             if pending:
                 await self._handle_nl_edit(message, pending)
+
+    async def _handle_inbox_message(self, message: discord.Message) -> None:
+        """A URL pasted (or webhook-posted from Android/Tasker) into #SAVES-inbox: queue it like
+        an inbox-file line. A provecho creator URL triggers the crawl confirm flow instead. A
+        reaction on the message is the lightweight ack (✅ queued · 🔁 duplicate · 🕸️ crawl ·
+        🤔 no URL / nothing new)."""
+        if self.queue_manager is None or self.state is None:
+            return
+        urls = extract_urls(message.content or "")
+        if not urls:
+            return
+        approvals_channel = self._discord_cfg.get("channel_approvals", "SAVES-approvals")
+        skip_duplicates = self.config.get("processing", {}).get("skip_duplicates", True)
+        outcome = None  # first meaningful outcome drives the reaction
+        for raw in urls:
+            if get_crawler(raw, self.config) is not None:      # creator page → crawl
+                await self._crawl_from_message(message, raw)
+                outcome = outcome or "crawl"
+                continue
+            url = normalize_url(raw)
+            if skip_duplicates and self.state.is_done(url):
+                await send_duplicate_notice(self, approvals_channel, raw, self.state.path_for(url))
+                outcome = outcome or "dup"
+                continue
+            if await self.queue_manager.enqueue_url(raw):
+                outcome = "queued"
+        emoji = {"queued": "✅", "crawl": "🕸️", "dup": "🔁"}.get(outcome, "🤔")
+        try:
+            await message.add_reaction(emoji)
+        except discord.HTTPException:
+            pass
+
+    async def _crawl_from_message(self, message: discord.Message, url: str) -> None:
+        """Run the crawl confirm flow for a creator URL pasted into #SAVES-inbox (reuses
+        _crawl_core). Posts a 'crawling…' note first, then edits it with the confirm card."""
+        try:
+            placeholder = await message.channel.send(f"🕸️ Crawling `{url}` … this can take a bit.")
+        except discord.HTTPException:
+            placeholder = None
+        embed, view, note = await self._crawl_core(url)
+        try:
+            if placeholder is not None:
+                await placeholder.edit(content=note or None, embed=embed, view=view)
+            else:
+                await message.channel.send(content=note or None, embed=embed, view=view)
+        except discord.HTTPException as e:
+            logger.warning("Failed to post crawl result for %s: %s", url, e)
 
     async def _handle_nl_edit(self, message: discord.Message, pending: PendingApproval):
         from src.ai.claude_client import nl_edit

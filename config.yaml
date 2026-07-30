@@ -121,6 +121,9 @@ discord:
   channel_approvals: "SAVES-approvals"
   channel_log: "SAVES-logs"
   channel_alerts: "SAVES-alerts"
+  channel_inbox: "SAVES-inbox"   # paste a URL here (or POST via a Discord webhook from
+                                 # Android/Tasker) to queue a save — a creator URL triggers a
+                                 # crawl. Optional: unset to disable. Not a required channel.
   auto_approve_on_timeout: false
   auto_approve_timeout_hours: 48
 
