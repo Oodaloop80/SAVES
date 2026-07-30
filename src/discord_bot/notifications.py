@@ -135,7 +135,15 @@ def build_approval_embed(pending) -> discord.Embed:
             inline=False,
         )
 
-    embed.set_footer(text=f"ID: {pending.id[:8]} | {pending.url[:80]}")
+    # Queue position line, when this card was sent as part of a serial batch.
+    qs = getattr(pending, "queue_status", None)
+    queue_line = ""
+    if isinstance(qs, dict) and qs.get("total"):
+        waiting = qs.get("waiting", 0)
+        tail = f" · {waiting} still waiting" if waiting else " · last in the queue"
+        queue_line = f"Save {qs.get('position')} of {qs.get('total')}{tail}\n"
+
+    embed.set_footer(text=f"{queue_line}ID: {pending.id[:8]} | {pending.url[:80]}")
     return embed
 
 

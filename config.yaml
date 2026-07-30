@@ -14,6 +14,7 @@ paths:
   logs_dir: "logs"
   state_file: "/app/state/processing_state.json"
   pending_approvals_file: "/app/state/pending_approvals.json"
+  queue_state_file: "/app/state/queue_state.json"   # serial approval queue (waiting/active/counters)
 
 watcher:
   debounce_seconds: 3
@@ -25,6 +26,11 @@ processing:
   skip_duplicates: true
   follow_profile_recipes: true  # "recipe in bio" posts: follow the bio link to the real recipe
   extract_timeout_seconds: 180  # hard cap on a single extractor.extract() await
+  serial_approval: true         # ONE approval card at a time: the next URL isn't processed
+                                # until you approve/skip the current one in Discord. Keeps the
+                                # channel calm on a /crawl or big batch, and lets each save reuse
+                                # the folder/tags you just set. Persisted (survives restarts).
+                                # Set false for the old all-at-once behavior. See /queue.
 
 crawl:
   enabled: true

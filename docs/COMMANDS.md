@@ -19,6 +19,7 @@ bot (commands register at startup).
 | `/tag add <tag> [item]` | Add a tag to a pending save. Autocompletes over your existing vault tags (usage counts, most-used first). `item` picks which pending save (default: newest). |
 | `/forget <url>` | Drop a URL from `processing_state.json` (+ session dedup) so it can be saved again, remove any stale approval card for it, and re-scan the inbox so a URL still sitting there re-queues immediately. Autocompletes over saved history (`done`, `[failed]`, `[pending]`). Does **not** touch the vault. |
 | `/crawl <creator-url>` | Discover + bulk-queue one provecho creator's recipes. URL must be a creator page (`…/platform/creator/<handle>`). **Per-creator scoped** — never crawls other creators. Posts a confirm card before queuing. Needs a captured login profile first (see `capture_session.py`). |
+| `/queue` | Show the serial-review queue: which save is up now and how many are waiting behind it. Ephemeral. |
 
 ---
 
@@ -33,6 +34,7 @@ bot (commands register at startup).
 | 🗑️ Remove Tags | Ephemeral view with one ✖ per tag (tap to remove). **↩ Undo All** restores the open-time list. |
 | 📁 Change Path | Modal prepopulated with the current folder; force-normalized to ALL CAPS / forward slashes. |
 | ✏️ NL Edit | Natural-language edit via a second Claude call (multi-action per instruction). |
+| ⏭️ Skip | Defer this save: retract the card and re-queue the URL to the back so the next one shows now. Releases the serial gate. The skipped URL is reprocessed when it comes back around. |
 | 🔍 Deep fact-check | On-demand web-searched claim verification. Shown only for posts with checkable topics not already deep-checked. |
 | ⚠️ Approve + Include Warning | *Appears only when a fact-check or location flag exists* — approves and adds a `> [!warning]` callout to the note. |
 

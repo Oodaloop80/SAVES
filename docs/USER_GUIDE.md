@@ -51,6 +51,33 @@ When you paste an already-saved URL:
    fallback is the `/forget` command + re-pasting the URL — identical effect, minus the
    automatic `.bak` rename (retire the old note yourself if you care about the filename).
 
+## One save at a time — the review queue
+
+By default SAVES processes and shows **one approval card at a time**. When you `/crawl` a
+creator or paste a big batch, the URLs line up in a queue and the *next one isn't processed
+until you approve (or skip) the current card*. Why this matters:
+
+- **Your Discord stays calm** — no wall of 60 cards at once.
+- **Each save gets easier.** The next card is analyzed *after* you approve the current one, so
+  it reuses the folder you just set for that source **and** the tags (the analyzer is fed the
+  vault's existing tags, which update the moment a note is written). Ten recipes from one
+  creator: fix the path/tags on the first, and the rest increasingly match it — instead of
+  correcting all ten.
+- **It never loses its place.** The queue is saved to disk (`queue_state.json`), so a bot
+  restart, a crash, or you taking hours/days to approve doesn't drop anything — it picks right
+  back up. Nothing is ever auto-approved (that decision stays off); it simply waits for you.
+
+Controls:
+- **⏭️ Skip** (on every card) — not ready to decide? Skip sends this save to the **back of the
+  queue** and brings up the next one, so a tough call never blocks the rest. It comes back
+  around later (reprocessed fresh — any unapproved tweaks on the skipped card aren't kept).
+- **`/queue`** — see what's up for review now and how many are waiting behind it.
+- Each card footer shows its place: **"Save 3 of 12 · 9 still waiting."**
+- **Turn it off:** set `processing.serial_approval: false` in `config.yaml` for the old
+  all-at-once behavior (then restart the bot).
+
+A single pasted URL is unaffected — there's nothing ahead of it, so its card appears right away.
+
 ## Slash commands — where and how
 
 Slash commands are typed **in the message box of any text channel** in the "Bora's AI Ops"
@@ -123,6 +150,11 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
 - CLI equivalent (no Discord needed): `python scripts/crawl_creator.py <creator-url>` (add
   `--to-inbox` to actually feed the pipeline; without it, it only lists).
 
+### `/queue` — see the review queue
+
+- Reports the save currently up for review and how many are waiting behind it (see "One save
+  at a time" above). Ephemeral — only you see it.
+
 ## Approval cards — button nuances
 
 - **The card always shows exactly what will be written.** Every mutation (Add/Remove tags,
@@ -154,6 +186,8 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
   summary" works — the summary and takeaways are sent along). If it replies "cancelled",
   it includes the reason; if it replies "couldn't map that instruction", nothing changed —
   rephrase and try again (the edit session stays open).
+- **⏭️ Skip** — defer this save to the back of the queue and bring up the next one (see "One
+  save at a time"). Reprocessed when it comes back; unapproved edits on the skipped card aren't kept.
 - **🔍 Deep fact-check** — on-demand, web-searched; slow (1–3 min) on health/finance.
 - **⚠️ Approve + Include Warning** — only appears when a fact-check/location dispute was
   found; writes the note with a `> [!warning]` callout.

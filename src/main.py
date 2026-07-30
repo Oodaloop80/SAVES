@@ -50,8 +50,18 @@ async def main():
 
     state = ProcessingState(paths.get("state_file", "processing_state.json"))
     queue: asyncio.Queue = asyncio.Queue()
-    skip_duplicates = config.get("processing", {}).get("skip_duplicates", True)
-    queue_manager = QueueManager(queue, state, skip_duplicates=skip_duplicates)
+    proc_cfg = config.get("processing", {})
+    skip_duplicates = proc_cfg.get("skip_duplicates", True)
+    serial_approval = proc_cfg.get("serial_approval", True)
+    queue_manager = QueueManager(
+        queue, state,
+        skip_duplicates=skip_duplicates,
+        serial=serial_approval,
+        queue_state_path=paths.get("queue_state_file", "queue_state.json"),
+    )
+    # Re-queue anything that was still waiting when the bot last stopped (persisted), so a
+    # restart / long approval delay never loses the queue's place.
+    queue_manager.restore_runtime()
 
     bot = SAVESBot(config, prefs, state)
     # /forget needs to clear the queue manager's session dedup sets too, or a URL
@@ -110,7 +120,7 @@ async def main():
     startup_scan_task = asyncio.create_task(scan_inbox())
 
     processor_task = asyncio.create_task(
-        run_processor(queue, config, bot, state, prefs)
+        run_processor(queue_manager, config, bot, state, prefs)
     )
 
     discord_token = os.environ["DISCORD_BOT_TOKEN"]

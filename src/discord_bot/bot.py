@@ -100,6 +100,27 @@ class ApprovalView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, custom_id="skip", row=1)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Defer this save: retract the card and re-queue the URL to the back so the next save
+        shows now. In serial mode this releases the gate. The skipped URL is reprocessed when it
+        comes back around (any unapproved edits on this card are not carried over)."""
+        pending = self.bot.store.get_by_id(self.pending_id)
+        if not pending:
+            await interaction.response.send_message("This item has already been processed.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        self.bot.store.remove(pending.id)
+        if self.bot.queue_manager is not None:
+            self.bot.queue_manager.skip(pending.url)
+        try:
+            await interaction.edit_original_response(
+                content="⏭️ Skipped — moved to the back of the queue; it'll come back around.",
+                embed=None, view=None,
+            )
+        except discord.HTTPException:
+            pass
+
     @discord.ui.button(
         label="🔍 Deep fact-check", style=discord.ButtonStyle.primary,
         custom_id="deep_fact_check", row=1,
@@ -692,6 +713,40 @@ class SAVESBot(discord.Client):
         view = CrawlConfirmView(self, crawler, capped)
         await interaction.followup.send(embed=embed, view=view)
 
+    async def _queue_impl(self, interaction: discord.Interaction):
+        """/queue — how many saves are waiting for review, and which one is up now."""
+        if self.queue_manager is None:
+            await interaction.response.send_message(
+                "Queue tracking isn't available in this process.", ephemeral=True
+            )
+            return
+        st = self.queue_manager.status()
+        active_url = st["active"]
+        active_title = None
+        if active_url:
+            for item in self.store.get_all():
+                if normalize_url(item.url) == active_url:
+                    active_title = item.ai_result.get("title") or item.url
+                    break
+
+        lines: list[str] = []
+        if active_url:
+            lines.append(f"🧾 Reviewing: **{active_title or active_url}**")
+            waiting = st["waiting"]
+            if waiting:
+                total = st["total"]
+                tail = f" ({total} total this batch)" if total else ""
+                lines.append(f"{waiting} save(s) waiting behind it{tail}.")
+            else:
+                lines.append("Nothing else waiting.")
+        elif st["waiting"]:
+            lines.append(f"{st['waiting']} save(s) queued, processing shortly.")
+        else:
+            lines.append("✅ Queue is empty — nothing waiting for review.")
+        if not st["serial"]:
+            lines.append("_(one-at-a-time gating is OFF — cards post as soon as they're ready.)_")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
     def _register_commands(self) -> None:
         """Slash commands. /tag add — the only Discord surface with real search-as-you-type:
         slash-command option autocomplete. (Modal text inputs cannot autocomplete — a Discord
@@ -751,6 +806,15 @@ class SAVESBot(discord.Client):
             await bot._crawl_impl(interaction, url)
 
         self.tree.add_command(crawl_cmd)
+
+        @discord.app_commands.command(
+            name="queue",
+            description="Show how many saves are waiting for review in the approval queue",
+        )
+        async def queue_cmd(interaction: discord.Interaction):
+            await bot._queue_impl(interaction)
+
+        self.tree.add_command(queue_cmd)
 
     def _build_view(self, pending: PendingApproval) -> ApprovalView:
         """Pick the approval-view variant for an item: the warning variant when fact-check or
@@ -966,6 +1030,8 @@ class SAVESBot(discord.Client):
         if self.state is not None and self.state.is_done(pending.url):
             existing = self.state.path_for(pending.url) or "vault"
             self.store.remove(pending.id)
+            if self.queue_manager is not None:
+                self.queue_manager.resolve(pending.url)  # release the serial gate
             try:
                 await interaction.edit_original_response(
                     content=f"✅ Already saved to `{existing}`", embed=None, view=None
@@ -1041,6 +1107,10 @@ class SAVESBot(discord.Client):
 
         remove_url_from_inbox(paths.get("inbox_file", ""), pending.url)
         self.store.remove(pending.id)
+        # Release the serial-approval gate so the next queued save is processed now — and, being
+        # analyzed after this approval, it reuses the folder preference + tags just saved.
+        if self.queue_manager is not None:
+            self.queue_manager.resolve(pending.url)
 
         log_channel = self._discord_cfg.get("channel_log", "SAVES-logs")
         await send_log(self, log_channel, f"✅ Note created: `{note_path}`")

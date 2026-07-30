@@ -20,6 +20,9 @@ class PendingApproval:
     transcript: str | None
     discord_message_id: int | None
     created_at: float = field(default_factory=time.time)
+    # Snapshot of the serial-queue position when the card was sent: {position, total, waiting}.
+    # Rendered as the "Save X of N · M still waiting" footer. None for legacy/ungated cards.
+    queue_status: dict | None = None
 
 
 class PendingApprovalsStore:

@@ -12,6 +12,7 @@ paths:
   # container paths under /app/state that don't exist outside Docker).
   state_file: "processing_state.json"
   pending_approvals_file: "pending_approvals.json"
+  queue_state_file: "queue_state.json"
 
 preferences:
   file: "preferences.json"

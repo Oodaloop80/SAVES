@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_processor(
-    queue: asyncio.Queue,
+    queue_manager,
     config: dict,
     bot,
     state: ProcessingState,
@@ -42,9 +42,18 @@ async def run_processor(
     alert_channel = config.get("discord", {}).get("channel_alerts", "SAVES-alerts")
 
     while True:
-        url = await queue.get()
+        # Serial approval gate: if a card is already on the board awaiting approval, wait for
+        # it (approve / skip / forget releases the gate) before processing the next URL. This
+        # keeps Discord to one card at a time AND lets the next save's analysis reuse the folder
+        # preference + tags you just set. Survives restarts: the active card is persisted, and
+        # a card that turns out already-done or missing (crash window) is cleared, not waited on.
+        if queue_manager.serial:
+            await _await_active_clear(queue_manager, bot, state)
+
+        url = await queue_manager.get()
+        carded = False
         try:
-            await _process_one(
+            carded = await _process_one(
                 url, config, bot, state, prefs,
                 media_root, vault_root, cookies_dir, alert_channel,
             )
@@ -52,17 +61,43 @@ async def run_processor(
             logger.exception(f"Unhandled error processing {url}: {e}")
             state.mark_failed(url, str(e))
         finally:
-            queue.task_done()
-            platform = detect_platform(url)
-            delay = _get_delay(config, platform)
-            if delay:
-                await asyncio.sleep(delay)
+            queue_manager.task_done()
+
+        # A card was sent → it becomes the active gate holder (next loop waits on it). No card
+        # (failure / duplicate) → drop it from the waiting list and move straight on.
+        if carded:
+            queue_manager.mark_carded(url)
+        else:
+            queue_manager.mark_uncarded(url)
+
+        platform = detect_platform(url)
+        delay = _get_delay(config, platform)
+        if delay:
+            await asyncio.sleep(delay)
+
+
+async def _await_active_clear(queue_manager, bot, state: ProcessingState) -> None:
+    """Block until nothing is awaiting approval. Clears a stale active marker (its card is gone
+    or its URL is already done — e.g. a crash between carding and sending) instead of waiting
+    forever."""
+    while True:
+        active = queue_manager.active_url
+        if not active:
+            return
+        has_card = any(normalize_url(i.url) == active for i in bot.store.get_all())
+        if state.is_done(active) or not has_card:
+            queue_manager.clear_active_if(active)
+            return
+        await queue_manager.wait_for_gate()
 
 
 async def _process_one(
     url: str, config: dict, bot, state: ProcessingState, prefs: PreferencesStore,
     media_root: str, vault_root: str, cookies_dir: str, alert_channel: str,
-):
+) -> bool:
+    """Run the full pipeline for one URL and send its approval card. Returns True when a card
+    was sent (so the serial queue should gate on it), False on any failure/skip (move straight
+    on)."""
     url = normalize_url(url)
     platform = detect_platform(url)
     logger.info(f"Processing [{platform}] {url}")
@@ -83,7 +118,7 @@ async def _process_one(
         logger.warning("%s: %s", err_msg, url)
         state.mark_failed(url, err_msg)
         await send_alert(bot, alert_channel, f"Extraction timed out ({extract_timeout}s): {url}")
-        return
+        return False
     except Exception as e:
         err_msg = str(e)
         if any(code in err_msg for code in ("404", "not found", "removed")):
@@ -96,7 +131,7 @@ async def _process_one(
         else:
             state.mark_failed(url, err_msg)
             await send_alert(bot, alert_channel, f"Extraction failed: {url}\n{err_msg}")
-        return
+        return False
 
     # 1b. Enrich with embedded cross-platform media (e.g. a YouTube video in a Reddit post)
     content = await enrich_embedded_media(content, config)
@@ -207,7 +242,7 @@ async def _process_one(
         logger.error(f"AI analysis failed for {url}: {e}")
         await send_alert(bot, alert_channel, f"Claude API failed for {url}: {e}")
         state.mark_failed(url, f"AI failed: {e}")
-        return
+        return False
 
     # Backfill recipe_* fields from the page's authoritative schema.org Recipe data (exact
     # quantities + every step), so accuracy doesn't hinge on the model transcribing a long page.
@@ -277,10 +312,14 @@ async def _process_one(
         media_paths=embed_paths,
         transcript=transcript,
     )
+    # Snapshot the queue position for the "Save X of N · M still waiting" line on the card.
+    if getattr(bot, "queue_manager", None) is not None:
+        pending.queue_status = bot.queue_manager.snapshot()
 
     bot.store.add(pending)
     await bot.send_for_approval(pending)
     logger.info(f"Sent for approval: {url}")
+    return True
 
 
 def _get_delay(config: dict, platform: str) -> float:

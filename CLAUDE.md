@@ -51,7 +51,9 @@ SAVES/
 │   ├── credentials.py             # Loads .env, validates required keys from config
 │   ├── processor.py               # Core pipeline: extract→download→transcribe→AI→Discord
 │   ├── watcher.py                 # Watchdog Observer, 3s debounce, bridges to asyncio queue
-│   ├── queue_manager.py           # ProcessingState (JSON), QueueManager.enqueue_from_file()
+│   ├── queue_manager.py           # ProcessingState (JSON); QueueManager: enqueue_from_file(),
+│   │                              # persistent serial queue (queue_state.json: waiting/active/
+│   │                              # counters) + approval gate + skip/resolve for one-at-a-time
 │   ├── extractors/
 │   │   ├── base.py                # ExtractedContent dataclass, BaseExtractor ABC
 │   │   ├── __init__.py            # get_extractor(url, config) — routes to correct extractor
@@ -136,17 +138,22 @@ asyncio.Queue
 6. analyze_content()                → ai_result dict (note_type, folder, tags, etc.)
 7. fact_check() + check_travel()    → parallel, non-fatal
 8. new_pending() + send_for_approval() → Discord message with approval buttons
-   (processor returns; picks next URL)
+   → mark_carded(url): this card becomes the "active" gate holder
+   → SERIAL GATE: processor WAITS (does not process the next URL) until this card is
+     approved/skipped/forgotten (processing.serial_approval, default on)
 
 [Hours/days later — Discord button click]
     ▼
-bot._finalize()
+bot._finalize()  (✅ Approve)
     │
     ├── format_note()               → Markdown string (per-type template)
     ├── write_note()                → Obsidian vault file (atomic)
     ├── prefs.set(source_key, path) → learned preference saved
     ├── state.mark_done(url, path)  → processing_state.json updated
-    └── remove_url_from_inbox()     → URL removed from the inbox file
+    ├── remove_url_from_inbox()     → URL removed from the inbox file
+    └── queue_manager.resolve(url)  → releases the gate → next URL processes now
+                                      (analyzed AFTER this approval, so it reuses the
+                                       folder pref + tags just set — progressive easing)
 ```
 
 ---
@@ -180,6 +187,12 @@ fact_checking:
   model: "claude-sonnet-4-6"             # Cheaper model for fact-checking
   include_images: false                  # OCR already captured image content; raw pixels would double-bill
   web_search_topics: ["health", "finance"]  # Only web-search for these; recipes skip even if health triggered
+
+processing:
+  serial_approval: true   # ONE approval card at a time — the next URL isn't processed until the
+                          # current card is approved/skipped. Persisted to queue_state.json
+                          # (survives restarts). Keeps Discord calm on a /crawl/batch and lets
+                          # each save reuse the folder+tags just approved. false = old all-at-once.
 
 discord:
   auto_approve_on_timeout: false   # DECISION (Bora, 2026-07-04): stays false — approvals are
@@ -299,6 +312,9 @@ Every approval message has (in this order — Bora, 2026-07-05):
   instruction; the note's summary/takeaways are in the prompt so content-referencing
   instructions ("tag the coffee types in the summary") work. Lenient JSON parse
   (`_loads_lenient`) — a parse failure is an error+retry, never a fake "cancelled"
+- **⏭️ Skip** — defer this save: retract the card + `queue_manager.skip(url)` re-queues the URL
+  to the BACK and releases the serial gate so the next save shows now. Reprocessed when it comes
+  back (unapproved edits not carried over)
 - **🔍 Deep fact-check** — on-demand web-searched claim verification
 
 **Every mutation re-renders the original approval card** (`SAVESBot._refresh_card`: fetches
@@ -333,6 +349,33 @@ against `processing_state.json`, and posts a confirm card (Found/Already-saved/N
 the normal pipeline in the background (one approval card per recipe; paced by
 `crawl.rate_limit_seconds`). Per-creator scoped — never traverses to other creators. Needs the
 authenticated `cookies/provecho.co_profile/`. CLI equivalent: `scripts/crawl_creator.py`.
+
+**`/queue` slash command** — reports the serial review queue (see below): the save currently up
+for approval + how many wait behind it. Reads `QueueManager.status()`. Ephemeral.
+
+---
+
+## Serial approval queue (`queue_manager.py`, `processing.serial_approval`, default on)
+
+One approval card at a time. After a card is sent, `mark_carded(url)` makes it the **active** gate
+holder; `run_processor` calls `_await_active_clear()` and **does not process the next URL** until
+the active card is resolved. Resolution paths, each releasing the gate (`_gate.set()`):
+- **✅ Approve** → `_finalize` → `queue_manager.resolve(url)` (advances the "X of N" counter).
+- **⏭️ Skip** → retract card + `queue_manager.skip(url)` (re-queues the URL to the BACK).
+- **`/forget`** on the active URL → `queue_manager.forget(url)` clears active + releases.
+
+**Why:** keeps Discord calm on a `/crawl`/batch, and because the next save is analyzed only AFTER
+you approve the current one, it reuses the folder preference (`prefs.set` on approval) AND the tags
+(the analysis prompt is fed the vault's existing tags, which update on note write) — so a batch from
+one source gets progressively easier to approve.
+
+**Persistence + resilience:** `queue_state.json` holds `{waiting, active, streak_total, streak_done}`,
+written atomically on every mutation. On startup `restore_runtime()` re-queues the `waiting` URLs;
+`_await_active_clear` clears a stale `active` (already-done, or no card — the crash window between
+carding and sending) instead of deadlocking. A long/indefinite approval delay just waits — nothing
+is ever auto-approved (`auto_approve_on_timeout` stays false). Status line on each card: "Save X of N
+· M still waiting" (snapshot via `QueueManager.snapshot()`, stored on `PendingApproval.queue_status`).
+`serial_approval: false` restores the old all-at-once behavior.
 
 ---
 
@@ -565,6 +608,14 @@ and `auto_approve_on_timeout` stays `false`. Rationale: instant bug/quality feed
 tuning, and approvals are handled while the content is fresh in mind. The Batch API is a
 gated future phase (ROADMAP Phase 6) — do not pull deferral of any kind forward without a new
 explicit decision. Full rationale: `docs/ROADMAP.md` → "Decisions locked".
+
+**Refinement — serial approval gating (Bora, 2026-07-29).** The IMMEDIATE decision is about not
+batching/deferring the *current* item: a URL is still processed and its card fired the instant it
+is that URL's turn. `processing.serial_approval` (default on) serializes the QUEUE ORDER — the
+next URL waits until the current card is approved/skipped — it does NOT defer or batch the active
+item, and still never auto-approves. This is compatible with IMMEDIATE (one card is always live);
+it just prevents a `/crawl`/batch from firing all cards at once, and lets each save reuse the
+folder/tags just approved. See "Serial approval queue" above.
 
 **Decision notation discipline:** when a decision constrains future behavior, record it at the
 point of use (code comment) *and* in ROADMAP "Decisions locked", in the same commit.

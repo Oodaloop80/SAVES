@@ -24,6 +24,14 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   context on stale cards. Corollaries: `discord.auto_approve_on_timeout` stays `false`;
   never add notification batching/deferral without a new explicit decision. Batching *might*
   come later — that is Phase 6, and only Phase 6.
+- **Serial approval gating — refinement of IMMEDIATE (Bora, 2026-07-29).** `processing.serial_approval`
+  (default **on**) shows **one approval card at a time**: the next URL isn't processed until the
+  current card is approved/skipped/forgotten. This does NOT contradict IMMEDIATE — the active item
+  is still processed + carded the instant it's its turn, and nothing is auto-approved; it only
+  serializes QUEUE ORDER so a `/crawl`/batch doesn't fire all cards at once, and so each save reuses
+  the folder pref + tags just approved (progressive easing). Persisted to `queue_state.json`
+  (survives restarts). Controls: ⏭️ Skip button, `/queue` status, per-card "Save X of N" footer.
+  `serial_approval: false` = old all-at-once. (Shipped.)
 - **Runtime cost:** cut cost with **real-time** levers first (model routing, `effort`, prompt
   caching, fact-check gating) so results stay instant during tuning. The **Batch API** (50%
   off but async — no instant results) is **deferred to a final phase**, adopted only once
