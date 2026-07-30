@@ -12,4 +12,5 @@ python-dotenv>=1.0.0
 aiofiles>=23.0.0
 requests>=2.31.0
 flask>=3.0.0
-pillow-heif>=0.16.0
+Pillow>=10.0.0        # ingredient-icon downscaling → base64 data URIs (downloader.py)
+pillow-heif>=0.16.0   # HEIC/HEIF decode; also pulls in Pillow, but declare it explicitly

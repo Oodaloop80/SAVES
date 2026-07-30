@@ -1,5 +1,12 @@
 # Deploying SAVES to the Synology NAS (Docker)
 
+> ▶ **Superseded by `docs/PROD_ROLLOUT.md`** — the fuller guided rollout that adds the serial
+> approval queue, `#SAVES-inbox` + the Android/Tasker webhook, the `/crawl` provecho-profile
+> setup, a full acceptance-test matrix, and rollback. Use **PROD_ROLLOUT.md** for a live
+> deploy. This file remains as the terse core-install reference; the two critical deltas it now
+> reflects: cookies mount is **`:rw`** (browser profiles need write), and `/crawl` needs the
+> **provecho profile** copied to the NAS (step 3).
+
 The step-by-step for standing up **PROD** — the pipeline running as a Docker container on the
 NAS, against the **real** Obsidian vault. This is a *fresh implementation*, not a migration:
 the real vault and media already live on the NAS; DEV's state describes a different (test)
@@ -92,7 +99,13 @@ Cookies are gitignored, so the clone has none. Copy your workstation files into 
 ```bash
 # from the WORKSTATION:
 scp cookies/*.txt <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
+# for /crawl — the provecho browser profile (large; cross-OS caveat in PROD_ROLLOUT §1.4):
+scp -r cookies/provecho.co_profile <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
 ```
+
+The `cookies/` mount is **`:rw`** (a browser profile is a live Chromium user-data-dir Playwright
+writes to). If `/crawl` shows provecho "locked" in PROD, the Windows-captured profile didn't port
+— re-capture under Linux (WSL2/WSLg); see `PROD_ROLLOUT.md` §1.4.
 
 Optional: copy `preferences.json` into the **state dir** (step 4) to keep learned folder
 routing — it stores vault-relative paths, so it transfers cleanly. Do **not** copy

@@ -76,6 +76,22 @@ echo "[4] Platform cookies"
 n=$(ls cookies/*.txt 2>/dev/null | wc -l | tr -d ' ')
 if [ "${n:-0}" -gt 0 ]; then ok "$n cookie file(s) in cookies/"
 else warn "no cookies/*.txt — Instagram/TikTok/Facebook will fail (Reddit/YouTube/web are fine)"; fi
+# The cookies dir must be WRITABLE: an authenticated site login is a Chromium *profile*
+# dir Playwright writes to (compose mounts cookies :rw). A read-only cookies dir breaks
+# /crawl + login-gated generic extraction even though the .txt files themselves are static.
+if [ -d cookies ]; then
+  if touch cookies/.saves_write_test 2>/dev/null; then
+    rm -f cookies/.saves_write_test; ok "cookies/ is writable (browser profiles need this)"
+  else bad "cookies/ NOT writable — /crawl + login-gated sites can't launch the browser profile"; fi
+fi
+# Provecho crawl needs the authenticated persistent profile (captured on a machine with a
+# browser, then copied here — the NAS is headless). Warn if it's absent or looks empty.
+prof=$(ls -d cookies/*_profile 2>/dev/null | head -1)
+if [ -n "$prof" ] && [ -d "$prof" ]; then
+  if [ -d "$prof/Default" ] || [ -f "$prof/Default/Preferences" ] || [ -n "$(ls -A "$prof" 2>/dev/null)" ]; then
+    ok "browser profile present: $prof"
+  else warn "$prof exists but looks empty — /crawl provecho auth will fail"; fi
+else warn "no cookies/<host>_profile/ — /crawl (provecho) needs one; copy it from a workstation capture"; fi
 
 # --- 5. Whisper reachability ------------------------------------------------
 echo "[5] Whisper server (workstation)"

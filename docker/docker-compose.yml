@@ -19,10 +19,14 @@ services:
       - "${VAULT_HOST}:/vault:rw"
       - "${MEDIA_HOST}:/media:rw"
       # One DIRECTORY for all runtime state (processing_state.json, pending_approvals.json,
-      # preferences.json). Never bind single files: Docker creates a directory if the host
-      # file is missing, and os.replace() onto a file-mountpoint fails with EBUSY.
+      # preferences.json, queue_state.json). Never bind single files: Docker creates a directory
+      # if the host file is missing, and os.replace() onto a file-mountpoint fails with EBUSY.
       - "${STATE_HOST}:/app/state:rw"
-      - ../cookies:/app/cookies:ro
+      # RW, not RO: the .txt cookie files are read-only in spirit, but the authenticated
+      # provecho login is a Chromium *profile* directory (cookies/<host>_profile/) that
+      # Playwright must WRITE to at runtime (lock files, IndexedDB). A :ro mount makes /crawl
+      # and login-gated generic sites fail to launch the browser context.
+      - ../cookies:/app/cookies:rw
       - ../config.yaml:/app/config.yaml:ro
       - ../logs:/app/logs:rw
       - instaloader-session:/root/.config/instaloader

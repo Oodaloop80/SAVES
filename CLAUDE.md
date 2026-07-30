@@ -611,10 +611,13 @@ Whisper server (`python scripts\whisper_server.py --model large-v3-turbo`). `N:\
 view of the NAS when needed.
 
 **NAS (Synology, Docker):** `cp docker/.env.example docker/.env` (adjust paths), create the
-state dir, then `docker-compose up --build -d` from `docker/`. **Full runbook:
-`docs/DEPLOY_NAS.md`** (SSH, cookies, firewall, the DEV/PROD single-Discord-token conflict, live
-test); run `sh scripts/preflight_nas.sh` from the repo root first to catch a bad mount / missing
-secret / unreachable Whisper before the build.
+state dir, then `docker-compose up --build -d` from `docker/`. **Guided rollout (the current one):
+`docs/PROD_ROLLOUT.md`** — plan + full step-by-step + acceptance-test matrix (core, serial queue,
+`#SAVES-inbox`, webhook, `/crawl`) + rollback; decisions locked (direct one-token cutover,
+Compose-only, full scope, fresh dedup + keep prefs). `docs/DEPLOY_NAS.md` is the terse core-install
+reference it supersedes. Run `sh scripts/preflight_nas.sh` from the repo root first (mounts /
+secrets / cookies-writable + provecho profile / unreachable Whisper). **Cookies mount is `:rw`** —
+the provecho browser profile is a live Chromium user-data-dir Playwright writes to.
 
 **Mobile capture:** iOS + Android share a URL into the local vault's `0 - INBOX/SAVES.md` via
 the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync bridges it to the NAS copy
