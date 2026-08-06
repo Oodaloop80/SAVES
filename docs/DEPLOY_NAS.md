@@ -46,16 +46,21 @@ Enable SSH (DSM → **Control Panel → Terminal & SNMP → Enable SSH service**
 workstation:
 
 ```bash
-ssh <you>@192.168.1.<nas>          # your NAS LAN IP
+ssh <you>@192.168.1.201          # the NAS (also hosts the Forgejo forge)
 ```
 
 Pick a working dir on a real volume (not `/tmp`) and clone:
 
 ```bash
 sudo mkdir -p /volume1/docker/saves && cd /volume1/docker/saves
-sudo git clone https://github.com/Oodaloop80/SAVES.git app
+sudo git clone https://192.168.1.201:3443/<user>/SAVES.git app
 cd app
 ```
+
+> **The remote is the self-hosted Forgejo forge on this same NAS** (GitHub retired
+> 2026-08-05). Two prerequisites the clone will fail without: the **step-ca root CA** in the
+> NAS trust store, and a **PAT** (`repository: Read`) as the password. Full sequence with the
+> `curl` verification step: `PROD_ROLLOUT.md` step 1. Forge build: `docs/FORGEJO.md`.
 
 - No `git` on the NAS? Either install **Git Server** from Package Center, or copy the repo
   over SMB from the workstation into `/volume1/docker/saves/app` (skip `.git` if you do).
@@ -98,9 +103,9 @@ Cookies are gitignored, so the clone has none. Copy your workstation files into 
 
 ```bash
 # from the WORKSTATION:
-scp cookies/*.txt <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
+scp cookies/*.txt <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
 # for /crawl — the provecho browser profile (large; cross-OS caveat in PROD_ROLLOUT §1.4):
-scp -r cookies/provecho.co_profile <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
+scp -r cookies/provecho.co_profile <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
 ```
 
 The `cookies/` mount is **`:rw`** (a browser profile is a live Chromium user-data-dir Playwright

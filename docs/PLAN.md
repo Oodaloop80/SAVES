@@ -1,5 +1,11 @@
 # SAVES — Path-to-Production Plan & Operating Model
 
+> **Historical record of the 2026-07 planning session — read for rationale, not for current
+> procedure.** Two things below are now superseded: the GitHub-API/patch-delivery mechanics
+> (Claude Code runs locally and edits in place; **`origin` is self-hosted Forgejo** as of
+> 2026-08-05 — `CLAUDE.md` → Git Workflow, `docs/FORGEJO.md`), and the deploy steps
+> (`docs/PROD_ROLLOUT.md` is the live runbook). Current status lives in `docs/ROADMAP.md`.
+
 ## Context
 
 SAVES (the URL → Obsidian-note archiving pipeline) is no longer greenfield. Three parallel

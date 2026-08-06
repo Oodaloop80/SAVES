@@ -1,9 +1,11 @@
-version: "3.9"
-
 # PORTABILITY: this file contains NO machine-specific paths. Host locations come from
 # docker/.env (copy docker/.env.example and fill in — Compose reads it automatically
 # when you run compose from this directory). config.yaml uses the canonical container
 # paths (/vault, /media, /app/state) so the same image + config deploy anywhere.
+#
+# NO top-level `version:` key. Compose V2 deprecates it, and its presence makes Compose
+# reject the v2-style service-level `mem_limit` below. (Same finding as the Forgejo
+# stack on this NAS — docs/FORGEJO.md §6.)
 services:
   saves-automation:
     build:
@@ -31,6 +33,20 @@ services:
       - ../logs:/app/logs:rw
       - instaloader-session:/root/.config/instaloader
       - whisper-cache:/root/.cache/whisper
+
+    # DECISION (Bora, 2026-08-05): cap memory. This NAS is no longer single-tenant — it also
+    # runs the Forgejo forge (2g) + PostgreSQL (1g). Chromium/Playwright + ffmpeg were
+    # previously uncapped, so one runaway extraction could OOM the forge alongside SAVES.
+    # Tune SAVES_MEM_LIMIT in docker/.env against actual NAS RAM (preflight [6] reports it).
+    mem_limit: ${SAVES_MEM_LIMIT:-3g}
+
+    # WARNING: NEVER add `cpus:` (or cpu_quota / deploy.resources.limits.cpus) here. Synology
+    # kernels are built without CFS bandwidth control, so any CPU quota is rejected by the
+    # daemon — "NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler"
+    # — and the deploy FAILS OUTRIGHT. Memory limits work; CPU limits do not. Use Container
+    # Manager's CPU-priority setting (cpu_shares) if you need relative weighting.
+    # Confirmed on DSM 7.3.2 / Container Manager 24.0.2-1606 — docs/FORGEJO.md §6.
+
     logging:
       driver: json-file
       options:

@@ -102,6 +102,72 @@ if [ -n "$health" ]; then
   else bad "NOT reachable: $health — start the workstation Whisper server AND open inbound TCP 5000 in Windows Firewall"; fi
 else warn "could not parse transcription.remote_url from config.yaml"; fi
 
+# --- 6. NAS co-tenancy: memory headroom + Synology compose traps -------------
+# Since 2026-08-05 this NAS also hosts the Forgejo forge (Forgejo 2g + PostgreSQL 1g).
+# SAVES is no longer alone, so an uncapped Chromium can OOM a neighbour. Two Synology
+# specifics are hard deploy failures rather than warnings — see docs/FORGEJO.md §6.
+echo "[6] NAS resources + Synology compose traps"
+
+# 6a. A CPU quota is REJECTED BY THE DAEMON on Synology (no CFS bandwidth control):
+#     "NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler".
+if grep -Eq '^[[:space:]]*(cpus|cpu_quota|cpu_period):' docker/docker-compose.yml 2>/dev/null; then
+  bad "docker-compose.yml sets a CPU quota — Synology kernels REJECT it and the deploy will fail. Remove it."
+else
+  ok "no CPU quota in compose (required on Synology)"
+fi
+
+# 6b. A top-level `version:` key makes Compose V2 discard the v2-style mem_limit.
+if grep -Eq '^version:' docker/docker-compose.yml 2>/dev/null; then
+  bad "docker-compose.yml has a top-level 'version:' key — it makes Compose V2 ignore mem_limit. Remove it."
+else
+  ok "no top-level 'version:' key"
+fi
+
+# 6c. Memory headroom. mem_limit only protects the host if it leaves room for DSM and
+#     for whatever else is running (Forgejo/Postgres today).
+mem_kb=$(grep -E '^MemTotal:' /proc/meminfo 2>/dev/null | awk '{print $2}')
+lim=$(grep -E '^SAVES_MEM_LIMIT=' docker/.env 2>/dev/null | head -1 | cut -d= -f2-)
+[ -z "$lim" ] && lim="3g"
+# normalise "3g" / "3G" / "3072m" -> MB
+# normalise to whole MB — int() so the $(( )) arithmetic below never sees a float
+lim_mb=$(printf '%s' "$lim" | awk '
+  /[gG]$/ { sub(/[gG]$/,""); print int($0 * 1024); next }
+  /[mM]$/ { sub(/[mM]$/,""); print int($0);        next }
+  { print int($0 / 1048576) }')
+[ -n "$lim_mb" ] || lim_mb=0
+if [ -n "$mem_kb" ]; then
+  total_mb=$((mem_kb / 1024))
+  ok "NAS RAM: ${total_mb} MB total; SAVES_MEM_LIMIT=${lim} (~${lim_mb} MB)"
+  # Sum the memory limits already claimed by other running containers.
+  other_mb=0
+  if command -v docker >/dev/null 2>&1; then
+    for b in $(docker ps -q 2>/dev/null); do
+      nm=$(docker inspect -f '{{.Name}}' "$b" 2>/dev/null | sed 's#^/##')
+      [ "$nm" = "saves_app" ] && continue
+      mb=$(docker inspect -f '{{.HostConfig.Memory}}' "$b" 2>/dev/null)
+      [ -n "$mb" ] && [ "$mb" -gt 0 ] 2>/dev/null && other_mb=$((other_mb + mb / 1048576))
+    done
+    [ "$other_mb" -gt 0 ] && ok "other containers reserve ~${other_mb} MB (e.g. forgejo + forgejo-db)"
+  fi
+  # Leave ~1.5 GB for DSM itself.
+  if [ $((lim_mb + other_mb + 1536)) -gt "$total_mb" ]; then
+    warn "over-committed: SAVES ${lim_mb} MB + others ${other_mb} MB + ~1536 MB for DSM > ${total_mb} MB RAM. Lower SAVES_MEM_LIMIT in docker/.env or add RAM."
+  else
+    ok "memory headroom looks sane"
+  fi
+else
+  warn "could not read /proc/meminfo — check RAM headroom manually (docs/FORGEJO.md §6)"
+fi
+
+# 6d. Compose file must actually parse with the host's compose binary.
+if docker compose version >/dev/null 2>&1; then
+  if docker compose -f docker/docker-compose.yml config >/dev/null 2>&1; then
+    ok "'docker compose config' parses the stack"
+  else
+    bad "'docker compose -f docker/docker-compose.yml config' FAILED — run it to see the error before deploying"
+  fi
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32mPre-flight PASSED — safe to run: docker compose up --build -d\033[0m\n'

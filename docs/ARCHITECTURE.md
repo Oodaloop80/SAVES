@@ -396,10 +396,15 @@ machine = new `docker/.env`, nothing else.
 ### Git (the workflow that keeps us out of trouble)
 
 - Claude **commits locally; you push** — always your manual step.
-- Patches (when delivered instead of direct edits): `git apply patches\name.patch` (never
-  `git am`), filenames underscores-only with the base SHA:
-  `saves_<topic>__base_<shortsha>.patch` — check `git rev-parse --short HEAD` matches before
-  applying. Full protocol: **CLAUDE.md → Git Workflow**.
+- **Remote = self-hosted Forgejo on the NAS** (`https://192.168.1.201:3443/<user>/SAVES.git`).
+  GitHub retired 2026-08-05. HTTPS + PAT only (SSH disabled on the forge); clients must trust
+  the step-ca **root**. Forge build/hardening: `docs/FORGEJO.md`. SAVES-side consequences:
+  **CLAUDE.md → Git Workflow**.
+- Claude Code now edits files **in place** on the workstation, so the old patch-delivery and
+  Anti-Stale Protocol are **obsolete** (they existed only because the web sandbox couldn't
+  push). Anything in `patches/` is historical.
+- ⚠️ Retiring GitHub removed the off-site copy: `/volume1/docker/forgejo` (repo tree +
+  `pg_dump`) must be in the backup set — `FORGEJO.md` → Backups.
 
 ---
 

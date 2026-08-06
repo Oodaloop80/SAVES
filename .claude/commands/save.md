@@ -20,7 +20,8 @@ the resulting note to the repo.
 4. **On PASS**: 
    - Ask for confirmation to write the note for real (re-run without `--dry-run`).
    - Commit: `git add -A && git commit -m "Archive: <note title from the frontmatter>"`.
-   - Push: `git push origin main`.
+   - **Do NOT push.** Claude commits; Bora pushes (`CLAUDE.md` → Git Workflow). The remote is
+     the LAN-only Forgejo forge and needs Bora's PAT — just report that the commit is ready.
 
 5. **On ISSUES**: 
    - List each issue (e.g., "Media failed to download: Instagram cookies expired").
@@ -53,9 +54,9 @@ Commit? (y/n): y
 → [re-runs without --dry-run; writes to vault]
 → git add -A
 → git commit -m "Archive: Smoked Brisket Stall Guide"
-→ git push origin main
 
 Done. Note written to SAVES/COOKING/BBQ/smoked-brisket-stall-guide.md
+Committed locally — run `git push origin main` when you're ready.
 ```
 
 ## Notes

@@ -53,6 +53,26 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   note back. This **replaces** the earlier SMB-append-over-Tailscale plan — it works off the
   home network with no VPN and is identical on both OSes. Dependency: an Obsidian client must
   keep the NAS vault synced (the Sync↔NAS bridge). Runbook: `docs/MOBILE_SHORTCUTS.md`.
+- **Git lives on self-hosted Forgejo; GitHub is retired (Bora, 2026-08-05).** `origin` is
+  `https://192.168.1.201:3443/<user>/SAVES.git` — Forgejo 15 LTS + PostgreSQL 17, hardened
+  non-root, on the same NAS SAVES deploys to. Build + locked infra decisions: `docs/FORGEJO.md`.
+  Consequences that constrain future work:
+  (a) **HTTPS + PAT only** — SSH is disabled on the forge; clients must trust the step-ca
+      **root**. Never paper over a TLS failure with `http.sslVerify=false`.
+  (b) **The forge is LAN-only with no port-forward**, so **Claude Code on the web can no longer
+      reach this repo** — local Claude Code is the only development path. The patch-delivery
+      and Anti-Stale Protocol are obsolete and have been removed from `CLAUDE.md`.
+  (c) **No `gh` CLI / GitHub Actions integration.** Forgejo's API is Gitea/GitHub-*shaped*,
+      not a drop-in. CI runners are deferred to the future Proxmox host, and if ever run on the
+      NAS must use a **DinD sidecar — never the host Docker socket**.
+  (d) ⚠️ **There is no longer an off-site copy of the repo.** `/volume1/docker/forgejo` (repo
+      tree + a `pg_dump`) must be in the backup set, or a NAS loss loses the history.
+- **NAS resource limits: `mem_limit` yes, `cpus:` never (Bora, 2026-08-05).** Discovered during
+  the Forgejo build: Synology kernels lack CFS bandwidth control, so *any* CPU quota is a **hard
+  deploy failure** (`NanoCPUs can not be set…`), not a warning. `docker/docker-compose.yml`
+  therefore has no `cpus:` and — because the key would otherwise be discarded by Compose V2 —
+  **no top-level `version:` key** either. `saves_app` declares `SAVES_MEM_LIMIT` (default `3g`)
+  now that it shares the NAS with the forge. `preflight_nas.sh` `[6]` enforces all three.
 
 ---
 
@@ -184,6 +204,15 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       its note (state, not the vault, is the duplicate authority). 123 no-token tests.
 - [ ] End-to-end live Discord run (paste → approve → note written) for every button
       (now incl. card-refresh-on-edit, `/forget`, + `/tag add` autocomplete)
+- [x] **Self-hosted git forge stood up (Bora, 2026-08-05):** Forgejo 15 LTS + PostgreSQL 17 on
+      the NAS (`https://192.168.1.201:3443`), hardened non-root (`cap_drop: ALL`,
+      `no-new-privileges`, `read_only`, internal-only DB network), step-ca TLS, HTTPS+PAT only.
+      **GitHub retired.** Build + locked infra decisions: `docs/FORGEJO.md`; SAVES-side
+      consequences: `CLAUDE.md` → Git Workflow, "Decisions locked" above.
+      Follow-on SAVES changes shipped in the same commit: `docker-compose.yml` drops the
+      top-level `version:` key and adds `mem_limit: ${SAVES_MEM_LIMIT:-3g}` (the NAS is no
+      longer single-tenant); `preflight_nas.sh` gains check `[6]` (RAM headroom vs other
+      containers, no-`cpus:`, no-`version:`, `compose config` parse).
 - [ ] Docker deploy to NAS (`docker-compose up --build`); verify mounts + vault write + Whisper reach
       — runbook `docs/DEPLOY_NAS.md`; preflight `scripts/preflight_nas.sh`; `.dockerignore` added
       (trims context + keeps secrets/state out of image). Go-live gate: stop DEV bot first

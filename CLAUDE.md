@@ -10,7 +10,8 @@ to a Synology NAS vault.
 
 **Owner:** Bora (Oodaloop80)
 **Runtime:** Docker on Synology NAS (python:3.11-slim)
-**Dev machine:** Windows workstation. Repo at `C:\DEV\Apps\SAVES\SAVES_app`; patch files go in `C:\DEV\Apps\SAVES\SAVES_app\patches`
+**Dev machine:** Windows workstation. Repo at `C:\DEV\Apps\SAVES\SAVES_app`
+**Git remote:** self-hosted **Forgejo** on the NAS — `https://192.168.1.201:3443/<user>/SAVES.git` (GitHub retired 2026-08-05; see "Git Workflow" and `docs/FORGEJO.md`)
 **Workstation IP (Whisper server):** `192.168.1.90`
 
 ---
@@ -616,8 +617,22 @@ state dir, then `docker-compose up --build -d` from `docker/`. **Guided rollout 
 `#SAVES-inbox`, webhook, `/crawl`) + rollback; decisions locked (direct one-token cutover,
 Compose-only, full scope, fresh dedup + keep prefs). `docs/DEPLOY_NAS.md` is the terse core-install
 reference it supersedes. Run `sh scripts/preflight_nas.sh` from the repo root first (mounts /
-secrets / cookies-writable + provecho profile / unreachable Whisper). **Cookies mount is `:rw`** —
-the provecho browser profile is a live Chromium user-data-dir Playwright writes to.
+secrets / cookies-writable + provecho profile / unreachable Whisper / RAM headroom + compose
+sanity). **Cookies mount is `:rw`** — the provecho browser profile is a live Chromium
+user-data-dir Playwright writes to.
+
+**NAS co-tenancy (since 2026-08-05): the NAS also runs the Forgejo forge.** `192.168.1.201`,
+`/volume1/docker/forgejo`, host port `3443`, ~3 GB of memory limits (Forgejo 2 GB + Postgres
+1 GB). Two consequences for SAVES:
+- **`saves_app` now declares `mem_limit`** (`SAVES_MEM_LIMIT`, default `3g`, set in
+  `docker/.env`). Chromium + ffmpeg were previously uncapped; on a shared box that risks
+  OOM-killing the forge. Size it against actual NAS RAM — preflight `[6]` reports both.
+- **Never add a `cpus:` key to `docker/docker-compose.yml`.** Synology kernels are built
+  without CFS bandwidth control, so *any* CPU quota is a **hard deploy failure**
+  (`NanoCPUs can not be set…`), not a warning. Memory limits work; CPU limits do not.
+  Discovered during the Forgejo build — full writeup in `docs/FORGEJO.md` §6.
+  The same finding is why `docker-compose.yml` has **no top-level `version:` key**: it makes
+  Compose V2 reject the v2-style `mem_limit`.
 
 **Mobile capture:** iOS + Android share a URL into the local vault's `0 - INBOX/SAVES.md` via
 the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync bridges it to the NAS copy
@@ -671,6 +686,11 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
   component's responsibility, threading model, or a scaling characteristic changes.
 - `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;
   record constraining decisions under "Decisions locked".
+- `docs/FORGEJO.md` — the self-hosted **git forge** this repo lives on (Forgejo 15 LTS +
+  PostgreSQL 17, hardened non-root, on the same NAS). Infrastructure, not application: update
+  it when the forge's version pins, identity model, TLS/cert path, firewall, or backup
+  procedure changes. SAVES-side consequences (remote URL, PAT auth, CA trust) belong in
+  this file's "Git Workflow" section.
 - Module/function docstrings + code comments — the point-of-use record for any non-obvious
   contract (e.g. the tag-index threading contract, the zero-delete rule).
 Rule of thumb before committing: *if someone read only the docs, would they now describe the
@@ -734,59 +754,66 @@ loop's first user message. Back-to-back posts and JSON retries benefit automatic
 
 ## Git Workflow (Important)
 
-This repo is developed via Claude Code on the web. Claude cannot push to GitHub
-directly — the container has no credentials. After each session:
+**The remote is self-hosted Forgejo on the NAS. GitHub is retired (Bora, 2026-08-05.)**
 
-**Preferred: patch delivery**
-```bash
-git apply patches\<patch-file>   # USE git apply, NOT git am
-git add -A
-git commit -m "..."
-git push origin main
+```
+origin  https://192.168.1.201:3443/<user>/SAVES.git   (Forgejo 15 LTS, LAN-only)
 ```
 
-`git apply` is used (not `git am`) because `git am` additionally requires the committer
-email to match the patch header, which causes failures in this environment.
+Build, hardening rationale, cert/CA model, PAT creation, and backup/upgrade procedures:
+**`docs/FORGEJO.md`** (v3, verified against the real hardware 2026-08-05). That doc is the
+authority on the forge itself; this section covers only how *this repo* uses it.
 
-**Patch filename convention:** underscores only, NO dashes. File delivery strips
-dashes — `saves-foo.patch` arrives as `savesfoo.patch` and breaks the command.
-Name patches `saves_<topic>__base_<shortsha>.patch`, where `<shortsha>` is the commit
-the patch was built against (see Anti-Stale Protocol below).
+### The loop
 
-**If the patch fails** (context mismatch from local edits): use the full-file deliveries
-instead — Claude delivers the complete file built from a fresh GitHub clone, safe to
-overwrite directly.
+Claude Code runs **locally on the Windows workstation** with direct filesystem and `git`
+access, so it edits files in place — no patch files, no tarballs, no clone-staleness class
+of bug. After each session:
 
-### Anti-Stale Protocol (MANDATORY for Claude — both failures it prevents happened)
+```powershell
+git status                      # review what Claude changed
+git log --oneline -3            # Claude has already committed
+git push origin main            # ← YOUR step
+```
 
-The container's clone goes stale the instant the user pushes from their machine. Two
-patch failures were caused by Claude building patches against a clone from earlier in
-the session instead of the live remote. To prevent recurrence, Claude MUST:
+**Pushing is always your manual step. Claude commits; you push.** (Unchanged — this is a
+working preference, not a transport limitation.)
 
-1. **Verify live HEAD before EVERY patch or file delivery.** The git proxy in this
-   environment is unreliable (token expires mid-session). Use the GitHub REST API instead:
-   ```bash
-   curl -sS "https://api.github.com/repos/Oodaloop80/SAVES/commits/main" | python3 -c \
-     "import sys,json; d=json.load(sys.stdin); print(d['sha'][:7])"
-   ```
-   Then download the live tarball:
-   ```bash
-   curl -sL "https://api.github.com/repos/Oodaloop80/SAVES/tarball/main" -o /tmp/saves.tar.gz
-   mkdir -p /tmp/SAVES-fresh && tar -xzf /tmp/saves.tar.gz -C /tmp/SAVES-fresh --strip-components=1
-   ```
-   Build all patches and file deliveries from `/tmp/SAVES-fresh`. Never reuse a clone from
-   earlier in the session.
+### Things that are different now that the forge is LAN-only
 
-2. **Stamp the base SHA in the patch filename:** `saves_<topic>__base_<shortsha>.patch`.
+1. **Auth is HTTPS + a Personal Access Token.** SSH is disabled on the forge by design
+   (`DISABLE_SSH=true`, no port published — `FORGEJO.md` Locked Decision 6). Username = your
+   Forgejo username, password = **the token**, cached by `credential.helper manager` on
+   Windows. Use a **dedicated, repository-scoped PAT for Claude Code** so it can be revoked
+   without rotating your primary credential (`FORGEJO.md` §13).
 
-3. **User's pre-apply check:** before `git apply`, confirm `git rev-parse --short HEAD`
-   matches the `base_<shortsha>` in the filename. If they differ, the patch is stale —
-   tell Claude your current HEAD and ask for a rebuild rather than forcing it.
+2. **Clients must trust the step-ca root**, not the intermediate. Without it every `git`
+   operation fails TLS verification. Installed per `FORGEJO.md` Phase 11 — and on Windows,
+   Git needs the *extra* step there (Git for Windows ships its own OpenSSL CA bundle and does
+   not read the Windows store unless told to). **Never "fix" a TLS error with
+   `http.sslVerify=false`** — that silently disables the protection the whole build exists to
+   provide; fix the trust store instead.
 
-4. **One patch per delivery.** Don't leave multiple patches in `patches\`; running an old
-   one first wastes a cycle (the atomic failure is harmless but confusing).
+3. **`gh` CLI and GitHub-specific commands do not work.** No `gh pr`, no GitHub Actions
+   integration. Forgejo's API is Gitea/GitHub-*shaped* but is not a drop-in. If a workflow
+   needs a PR, use the Forgejo web UI at `https://192.168.1.201:3443/`.
 
-Note: a SessionStart hook only syncs at session *start*, so it does NOT fix mid-session
-staleness (which is what bit us). The verify-before-deliver rule above is the real fix.
+4. **Claude Code on the web can no longer reach this repo.** The forge is LAN-only with no
+   port-forward (`FORGEJO.md` Locked Decision 11), so cloud sessions have no remote to pull
+   from. **Local Claude Code is now the only development path.** The old patch-delivery and
+   Anti-Stale Protocol that this section used to describe existed solely to work around the
+   web sandbox's lack of push credentials — both are **obsolete and have been removed**. If
+   `patches/` still exists, it is historical.
 
-Pushing is always your manual step. Claude commits; you push.
+5. **⚠️ The repo's only copies are the NAS forge and your local clones.** Retiring GitHub
+   removed the off-site copy. `/volume1/docker/forgejo` (repo tree + a `pg_dump` of the
+   database) **must** be in your backup set — see `FORGEJO.md` → Backups. A NAS loss without
+   that backup loses the history; the working tree on the workstation would be all that
+   survives.
+
+### Deploy interaction
+
+The NAS pulls SAVES from the *same NAS's* Forgejo (`git pull` in
+`/volume1/docker/saves/app`). Forgejo must therefore be up to update SAVES — it is
+`restart: unless-stopped`, so this only bites during a forge outage or upgrade. It does
+**not** affect a running SAVES container, which needs no git access at all.

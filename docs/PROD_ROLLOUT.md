@@ -17,6 +17,8 @@ and **rollback**. Self-contained — follow it top to bottom.
 | Orchestration | **Docker Compose only** | No Komodo/Dozzle/DOCO-CD in this plan — compose is the whole deployment. (Optional-later note at the end, no steps.) |
 | Scope | **Everything built** | Core pipeline + serial approval queue + `#SAVES-inbox` + Android/Tasker webhook + `/crawl` (needs the provecho login profile on the NAS). |
 | State/history | **Fresh dedup, keep prefs** | Start with EMPTY `processing_state.json` (so real-vault saves aren't blocked by DEV's test-vault history); copy **`preferences.json`** so learned folder routing carries over. |
+| Code source | **Self-hosted Forgejo** (added 2026-08-05) | The NAS clones SAVES from its *own* Forgejo at `https://192.168.1.201:3443/`, not GitHub (retired). Needs the step-ca root CA in the NAS trust store + a PAT. Build details: `docs/FORGEJO.md`. |
+| Resource limits | **`mem_limit` yes, `cpus:` never** | The NAS is now shared with the forge (Forgejo 2 GB + Postgres 1 GB), so `saves_app` declares `SAVES_MEM_LIMIT` (default `3g`). A CPU quota is a **hard deploy failure** on Synology — see §1.5. |
 
 ---
 
@@ -60,10 +62,17 @@ Nothing about the code changes per host — `config.yaml` uses canonical contain
 
 Repo clone on the NAS: **`/volume1/docker/saves/app`**.
 
+The NAS (`192.168.1.201`) also hosts the **Forgejo forge** under `/volume1/docker/forgejo`
+(host port `3443`). The two stacks are independent — separate Compose projects, separate
+volumes, no shared network — but they share RAM and disk. See §1.5.
+
 ## 1.3 Prerequisites (have these before you start)
 
 - **SSH admin** access to the NAS; **DSM 7.2+ Container Manager** (Docker Compose v2) or the older Docker package.
 - Your **`ANTHROPIC_API_KEY`** and **`DISCORD_BOT_TOKEN`** (same keys as DEV).
+- **Forgejo reachable + trusted from the NAS shell**, and a **PAT** with `repository: Read`
+  for the clone (step 1). The forge is HTTPS-only with a step-ca certificate, so the NAS
+  needs the step-ca **root** in its trust store or `git clone` fails TLS verification.
 - Workstation **Whisper** reachable from the NAS: `whisper_server.py` running + Windows Firewall inbound TCP **5000** open. Give the workstation a **DHCP reservation** so it stays `192.168.1.90`.
 - The real vault already has a **`0 - INBOX/`** folder, and an **Obsidian Sync client** is bridging that vault (needed for the phone→inbox path and for notes to sync back to your devices).
 - **Disk:** a few GB free on `/volume1` for the first image build (Chromium + Playwright), plus room for media growth.
@@ -85,11 +94,50 @@ so the Windows profile *often works anyway* — but it's the one thing that may 
 
 Everything else in scope (core saves, serial queue, `#SAVES-inbox`, webhook, tags, icons) has **no** such risk.
 
-## 1.5 Risk register
+## 1.5 Sharing the NAS with the Forgejo forge (new — 2026-08-05)
+
+SAVES is no longer the only thing on this box. Three concrete consequences:
+
+**Memory.** Forgejo reserves 2 GB and PostgreSQL 1 GB. `saves_app` now declares
+`mem_limit: ${SAVES_MEM_LIMIT:-3g}` — previously it was uncapped, so a runaway
+Chromium/ffmpeg could have OOM-killed the forge. Set `SAVES_MEM_LIMIT` in `docker/.env`
+against the NAS's real RAM, leaving ~1.5 GB for DSM:
+
+| NAS RAM | Forgejo+PG | DSM | Suggested `SAVES_MEM_LIMIT` |
+|---|---|---|---|
+| 4 GB | 3 GB | ~1.5 GB | **`1g`** — tight; Chromium will be slow. Consider a RAM upgrade. |
+| 8 GB | 3 GB | ~1.5 GB | **`3g`** (the default) |
+| 16 GB+ | 3 GB | ~1.5 GB | `4g`–`6g` |
+
+Preflight check **`[6]`** prints total RAM, sums what other running containers already
+reserve, and warns on over-commit — trust it over the table.
+
+**⚠️ Never set a CPU limit.** Synology kernels are built without CFS bandwidth control, so
+`cpus:`, `cpu_quota`, and `deploy.resources.limits.cpus` are all **rejected by the daemon**
+(`NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler`) — the deploy
+fails outright rather than warning. This is also why `docker/docker-compose.yml` has no
+top-level `version:` key (it makes Compose V2 silently discard `mem_limit`). Preflight `[6]`
+fails on either. Full writeup: `docs/FORGEJO.md` §6.
+
+**Ports + firewall.** Forgejo binds `192.168.1.201:3443`. SAVES publishes **no ports at all**
+(it dials out to Discord and to Whisper), so there is no conflict and the DSM firewall's
+deny-all-inbound rule does not affect it. If you added that rule during the Forgejo build,
+verify SMB/Obsidian-Sync access to the vault still works — that path *is* inbound.
+
+**⚠️ The DSM ACL trap applies to SAVES paths too.** Once ownership is set over SSH on
+`/volume1/docker/saves/`, do **not** edit that folder's permissions in File Station or
+Control Panel → Shared Folder → Permissions. DSM rewrites ACLs across the subtree and can
+clobber the POSIX owner, breaking the container at its next restart.
+
+## 1.6 Risk register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
 | DEV bot still running at cutover | Both bots fight the one token; double-processing | **Stop DEV** before `up` (step 5). One token, one bot. |
+| NAS trust store lacks the step-ca root | `git clone` from Forgejo fails TLS verification | Install the root per `FORGEJO.md` Phase 11. **Never** work around it with `http.sslVerify=false`. |
+| SAVES memory cap over-committed vs Forgejo | OOM kills the forge or SAVES mid-save | `SAVES_MEM_LIMIT` sized per §1.5; preflight `[6]` warns before you deploy. |
+| A `cpus:` key gets added to compose | **Hard deploy failure** on Synology | Never set one; preflight `[6]` fails on it. `docs/FORGEJO.md` §6. |
+| DSM firewall deny-all added during the Forgejo build | SMB / Obsidian-Sync to the vault blocked (SAVES itself unaffected — no inbound ports) | Verify vault access after the firewall change; §1.5. |
 | Whisper workstation off/unreachable | Video/audio saves get **empty transcripts** (non-fatal) | Preflight `[5]`; DHCP-reserve + auto-start the Whisper server. |
 | Cookies mounted read-only | `/crawl` + login sites fail to launch browser | **Fixed:** compose now mounts `cookies :rw`; preflight `[4]` checks writability. |
 | Windows provecho profile won't decrypt on Linux | `/crawl` provecho shows locked | §1.4 fallback: re-capture under WSL2/WSLg. |
@@ -104,15 +152,43 @@ Everything else in scope (core saves, serial queue, `#SAVES-inbox`, webhook, tag
 
 > **[YOU]** = manual (SSH / DSM / phone). **[APP]** = automated (compose / the container).
 
-### Step 1 — [YOU] Get the code onto the NAS
+### Step 1 — [YOU] Get the code onto the NAS (from Forgejo)
 Enable SSH (DSM → Control Panel → Terminal & SNMP → Enable SSH), then from the workstation:
 ```bash
-ssh <you>@192.168.1.<nas>
+ssh <you>@192.168.1.201
+```
+
+**1a. Trust the step-ca root on the NAS** (once — `git` will not talk to the forge without it).
+Copy the root you exported in `FORGEJO.md` §3A.5 and register it:
+```bash
+# from the WORKSTATION:
+scp homelab-root-ca.crt <you>@192.168.1.201:/tmp/
+# on the NAS:
+sudo cp /tmp/homelab-root-ca.crt /usr/share/pki/trust/anchors/ 2>/dev/null \
+  || sudo cp /tmp/homelab-root-ca.crt /etc/ssl/certs/
+sudo git config --system http.sslCAInfo /etc/ssl/certs/homelab-root-ca.crt
+```
+Verify before continuing — this must succeed with **no** TLS error:
+```bash
+curl -fsS --cacert /etc/ssl/certs/homelab-root-ca.crt \
+  https://192.168.1.201:3443/api/v1/version
+```
+> ⚠️ If it fails, fix the trust store. **Do not set `http.sslVerify=false`** — that discards
+> the entire point of the certificate work and silently accepts any MITM on the LAN.
+
+**1b. Clone.** Use a **PAT** (Forgejo Settings → Applications → *Manage Access Tokens*, scope
+`repository: Read` — a deploy-only token, separate from your workstation token):
+```bash
 sudo mkdir -p /volume1/docker/saves && cd /volume1/docker/saves
-sudo git clone https://github.com/Oodaloop80/SAVES.git app
+sudo git clone https://192.168.1.201:3443/<user>/SAVES.git app
 cd app
 uname -m          # expect x86_64 (aarch64 also works, heavier build)
 ```
+Username = your Forgejo username; password = **the token**. To avoid re-typing on every
+`git pull`, either `sudo git config --global credential.helper store` (plaintext in
+`/root/.git-credentials` — acceptable on a NAS only you administer) or embed the token in
+the remote URL.
+
 No git on the NAS? Install **Git Server** from Package Center, or copy the repo over SMB into `/volume1/docker/saves/app`.
 
 ### Step 2 — [YOU] Secrets + host paths (two gitignored files)
@@ -129,10 +205,10 @@ cat docker/.env               # confirm VAULT_HOST / MEDIA_HOST / STATE_HOST mat
 The clone has no cookies (gitignored). From the **workstation**:
 ```bash
 # .txt cookies (Instagram/TikTok/Facebook):
-scp cookies/*.txt <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
+scp cookies/*.txt <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
 
 # provecho login profile for /crawl (large — ~160 MB; trims below):
-scp -r cookies/provecho.co_profile <you>@192.168.1.<nas>:/volume1/docker/saves/app/cookies/
+scp -r cookies/provecho.co_profile <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
 ```
 **Shrink the profile (optional):** most of the 160 MB is disposable cache. Auth lives in
 `Default/IndexedDB`, `Default/Local Storage`, `Default/Preferences`, and top-level `Local State`.
@@ -145,7 +221,7 @@ when copying to save space and time.
 ```bash
 sudo mkdir -p /volume1/docker/saves/state
 # keep learned folder routing (vault-relative paths → portable):
-scp preferences.json <you>@192.168.1.<nas>:/tmp/ && sudo mv /tmp/preferences.json /volume1/docker/saves/state/
+scp preferences.json <you>@192.168.1.201:/tmp/ && sudo mv /tmp/preferences.json /volume1/docker/saves/state/
 ```
 **Do NOT copy** `processing_state.json`, `pending_approvals.json`, or `queue_state.json` from DEV — PROD starts with an **empty** save-history on purpose (the real vault doesn't have DEV's test saves). `queue_state.json` is created empty on first run.
 
@@ -254,7 +330,7 @@ python src\main.py
 | Follow logs | `sudo docker compose -f docker/docker-compose.yml logs -f` |
 | Restart | `sudo docker compose -f docker/docker-compose.yml restart` |
 | Stop | `sudo docker compose -f docker/docker-compose.yml down` (host mounts/state kept) |
-| Update to a new commit | `git pull && sudo docker compose -f docker/docker-compose.yml up --build -d` |
+| Update to a new commit | `git pull && sudo docker compose -f docker/docker-compose.yml up --build -d` (pulls from Forgejo on this same NAS — the forge must be up) |
 | Change `config.yaml` | edit it, then `restart` (RO mount, re-read on start — no rebuild) |
 | Shell in | `sudo docker exec -it saves_app sh` |
 | Refresh provecho auth | re-capture the profile (workstation/WSL2), recopy to `cookies/provecho.co_profile/`, `restart` |

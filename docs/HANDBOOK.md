@@ -166,7 +166,9 @@ access to the NAS vault + media shares.
 
 ### Local dev (Windows workstation)
 ```bash
-git clone <repo> C:\DEV\Apps\SAVES\SAVES_app
+# Remote = self-hosted Forgejo on the NAS (LAN-only). Requires the step-ca root CA
+# trusted by Git-for-Windows and a PAT as the password — see docs/FORGEJO.md Phase 11-12.
+git clone https://192.168.1.201:3443/<user>/SAVES.git C:\DEV\Apps\SAVES\SAVES_app
 cd C:\DEV\Apps\SAVES\SAVES_app
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
@@ -453,7 +455,9 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 | Transcript missing on a video | Whisper server down/unreachable from the container |
 | Repeated "model rejects temperature" | stale build before the temp-cache fix |
 | Fact-check looks frozen | normal: web-search rounds are slow; progress is logged |
-| `git` 403 in the web sandbox | proxy token expired — use the GitHub API/tarball method (see CLAUDE.md) |
+| `git` TLS error against the forge | step-ca root not in the trust store — `FORGEJO.md` Phase 11. **Never** `http.sslVerify=false` |
+| `git` 401 against the forge | PAT expired/wrong scope — regenerate (`FORGEJO.md` §12.1); password = the token, not your account password |
+| Can't reach the forge at all | LAN-only, no port-forward by design — you must be on `192.168.1.0/24` |
 
 ---
 
@@ -461,8 +465,17 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 
 > Capturing these is what makes this doc a true recreate guide. Replace each TODO.
 
-- **NAS:** model = _TODO_; SMB hostname = _TODO_; volumes = `/volume1/NAS/OBSIDIAN`,
-  `/volume1/NAS/MEDIA/SAVES`; app dir = _TODO_.
+- **NAS:** model = **DS1621+**; LAN IP = **192.168.1.201**; DSM 7.3.2-86009 U4;
+  Container Manager 24.0.2-1606; SMB hostname = _TODO_; **installed RAM = _TODO_** (needed to
+  size `SAVES_MEM_LIMIT` — see `PROD_ROLLOUT.md` §1.5); volumes = `/volume1/NAS/OBSIDIAN`,
+  `/volume1/NAS/MEDIA/SAVES`; SAVES app dir = `/volume1/docker/saves/app`.
+- **Git forge (Forgejo, on the same NAS):** `https://192.168.1.201:3443/`; project dir
+  `/volume1/docker/forgejo`; runs as UID 1030 (`sa_forgejo`) : GID 65536. Full build =
+  `docs/FORGEJO.md`. Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +
+  renewal mechanism** = _TODO_ (a 24 h default would expire the forge daily — `FORGEJO.md`
+  §3A.1/3A.3); PAT names in use (workstation / NAS-deploy / Claude Code) = _TODO_;
+  **is `/volume1/docker/forgejo` in the backup set** = _TODO_ (⚠️ now the only copy of the
+  repo — GitHub retired).
 - **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `0 - INBOX/SAVES.md`.
 - **Discord:** server = "Bora's AI Ops"; channel IDs = _TODO_; bot invite scopes/permissions = _TODO_.
 - **Cookies:** which account backs each of instagram/tiktok/facebook = _TODO_; refresh cadence = ~3–4 wks.
