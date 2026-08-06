@@ -83,8 +83,22 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       style preference — it blocked the rollout: he would not create the vault directories
       because no doc said what to give them. `PROD_ROLLOUT.md` §1.6 is the ownership map;
       preflight `[7]` enforces UID/owner agreement and warns on a missing setgid bit.
-  Corollary: **never assume the UID.** `id sa_saves` is the authority; `1031` is a
-  placeholder default in `docker/.env.example`, not a fact.
+  Corollary: **never assume the UID.** `id sa_saves` is the authority.
+- **NAS service-account SOP (Bora, 2026-08-06) — `docs/NAS_SERVICE_ACCOUNTS.md`.** Every app
+  and container on the NAS runs under its own `sa_<appname>` account; the supplementary group
+  follows the tree (`/volume1/APPS` → 65537 `app_service_accounts`, `/volume1/docker` → 65536
+  `docker_service_accounts`). Confirmed: `sa_forgejo` 1030, `sa_saves` **1031**,
+  `sa_obsidian` **1032**. Two consequences that constrain SAVES:
+  (a) **`group_add: ["100"]` is mandatory in compose.** Docker grants exactly one group via
+      `user:` and does **not** inherit DSM supplementary groups, so `users` must be restated
+      or SAVES cannot write the group-`users` vault/media. Removing it produces a silent
+      EACCES failure mode, not a startup error.
+  (b) **The vault is another app's tree.** `/volume1/APPS/OBSIDIAN/Remote Vault` is owned by
+      `sa_obsidian`; SAVES writes into it as a guest via group `users` + setgid. Do not
+      resolve a permission problem by chowning it to `sa_saves`.
+  Real paths confirmed the same day (the previous `/volume1/NAS/...` values were guesses that
+  did not exist): vault `/volume1/APPS/OBSIDIAN/Remote Vault`, media `/volume1/MEDIA/SAVES`,
+  project `/volume1/docker/saves`.
 - **NAS resource limits: `mem_limit` yes, `cpus:` never (Bora, 2026-08-05).** Discovered during
   the Forgejo build: Synology kernels lack CFS bandwidth control, so *any* CPU quota is a **hard
   deploy failure** (`NanoCPUs can not be set…`), not a warning. `docker/docker-compose.yml`

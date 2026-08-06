@@ -86,8 +86,8 @@ cat docker/.env
 ```
 
 ```
-VAULT_HOST=/volume1/NAS/OBSIDIAN/Remote Vault     # ← your real vault (note the space)
-MEDIA_HOST=/volume1/NAS/MEDIA/SAVES               # ← where downloaded media goes
+VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault     # ← your real vault (note the space)
+MEDIA_HOST=/volume1/MEDIA/SAVES               # ← where downloaded media goes
 STATE_HOST=/volume1/docker/saves/state            # ← runtime JSONs (created in step 4)
 TZ=America/New_York
 ```
@@ -177,7 +177,7 @@ sudo docker compose logs -f
 You want to see startup validation pass and the bot connect — **no** `ConfigError`, and a line
 like `Slash commands synced to N guild(s)`. Then a real end-to-end save:
 
-1. Paste one URL into the **real** inbox: `/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md`
+1. Paste one URL into the **real** inbox: `/volume1/APPS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md`
    (edit in Obsidian, or `echo` it in).
 2. Within ~3 s the container picks it up → an approval card appears in **#SAVES-approvals**.
 3. Approve it → confirm the note is written into the real vault and the URL leaves the inbox.

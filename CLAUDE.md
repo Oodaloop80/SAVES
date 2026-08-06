@@ -594,8 +594,8 @@ reality is supplied per-host, never committed:
 |---|---|---|
 | Pipeline app | Workstation, **bare Python** (`python src\main.py`) | NAS, **Docker** (`docker-compose up`) |
 | Path mapping | `config.local.yaml` (gitignored overlay, deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts |
-| Vault | Local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | Real vault `/volume1/NAS/OBSIDIAN/Remote Vault` |
-| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/NAS/MEDIA/SAVES` |
+| Vault | Local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | Real vault `/volume1/APPS/OBSIDIAN/Remote Vault` |
+| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/MEDIA/SAVES` |
 | State JSONs | Repo root | `/volume1/docker/saves/state` (one mounted dir — never single-file binds) |
 | Whisper server | Workstation `192.168.1.90:5000` | Workstation (same box; possibly a dedicated server later — one config line, `transcription.remote_url`) |
 
@@ -626,12 +626,21 @@ account **`sa_saves`** (`user: "${SAVES_UID}:${SAVES_GID}"` in compose, plus a m
 in-image account created from the same build args). Root-in-container wrote `root:root` notes
 into the bind-mounted vault that **Obsidian and SMB could not edit or delete** — that is the
 bug this fixes. Consequences to respect when touching deploy files:
-- **Every host directory SAVES writes must be owned by that UID** (vault, media, state,
-  cookies, logs). The full ownership map — including *why* vault/media use group `users`
-  while state/cookies use `docker_service_accounts` — is `docs/PROD_ROLLOUT.md` **§1.6**.
-  `preflight_nas.sh` `[7]` fails the deploy when they disagree.
-- **Never hardcode the UID.** `id sa_saves` is the authority; `1031` in `docker/.env.example`
-  is a placeholder.
+- **NAS-wide SOP: `docs/NAS_SERVICE_ACCOUNTS.md`** — one service account per app/container,
+  named `sa_<appname>`, grouped by tree (`/volume1/APPS` → 65537 `app_service_accounts`,
+  `/volume1/docker` → 65536 `docker_service_accounts`). Confirmed UIDs: `sa_forgejo` 1030,
+  **`sa_saves` 1031**, `sa_obsidian` 1032. That doc is the authority on identity; the
+  SAVES-specific ownership map is `docs/PROD_ROLLOUT.md` **§1.6**.
+- **⚠️ `group_add: ["100"]` in compose is REQUIRED — do not remove it.** Docker sets exactly
+  one group from `user:` and does **not** inherit the DSM account's supplementary groups. The
+  vault and media are group-`users` shared data, so without it the container starts fine and
+  then fails every note write with EACCES ("notes never appear, no errors").
+- **The vault belongs to a different app.** `/volume1/APPS/OBSIDIAN/Remote Vault` is owned by
+  **`sa_obsidian` (1032)**, not SAVES — SAVES writes into it as a guest via group `users` +
+  setgid. Never "fix" a permission problem by chowning the vault to `sa_saves`.
+- **Directories SAVES must own outright:** media, state, cookies, logs.
+  `preflight_nas.sh` `[7]` distinguishes owned-vs-group-writable and fails on either mismatch.
+- **Never hardcode a UID without checking.** `id sa_saves` is the authority.
 - `src/main.py` sets `os.umask(0o002)` (files 664 / dirs 775) so the **setgid** bit on the
   vault keeps notes editable by the human. Don't remove it.
 - Playwright browsers live at `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` (world-readable),
@@ -707,6 +716,11 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
   component's responsibility, threading model, or a scaling characteristic changes.
 - `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;
   record constraining decisions under "Decisions locked".
+- `docs/NAS_SERVICE_ACCOUNTS.md` — **NAS-wide SOP**: one service account per app/container,
+  naming (`sa_<appname>`), group-by-tree, the account registry with confirmed UIDs, the
+  directory-ownership convention, and the Docker supplementary-group trap (`group_add`).
+  Infrastructure, not application. Update it when an account is added or a convention
+  changes; anything SAVES-specific belongs in `PROD_ROLLOUT.md` §1.6 instead.
 - `docs/FORGEJO.md` — the self-hosted **git forge** this repo lives on (Forgejo 15 LTS +
   PostgreSQL 17, hardened non-root, on the same NAS). Infrastructure, not application: update
   it when the forge's version pins, identity model, TLS/cert path, firewall, or backup

@@ -19,12 +19,22 @@ services:
     container_name: saves_app
     restart: unless-stopped
 
-    # NON-ROOT (Bora, 2026-08-06). Must match `id sa_saves` on the NAS. This is what keeps
-    # notes/media/state owned by the service account instead of root:root — root-owned notes
-    # in the vault cannot be edited or deleted by Obsidian or over SMB. Changing this WITHOUT
-    # re-chowning the host directories will make every write fail with EACCES.
-    # Full ownership map: docs/PROD_ROLLOUT.md §1.6.
+    # NON-ROOT (Bora, 2026-08-06). Matches `id sa_saves` = uid 1031, service group 65536
+    # (docker_service_accounts). This is what keeps notes/media/state owned by the service
+    # account instead of root:root — root-owned notes in the vault cannot be edited or
+    # deleted by Obsidian or over SMB. Changing this WITHOUT re-chowning the host
+    # directories makes every write fail with EACCES.
+    # SOP: docs/NAS_SERVICE_ACCOUNTS.md · ownership map: docs/PROD_ROLLOUT.md §1.6.
     user: "${SAVES_UID:-1031}:${SAVES_GID:-65536}"
+
+    # REQUIRED — do not remove. Docker sets exactly ONE group from `user:` and does NOT
+    # inherit the DSM account's supplementary groups. sa_saves is in `users` (100) on the
+    # NAS, but the container would not be, and both the vault and the media store are
+    # group-`users` shared data (they are read/edited by a human over SMB and by Obsidian).
+    # Without this the container starts fine and then fails every note write with EACCES.
+    # Only ever list groups the DSM account genuinely has — NAS_SERVICE_ACCOUNTS.md §4.
+    group_add:
+      - "${SAVES_EXTRA_GID:-100}"
 
     env_file: ../.env            # secrets: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
     environment:

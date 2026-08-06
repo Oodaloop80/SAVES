@@ -262,8 +262,8 @@ state_file:  "/app/state/processing_state.json"          # dedup / done-URLs
 pending_approvals_file: "/app/state/pending_approvals.json"   # restart-safe Discord approvals
 # preferences.file (its own block) also lives in /app/state/
 ```
-PROD host values (NAS) live in `docker/.env`: vault `/volume1/NAS/OBSIDIAN/Remote Vault`,
-media `/volume1/NAS/MEDIA/SAVES`, state `/volume1/docker/saves/state`. DEV workstation values
+PROD host values (NAS) live in `docker/.env`: vault `/volume1/APPS/OBSIDIAN/Remote Vault`,
+media `/volume1/MEDIA/SAVES`, state `/volume1/docker/saves/state`. DEV workstation values
 live in `config.local.yaml`: local test vault `C:/DEV/Apps/SAVES/OBSIDIAN`, media
 `C:/DEV/Apps/SAVES/MEDIA`, state JSONs at the repo root.
 > The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES.md` (docs updated 2026-07-04).
@@ -469,14 +469,22 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
   Container Manager 24.0.2-1606; SMB hostname = _TODO_; **RAM = 32 GB** (measured
   2026-08-06: 32071 MB total / ~29.8 GB available → `SAVES_MEM_LIMIT=4g`);
   `/volume1` = 37 TB, 24 TB free; SAVES app dir = `/volume1/docker/saves/app`.
-- **SAVES service account:** `sa_saves` — **UID = _TODO_** (read it from `id sa_saves`; do
-  **not** assume 1031), GID 65536 (`docker_service_accounts`). This UID must appear in
-  `docker/.env` as `SAVES_UID` and own every directory SAVES writes. Ownership map +
-  rationale: `PROD_ROLLOUT.md` §1.6.
-- **Vault + media paths:** `VAULT_HOST` = _TODO — confirm the real path_,
-  `MEDIA_HOST` = _TODO_. ⚠️ As of 2026-08-06 neither `/volume1/NAS/OBSIDIAN/Remote Vault`
-  nor `/volume1/NAS/MEDIA/SAVES` existed on the NAS — they are created in rollout step 0c
-  with owner `sa_saves:users` and mode `2775`.
+- **Service accounts (SOP: `docs/NAS_SERVICE_ACCOUNTS.md`)** — one per app/container,
+  `sa_<appname>`; group by tree (`/volume1/APPS` → 65537 `app_service_accounts`,
+  `/volume1/docker` → 65536 `docker_service_accounts`). Confirmed 2026-08-06:
+
+  | Account | UID | Supplementary group | Owns |
+  |---|---|---|---|
+  | `sa_forgejo` | 1030 | 65536 `docker_service_accounts` | `/volume1/docker/forgejo` |
+  | `sa_saves` | 1031 | 65536 `docker_service_accounts` | `/volume1/docker/saves`, `/volume1/MEDIA/SAVES` |
+  | `sa_obsidian` | 1032 | 65537 `app_service_accounts` | `/volume1/APPS/OBSIDIAN` |
+
+- **Vault + media paths (confirmed 2026-08-06):**
+  `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` — **owned by `sa_obsidian`**, not SAVES;
+  `MEDIA_HOST=/volume1/MEDIA/SAVES` — owned by `sa_saves`. Both group `users` (100), mode
+  `2775` (setgid). SAVES writes the vault as a guest via group `users`, which is why compose
+  needs **`group_add: ["100"]`** — Docker does not inherit DSM supplementary groups. Created
+  in rollout step 0b; full map `PROD_ROLLOUT.md` §1.6, worked example SOP §6.
 - **Git forge (Forgejo, on the same NAS):** `https://192.168.1.201:3443/`; project dir
   `/volume1/docker/forgejo`; runs as UID 1030 (`sa_forgejo`) : GID 65536. Full build =
   `docs/FORGEJO.md`. Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +

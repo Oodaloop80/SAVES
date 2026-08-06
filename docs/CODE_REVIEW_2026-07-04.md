@@ -34,15 +34,15 @@ only bite once the app runs unattended on the NAS. Fix the two blockers before
 ### 1. Compose mounts don't match config paths — container can't see the vault ✅ FIXED
 `docker/docker-compose.yml:11-12` mounts the vault at **`/vault`** and media at **`/media`**,
 but the `config.yaml` mounted into the container (`:14`) points at
-`/volume1/NAS/OBSIDIAN/Remote Vault` and `/volume1/NAS/MEDIA/SAVES` — paths that don't exist
+`/volume1/APPS/OBSIDIAN/Remote Vault` and `/volume1/MEDIA/SAVES` — paths that don't exist
 inside the container. `validate_startup` (main.py:36) will fail fast at boot, so this is a
 loud failure rather than silent data loss — but the deploy is dead on arrival.
 
 **Fix (recommended):** mirror-mount so paths are identical inside and outside — config stays
 untouched and `process_one.py` run on the NAS host would also agree:
 ```yaml
-- "/volume1/NAS/OBSIDIAN/Remote Vault:/volume1/NAS/OBSIDIAN/Remote Vault:rw"
-- "/volume1/NAS/MEDIA/SAVES:/volume1/NAS/MEDIA/SAVES:rw"
+- "/volume1/APPS/OBSIDIAN/Remote Vault:/volume1/APPS/OBSIDIAN/Remote Vault:rw"
+- "/volume1/MEDIA/SAVES:/volume1/MEDIA/SAVES:rw"
 ```
 (Alternative: mount a container-specific config overriding `paths.*` to `/vault`/`/media` —
 more moving parts, not worth it.)

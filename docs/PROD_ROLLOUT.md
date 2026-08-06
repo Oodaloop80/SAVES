@@ -56,8 +56,8 @@ Nothing about the code changes per host — `config.yaml` uses canonical contain
 
 | Canonical (container) | Host (`docker/.env`) | Holds |
 |---|---|---|
-| `/vault` | `VAULT_HOST=/volume1/NAS/OBSIDIAN/Remote Vault` | real vault; inbox `0 - INBOX/SAVES.md`; notes written here |
-| `/media` | `MEDIA_HOST=/volume1/NAS/MEDIA/SAVES` | downloaded videos/images |
+| `/vault` | `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` | real vault; inbox `0 - INBOX/SAVES.md`; notes written here |
+| `/media` | `MEDIA_HOST=/volume1/MEDIA/SAVES` | downloaded videos/images |
 | `/app/state` | `STATE_HOST=/volume1/docker/saves/state` | `processing_state.json`, `pending_approvals.json`, `preferences.json`, `queue_state.json` |
 | `/app/cookies` (**:rw**) | `../cookies` in the repo clone | `*.txt` cookies **and** `provecho.co_profile/` (browser profile — needs write) |
 | `/app/config.yaml` (:ro) | `../config.yaml` | configuration (edit + restart to change) |
@@ -142,35 +142,57 @@ clobber the POSIX owner, breaking the container at its next restart.
 
 ### The identity
 
-`saves_app` runs as a **non-root DSM service account, `sa_saves`** — the same pattern as
-`sa_forgejo` (`FORGEJO.md` §1). Before 2026-08-06 the container ran as **root**, which is
-why this section did not exist and why the vault directories were never created: root in a
-container writing to a bind-mounted vault produces `root:root` notes that **Obsidian and SMB
-cannot edit or delete**. That is the actual problem being solved here.
+`saves_app` runs as a **non-root DSM service account, `sa_saves`** — per the NAS-wide SOP in
+**`docs/NAS_SERVICE_ACCOUNTS.md`**, which is the authority on naming and group assignment.
+Before 2026-08-06 the container ran as **root**, which is why this section did not exist and
+why the vault directories were never created: root in a container writing to a bind-mounted
+vault produces `root:root` notes that **Obsidian and SMB cannot edit or delete**.
 
-Three settings must agree, or nothing works:
+Confirmed on the NAS (2026-08-06):
+
+```
+uid=1031(sa_saves) gid=100(users) groups=100(users),65536(docker_service_accounts)
+```
+
+Four settings must agree, or nothing works:
 
 | Where | Setting |
 |---|---|
-| DSM | the `sa_saves` account's real UID/GID (`id sa_saves`) |
-| `docker/.env` | `SAVES_UID` / `SAVES_GID` (feeds both the build arg and `user:`) |
-| Host directories | owned by that same UID:GID |
+| DSM | `id sa_saves` → **1031**, service group **65536** |
+| `docker/.env` | `SAVES_UID=1031`, `SAVES_GID=65536`, `SAVES_EXTRA_GID=100` |
+| compose | `user: "1031:65536"` **plus `group_add: ["100"]`** |
+| Host directories | owned per the map below |
 
-**If they disagree, every write fails with `EACCES`.** Preflight `[7]` checks all three.
+**If they disagree, every write fails with `EACCES`.** Preflight `[7]` checks them.
 
-### Group choice — why two different groups
+### ⚠️ Why `group_add: ["100"]` is not optional
+
+**Docker sets exactly one group from `user:` and does NOT inherit the DSM account's
+supplementary groups** (`FORGEJO.md` §1; SOP §4). So although DSM says `sa_saves` is in
+`users` (100), a container started as `1031:65536` is **not** — and the vault and media are
+group-`users` shared data. Without `group_add` the container starts cleanly and then fails
+every note write. Symptom: *"notes never appear, no errors."*
+
+### Group choice — audience, not location
 
 | Data | Group | Reasoning |
 |---|---|---|
-| Vault, media | **`users` (GID 100)** | These are *your documents*. A human edits them in Obsidian and over SMB, and every DSM account is in `users`. Locking them to a service group would lock **you** out. |
-| State, cookies | **`docker_service_accounts` (GID 65536)** | Runtime internals and **credentials** (the provecho login profile, platform cookies). Nothing human-facing should read these. Same group as Forgejo. |
+| Vault, media | **`users` (GID 100)** | *Your documents.* A human edits them in Obsidian and over SMB. Locking them to a service group locks **you** out. |
+| State, cookies | **`docker_service_accounts` (GID 65536)** | Runtime internals and **credentials** (provecho login profile, platform cookies). Nothing human-facing reads these. |
+
+### Cross-tree note — the vault belongs to a *different* app
+
+The vault lives in the **APPS** tree and is owned by **`sa_obsidian` (1032)**, not by SAVES.
+SAVES writes into another app's directory, which works purely through group `users` + setgid.
+This is the worked example in **SOP §6**. Do not "fix" this by chowning the vault to
+`sa_saves` — Obsidian owns that tree.
 
 ### The ownership map
 
 | Path | Owner | Mode | Why |
 |---|---|---|---|
-| `/volume1/NAS/OBSIDIAN/Remote Vault` | `sa_saves:users` | **`2775`** | setgid (the `2`) forces every note SAVES writes to inherit group `users`, so you can still edit it. Group-writable both ways. |
-| `/volume1/NAS/MEDIA/SAVES` | `sa_saves:users` | **`2775`** | same — you browse media over SMB |
+| `/volume1/APPS/OBSIDIAN/Remote Vault` | **`sa_obsidian:users`** | **`2775`** | Obsidian's tree. setgid (the `2`) forces every note SAVES writes to inherit group `users`, so Obsidian and SMB can still edit it. |
+| `/volume1/MEDIA/SAVES` | `sa_saves:users` | **`2775`** | SAVES writes it, you browse it over SMB |
 | `/volume1/docker/saves` | `root:root` | `755` | project root; nothing writes here at runtime |
 | `/volume1/docker/saves/app` (the clone) | `root:root` | `755` | source + build context, read-only at runtime |
 | `…/app/.env` | `root:sa_saves`† | **`640`** | **secrets** (API key, bot token). Container must read; nobody else should. |
@@ -234,54 +256,74 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 > **Every step states the working directory, the owner, and the mode.** Read §1.6 first.
 > Shorthand used below: `APP=/volume1/docker/saves/app`.
 
-### Step 0 — [YOU] Create the service account and the data directories
+### Step 0 — [YOU] Verify the service accounts, then create the data directories
 
-**Nothing else works until this is done** — the UID here is what every later `chown` uses.
+Service-account convention (naming, which group, how to create one):
+**`docs/NAS_SERVICE_ACCOUNTS.md`**. Both accounts this rollout needs already exist.
 
-**0a. Create `sa_saves` in DSM** (GUI; there is no supported CLI for user creation on DSM):
-
-1. **Control Panel → User & Group → User → Create**
-2. Name `sa_saves`, a long random password (never used — login is denied below)
-3. **User Groups:** tick `docker_service_accounts` — leave `users` ticked too (DSM forces it)
-4. **Permissions:** give **Read/Write** on the shared folders holding the vault and media; **No Access** everywhere else
-5. **Applications:** **Deny all** (DSM, File Station, WebDAV…) — it must not be able to log in
-6. Apply
-
-**0b. Read back its real IDs — do not assume 1031:**
+**0a. Confirm the accounts — the UIDs below are used by every `chown` that follows:**
 
 ```bash
 ssh <you>@192.168.1.201
-id sa_saves
-# expect: uid=10xx(sa_saves) gid=100(users) groups=100(users),65536(docker_service_accounts)
+id sa_saves ; id sa_obsidian
 ```
 
-> ⚠️ **Whatever UID this prints is the number you use everywhere below and in
-> `docker/.env` (`SAVES_UID`).** DSM assigns it; you do not choose it. GID stays **65536**
-> (`docker_service_accounts`) — we override the container's primary group deliberately, exactly as
-> the Forgejo build does (`FORGEJO.md` §1).
+Expected (confirmed 2026-08-06):
 
-**0c. Create the vault and media directories with the right owner from the start.**
-Substitute your real UID for `1031`:
+```
+uid=1031(sa_saves)    gid=100(users) groups=100(users),65536(docker_service_accounts)
+uid=1032(sa_obsidian) gid=100(users) groups=100(users),65537(app_service_accounts)
+```
+
+> ⚠️ If either UID differs, **stop** and substitute the real number everywhere below and in
+> `docker/.env`. DSM assigns UIDs; you do not choose them.
+
+**Why two accounts:** the vault lives in the **APPS** tree, which belongs to **Obsidian**
+(`sa_obsidian`). SAVES writes into it as a guest, via group `users` + setgid — never by taking
+ownership. The media store and SAVES's own state belong to `sa_saves`. Worked example:
+SOP §6.
+
+**0b. Create the directories with the right owner from the start.**
 
 ```bash
-# Confirm where the shares actually are FIRST — these paths are not guaranteed:
-ls -ld /volume1/*/ ; find /volume1 -maxdepth 3 -iname '*obsidian*' 2>/dev/null
-
-VAULT="/volume1/NAS/OBSIDIAN/Remote Vault"
-MEDIA="/volume1/NAS/MEDIA/SAVES"
+VAULT="/volume1/APPS/OBSIDIAN/Remote Vault"     # Obsidian's tree — sa_obsidian owns it
+MEDIA="/volume1/MEDIA/SAVES"                    # SAVES writes it, you browse it
 
 sudo mkdir -p "$VAULT/0 - INBOX" "$MEDIA"
-sudo chown -R 1031:100 "$VAULT" "$MEDIA"     # group 100 = users  (see §1.6)
-sudo chmod -R 2775     "$VAULT" "$MEDIA"     # 2 = setgid; keeps YOU able to edit
-sudo touch "$VAULT/0 - INBOX/SAVES.md" && sudo chown 1031:100 "$VAULT/0 - INBOX/SAVES.md"
+
+# Vault: owned by OBSIDIAN (1032), group users (100) so SAVES + SMB can both write.
+sudo chown -R 1032:100 "$VAULT"
+sudo chmod -R 2775     "$VAULT"      # 2 = setgid — new notes inherit group `users`
+
+# Media: owned by SAVES (1031), same shared group.
+sudo chown -R 1031:100 "$MEDIA"
+sudo chmod -R 2775     "$MEDIA"
+
+# The inbox file the watcher reads. SAVES must be able to REWRITE it (it removes URLs
+# after a save), so group-write matters here too.
+sudo touch "$VAULT/0 - INBOX/SAVES.md"
+sudo chown 1032:100 "$VAULT/0 - INBOX/SAVES.md"
+sudo chmod 664      "$VAULT/0 - INBOX/SAVES.md"
 ```
 
-**0d. Verify — this is the step people skip:**
+> **Do not chown the vault to `sa_saves`.** It is Obsidian's tree. SAVES reaching it through
+> group `users` is the design, not a workaround — SOP §5.2/§6.
+
+**0c. Verify — this is the step people skip:**
 
 ```bash
-stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX"
-# want:  sa_saves:users  2775   on all three
+stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX" "$VAULT/0 - INBOX/SAVES.md"
 ```
+
+| Path | Want |
+|---|---|
+| `…/Remote Vault` | `sa_obsidian:users  2775` |
+| `/volume1/MEDIA/SAVES` | `sa_saves:users  2775` |
+| `…/Remote Vault/0 - INBOX` | `sa_obsidian:users  2775` |
+| `…/0 - INBOX/SAVES.md` | `sa_obsidian:users  664` |
+
+The **group must read `users`** on all of them — that is what SAVES writes through. An owner
+of `sa_obsidian` on the vault is correct, not a mistake.
 
 > ⚠️ **From here on, never touch these folders' permissions in File Station or Control
 > Panel → Shared Folder → Permissions.** DSM will rewrite ACLs across the subtree and
@@ -480,7 +522,7 @@ sudo docker compose -f docker/docker-compose.yml logs -f
 Look for: **no** `ConfigError`, the bot connecting, and `Slash commands synced to N guild(s)`. Then run the **acceptance tests (Part 3)**.
 
 ### Step 9 — [YOU] Verify the real-vault round trip
-Paste one URL into the **real** inbox `/volume1/NAS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md` (via Obsidian or `echo >>`), watch for the approval card in **#SAVES-approvals**, approve, and confirm the note lands in the real vault and the inbox line is removed.
+Paste one URL into the **real** inbox `/volume1/APPS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md` (via Obsidian or `echo >>`), watch for the approval card in **#SAVES-approvals**, approve, and confirm the note lands in the real vault and the inbox line is removed.
 
 ### Step 10 — [YOU] Phone: the one-tap Android share (webhook)
 Set up a single share-sheet target that POSTs to the webhook from step 6 — full instructions (HTTP Shortcuts app, or Tasker+AutoShare, or MacroDroid) are in **`docs/MOBILE_SHORTCUTS.md`**. Quick test from the workstation first:

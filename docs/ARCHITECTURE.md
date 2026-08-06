@@ -31,8 +31,8 @@ flowchart LR
         subgraph DOCKER["Docker: saves_app (python:3.11-slim)"]
             APP["SAVES pipeline<br/>src/main.py"]
         end
-        VAULT[("Obsidian Vault<br/>/volume1/NAS/OBSIDIAN/Remote Vault")]
-        MEDIA[("Media store<br/>/volume1/NAS/MEDIA/SAVES")]
+        VAULT[("Obsidian Vault<br/>/volume1/APPS/OBSIDIAN/Remote Vault")]
+        MEDIA[("Media store<br/>/volume1/MEDIA/SAVES")]
     end
 
     subgraph NET["Internet"]
@@ -70,8 +70,8 @@ matter of filling in one small file:
 |---|---|---|---|
 | Pipeline app | Workstation, bare Python (`python src\main.py`) | NAS, Docker container | same code, same tracked config |
 | Path mapping | `config.local.yaml` overlay (gitignored; deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts | host paths live outside git |
-| Vault | local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | real vault `/volume1/NAS/OBSIDIAN/Remote Vault` | notes reference media via `media://` relative paths — device-independent |
-| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/NAS/MEDIA/SAVES` | same |
+| Vault | local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | real vault `/volume1/APPS/OBSIDIAN/Remote Vault` | notes reference media via `media://` relative paths — device-independent |
+| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/MEDIA/SAVES` | same |
 | State JSONs | repo root | `/volume1/docker/saves/state` (one mounted **directory**) | schema identical; single-file binds are forbidden (os.replace breaks) |
 | Whisper | workstation `192.168.1.90:5000` | workstation — possibly a dedicated server later | app only knows `transcription.remote_url`; relocating = one line |
 | Secrets | repo-root `.env` | same file, on the NAS | only 2 keys ever |

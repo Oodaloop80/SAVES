@@ -190,27 +190,59 @@ if [ -f docker/.env ]; then
     if [ -n "$nm" ]; then ok "UID $S_UID resolves to '$nm' on this host"
     else warn "UID $S_UID has no /etc/passwd entry — fine for Docker, but confirm it matches 'id sa_saves'"; fi
 
-    # Every directory the container WRITES must be owned by that UID.
-    check_owner() {
+    # Supplementary groups. Docker grants exactly ONE group via `user:` and does NOT inherit
+    # the DSM account's supplementary groups, so `users` must be restated via group_add or
+    # the container cannot write the group-`users` vault/media. See NAS_SERVICE_ACCOUNTS.md §4.
+    S_EGID=$(grep -E '^SAVES_EXTRA_GID=' docker/.env | head -1 | cut -d= -f2- | tr -d ' ')
+    if grep -q 'group_add' docker/docker-compose.yml 2>/dev/null; then
+      ok "compose declares group_add (supplementary groups: ${S_EGID:-100})"
+    else
+      bad "docker-compose.yml has no group_add — the container gets ONLY GID $S_GID and cannot write the group-'users' vault/media. Symptom: notes never appear, no errors."
+    fi
+
+    # Two different ownership rules, because two different service accounts are involved:
+    #   OWNED     - the container must own it outright (its own state/cookies/logs/media)
+    #   WRITABLE  - owned by ANOTHER app's account (the Obsidian vault); the container
+    #               reaches it through the shared group, so check group+mode, not owner.
+    check_owned() {
       d="$2"
       [ -d "$d" ] || return 0                     # missing dirs already reported by [3]
-      o=$(stat -c '%u' "$d" 2>/dev/null)
-      g=$(stat -c '%g' "$d" 2>/dev/null)
+      o=$(stat -c '%u' "$d" 2>/dev/null); g=$(stat -c '%g' "$d" 2>/dev/null)
       m=$(stat -c '%a' "$d" 2>/dev/null)
-      if [ "$o" = "$S_UID" ]; then
-        ok "$1 owned by $S_UID (mode $m)"
-      else
-        bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID:$g \"$d\""
-      fi
-      # setgid on the shared dirs keeps human-editable group ownership on new notes.
-      case "$m" in 2*) : ;; *) [ "$1" = "VAULT_HOST" ] || [ "$1" = "MEDIA_HOST" ] && \
-        warn "$1 mode $m has no setgid bit — new notes may become un-editable by your Obsidian/SMB user (want 2775)";; esac
+      if [ "$o" = "$S_UID" ]; then ok "$1 owned by $S_UID (mode $m)"
+      else bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID:$g \"$d\""; fi
     }
-    check_owner VAULT_HOST "$VAULT_HOST"
-    check_owner MEDIA_HOST "$MEDIA_HOST"
-    check_owner STATE_HOST "$STATE_HOST"
-    check_owner cookies    "$ROOT/cookies"
-    check_owner logs       "$ROOT/logs"
+    # Group-writable check: the container's groups are S_GID plus S_EGID (from group_add).
+    check_group_writable() {
+      d="$2"
+      [ -d "$d" ] || return 0
+      o=$(stat -c '%u' "$d" 2>/dev/null); g=$(stat -c '%g' "$d" 2>/dev/null)
+      m=$(stat -c '%a' "$d" 2>/dev/null)
+      # Owning it outright is also fine.
+      if [ "$o" = "$S_UID" ]; then ok "$1 owned by $S_UID (mode $m)"; return 0; fi
+      if [ "$g" != "$S_GID" ] && [ "$g" != "${S_EGID:-100}" ]; then
+        bad "$1 is group $g, but the container only has groups $S_GID,${S_EGID:-100} -> cannot write it. Fix: sudo chown -R :${S_EGID:-100} \"$d\" (owner may stay another service account)"
+        return 0
+      fi
+      # Group must actually have write permission (middle digit of the trailing 3).
+      gw=$(printf '%s' "$m" | sed 's/.*\(...\)$/\1/' | cut -c2)
+      case "$gw" in
+        2|3|6|7) ok "$1 group $g is writable by the container (mode $m)" ;;
+        *) bad "$1 mode $m gives its group NO write bit -> the container cannot create notes. Fix: sudo chmod -R 2775 \"$d\"" ;;
+      esac
+    }
+    setgid_check() {
+      d="$2"; [ -d "$d" ] || return 0
+      m=$(stat -c '%a' "$d" 2>/dev/null)
+      case "$m" in 2*) : ;; *) warn "$1 mode $m has no setgid bit — new notes will inherit the container's service group and become un-editable by Obsidian/SMB (want 2775)";; esac
+    }
+
+    # The vault belongs to sa_obsidian (a DIFFERENT app's account) — group access by design.
+    check_group_writable VAULT_HOST "$VAULT_HOST"; setgid_check VAULT_HOST "$VAULT_HOST"
+    check_group_writable MEDIA_HOST "$MEDIA_HOST"; setgid_check MEDIA_HOST "$MEDIA_HOST"
+    check_owned STATE_HOST "$STATE_HOST"
+    check_owned cookies    "$ROOT/cookies"
+    check_owned logs       "$ROOT/logs"
   fi
 else
   bad "docker/.env missing — cannot verify container identity"
