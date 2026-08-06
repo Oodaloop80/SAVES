@@ -190,56 +190,87 @@ if [ -f docker/.env ]; then
     if [ -n "$nm" ]; then ok "UID $S_UID resolves to '$nm' on this host"
     else warn "UID $S_UID has no /etc/passwd entry — fine for Docker, but confirm it matches 'id sa_saves'"; fi
 
-    # Supplementary groups. Docker grants exactly ONE group via `user:` and does NOT inherit
-    # the DSM account's supplementary groups, so `users` must be restated via group_add or
-    # the container cannot write the group-`users` vault/media. See NAS_SERVICE_ACCOUNTS.md §4.
-    S_EGID=$(grep -E '^SAVES_EXTRA_GID=' docker/.env | head -1 | cut -d= -f2- | tr -d ' ')
-    if grep -q 'group_add' docker/docker-compose.yml 2>/dev/null; then
-      ok "compose declares group_add (supplementary groups: ${S_EGID:-100})"
+    # No group_add: vault access comes from a DSM ACL naming sa_saves (matched by UID),
+    # not group membership. Granting the everyone-group `users` anything is forbidden
+    # (NAS_SERVICE_ACCOUNTS.md Rule 1), so flag it if it reappears in compose.
+    if grep -qE '^[[:space:]]*-[[:space:]]*"?100"?[[:space:]]*$' docker/docker-compose.yml 2>/dev/null \
+       && grep -q 'group_add' docker/docker-compose.yml 2>/dev/null; then
+      bad "docker-compose.yml group_add includes GID 100 (users) — that is the everyone-group and is forbidden. Grant sa_saves via a DSM ACL instead (NAS_SERVICE_ACCOUNTS.md Rule 1/4)."
     else
-      bad "docker-compose.yml has no group_add — the container gets ONLY GID $S_GID and cannot write the group-'users' vault/media. Symptom: notes never appear, no errors."
+      ok "compose grants no 'users' membership"
     fi
 
-    # Two different ownership rules, because two different service accounts are involved:
-    #   OWNED     - the container must own it outright (its own state/cookies/logs/media)
-    #   WRITABLE  - owned by ANOTHER app's account (the Obsidian vault); the container
-    #               reaches it through the shared group, so check group+mode, not owner.
+    # --- POSIX-governed paths: the container must OWN them outright ------------
+    # State, cookies and logs live under /volume1/docker/saves (no share ACL). Group is
+    # `administrators`, NOT docker_service_accounts: sa_forgejo is in that group and must
+    # not be able to read SAVES's API key or session cookies. See SOP 5.2.
     check_owned() {
       d="$2"
       [ -d "$d" ] || return 0                     # missing dirs already reported by [3]
       o=$(stat -c '%u' "$d" 2>/dev/null); g=$(stat -c '%g' "$d" 2>/dev/null)
       m=$(stat -c '%a' "$d" 2>/dev/null)
       if [ "$o" = "$S_UID" ]; then ok "$1 owned by $S_UID (mode $m)"
-      else bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID:$g \"$d\""; fi
-    }
-    # Group-writable check: the container's groups are S_GID plus S_EGID (from group_add).
-    check_group_writable() {
-      d="$2"
-      [ -d "$d" ] || return 0
-      o=$(stat -c '%u' "$d" 2>/dev/null); g=$(stat -c '%g' "$d" 2>/dev/null)
-      m=$(stat -c '%a' "$d" 2>/dev/null)
-      # Owning it outright is also fine.
-      if [ "$o" = "$S_UID" ]; then ok "$1 owned by $S_UID (mode $m)"; return 0; fi
-      if [ "$g" != "$S_GID" ] && [ "$g" != "${S_EGID:-100}" ]; then
-        bad "$1 is group $g, but the container only has groups $S_GID,${S_EGID:-100} -> cannot write it. Fix: sudo chown -R :${S_EGID:-100} \"$d\" (owner may stay another service account)"
-        return 0
-      fi
-      # Group must actually have write permission (middle digit of the trailing 3).
-      gw=$(printf '%s' "$m" | sed 's/.*\(...\)$/\1/' | cut -c2)
-      case "$gw" in
-        2|3|6|7) ok "$1 group $g is writable by the container (mode $m)" ;;
-        *) bad "$1 mode $m gives its group NO write bit -> the container cannot create notes. Fix: sudo chmod -R 2775 \"$d\"" ;;
+      else bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID \"$d\""; fi
+      # Credentials and state must not be world-readable, and must not be readable by the
+      # shared service group (sa_forgejo is in it).
+      case "$1" in
+        cookies)
+          [ "$m" = "700" ] || warn "$1 mode $m — credentials should be 700 (browser profile + platform cookies); SOP 5.2" ;;
+        STATE_HOST|logs)
+          ow=$(printf '%s' "$m" | sed 's/.*\(.\)$/\1/')
+          [ "$ow" = "0" ] || warn "$1 mode $m grants 'other' access — state/logs should be 2750; SOP 5.2" ;;
       esac
     }
-    setgid_check() {
-      d="$2"; [ -d "$d" ] || return 0
-      m=$(stat -c '%a' "$d" 2>/dev/null)
-      case "$m" in 2*) : ;; *) warn "$1 mode $m has no setgid bit — new notes will inherit the container's service group and become un-editable by Obsidian/SMB (want 2775)";; esac
+
+    # --- ACL-governed paths: the vault, in the APPS tree -----------------------
+    # sa_saves is granted by an explicitly-set (level:0) ACL ACE that must sort BEFORE the
+    # inherited docker_service_accounts deny. POSIX ownership tells us nothing here, so
+    # check the ACL itself. synoacltool exists only on DSM.
+    check_acl() {
+      label="$1"; d="$2"; want="$3"     # want = read | write
+      [ -d "$d" ] || return 0
+      if ! command -v synoacltool >/dev/null 2>&1; then
+        warn "$label: synoacltool not available — cannot verify the ACL here. Run the container write test in SOP 5.1 on the NAS."
+        return 0
+      fi
+      acl=$(synoacltool -get "$d" 2>/dev/null)
+      if [ -z "$acl" ]; then
+        warn "$label: no ACL readable (needs sudo?) — verify manually per SOP 5.1"
+        return 0
+      fi
+      allow=$(printf '%s\n' "$acl" | grep -n "user:${SA_NAME}:allow" | head -1 | cut -d: -f1)
+      deny=$(printf '%s\n' "$acl" | grep -n 'group:docker_service_accounts:deny' | head -1 | cut -d: -f1)
+      if [ -z "$allow" ]; then
+        bad "$label: no 'user:${SA_NAME}:allow' ACE — the inherited docker_service_accounts deny will block SAVES. Add one (SOP Rule 4 / 6)."
+        return 0
+      fi
+      if [ -n "$deny" ] && [ "$deny" -lt "$allow" ]; then
+        bad "$label: the docker_service_accounts DENY sorts BEFORE the ${SA_NAME} allow -> access is blocked. The allow must be an explicitly-set (level:0) ACE on this folder (SOP Rule 4)."
+        return 0
+      fi
+      if [ "$want" = "write" ]; then
+        line=$(printf '%s\n' "$acl" | grep "user:${SA_NAME}:allow" | head -1)
+        case "$line" in
+          *rw*) ok "$label: ${SA_NAME} has an allow ACE with write" ;;
+          *) bad "$label: ${SA_NAME}'s ACE is read-only but SAVES must WRITE here (inbox rewrite / note creation). Regrant with rwxpdDaARWc--" ;;
+        esac
+      else
+        ok "$label: ${SA_NAME} has an allow ACE (read)"
+      fi
+      # `users` must never appear as an allow anywhere (SOP Rule 1).
+      if printf '%s\n' "$acl" | grep -q 'group:users:allow'; then
+        bad "$label: the ACL grants group 'users' — that is the everyone-group and is forbidden (SOP Rule 1)."
+      fi
     }
 
-    # The vault belongs to sa_obsidian (a DIFFERENT app's account) — group access by design.
-    check_group_writable VAULT_HOST "$VAULT_HOST"; setgid_check VAULT_HOST "$VAULT_HOST"
-    check_group_writable MEDIA_HOST "$MEDIA_HOST"; setgid_check MEDIA_HOST "$MEDIA_HOST"
+    SA_NAME=${nm:-sa_saves}
+    # Three distinct grants — see SOP 6. The vault ROOT is read-only on purpose (tag_index
+    # walks the whole vault); the two subfolders are where SAVES actually writes.
+    check_acl VAULT_HOST         "$VAULT_HOST"                        read
+    check_acl "vault inbox"      "$VAULT_HOST/0 - INBOX/SAVES"        write
+    check_acl "vault notes root" "$VAULT_HOST/SAVES"                  write
+    check_acl MEDIA_HOST         "$MEDIA_HOST"                        write
+
     check_owned STATE_HOST "$STATE_HOST"
     check_owned cookies    "$ROOT/cookies"
     check_owned logs       "$ROOT/logs"

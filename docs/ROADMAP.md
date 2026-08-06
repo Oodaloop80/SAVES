@@ -73,7 +73,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       every note it wrote into the bind-mounted vault was `root:root` — **uneditable and
       undeletable by Obsidian and over SMB**. It now runs as a DSM service account
       (`user:` + a matching in-image account via build args). The vault and media dirs are
-      `sa_saves:users` mode **2775** (setgid, so notes stay in a group the human can write);
+      a DSM ACL naming `sa_saves` (ownership stays with `OodaAdmin`/`administrators`);
       state and cookies are `sa_saves:docker_service_accounts` (2770/2700 — the latter holds
       credentials). `src/main.py` sets `os.umask(0o002)` so new files are 664/775 rather
       than 644/755, which is what makes the setgid bit actually useful.
@@ -89,13 +89,16 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   follows the tree (`/volume1/APPS` → 65537 `app_service_accounts`, `/volume1/docker` → 65536
   `docker_service_accounts`). Confirmed: `sa_forgejo` 1030, `sa_saves` **1031**,
   `sa_obsidian` **1032**. Two consequences that constrain SAVES:
-  (a) **`group_add: ["100"]` is mandatory in compose.** Docker grants exactly one group via
-      `user:` and does **not** inherit DSM supplementary groups, so `users` must be restated
-      or SAVES cannot write the group-`users` vault/media. Removing it produces a silent
-      EACCES failure mode, not a startup error.
-  (b) **The vault is another app's tree.** `/volume1/APPS/OBSIDIAN/Remote Vault` is owned by
-      `sa_obsidian`; SAVES writes into it as a guest via group `users` + setgid. Do not
-      resolve a permission problem by chowning it to `sa_saves`.
+  (a) **The `users` group (GID 100) is granted NOTHING, anywhere (SOP Rule 1).** DSM
+      force-adds every account to it, so it is the everyone-group. Cross-app access is a
+      **named ACL exception** on the narrowest folder, never a group membership and never a
+      new group. Compose therefore carries **no `group_add`**; preflight `[7]` fails if GID
+      100 reappears.
+  (b) **The vault is another app's tree, governed by DSM ACLs.** `docker_service_accounts`
+      is denied across `/volume1/APPS`; `sa_saves` gets an explicitly-set (`level:0`) ACE
+      that must sort *before* that deny. Three grants, least verb each. Ownership stays with
+      `OodaAdmin`/`administrators`. Credentials and state use **no** shared service group —
+      `sa_forgejo` is in `docker_service_accounts` and must not read SAVES's secrets.
   Real paths confirmed the same day (the previous `/volume1/NAS/...` values were guesses that
   did not exist): vault `/volume1/APPS/OBSIDIAN/Remote Vault`, media `/volume1/MEDIA/SAVES`,
   project `/volume1/docker/saves`.

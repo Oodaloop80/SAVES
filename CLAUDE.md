@@ -631,15 +631,25 @@ bug this fixes. Consequences to respect when touching deploy files:
   `/volume1/docker` → 65536 `docker_service_accounts`). Confirmed UIDs: `sa_forgejo` 1030,
   **`sa_saves` 1031**, `sa_obsidian` 1032. That doc is the authority on identity; the
   SAVES-specific ownership map is `docs/PROD_ROLLOUT.md` **§1.6**.
-- **⚠️ `group_add: ["100"]` in compose is REQUIRED — do not remove it.** Docker sets exactly
-  one group from `user:` and does **not** inherit the DSM account's supplementary groups. The
-  vault and media are group-`users` shared data, so without it the container starts fine and
-  then fails every note write with EACCES ("notes never appear, no errors").
-- **The vault belongs to a different app.** `/volume1/APPS/OBSIDIAN/Remote Vault` is owned by
-  **`sa_obsidian` (1032)**, not SAVES — SAVES writes into it as a guest via group `users` +
-  setgid. Never "fix" a permission problem by chowning the vault to `sa_saves`.
-- **Directories SAVES must own outright:** media, state, cookies, logs.
-  `preflight_nas.sh` `[7]` distinguishes owned-vs-group-writable and fails on either mismatch.
+- **⚠️ Never grant the `users` group (GID 100) anything, anywhere** — DSM force-adds every
+  account to it, so it is the everyone-group (**SOP Rule 1**). Never add the container to a
+  broad group, and never mint a new group, to solve a permission problem. Grant the
+  **account** with a DSM ACL entry on exactly the folder it needs; an ACL `user:` ACE matches
+  on **UID**, so group membership is irrelevant. Compose therefore carries **no `group_add`**.
+- **The APPS tree is governed by DSM ACLs, not POSIX groups.** `docker_service_accounts` is
+  denied across `/volume1/APPS`; `sa_saves` is a **named exception** via an explicitly-set
+  (`level:0`) ACE that must sort *before* that inherited deny. Three separate grants, least
+  verb each: **read-only** on the vault root (`tag_index` walks all of it), **read+write** on
+  `0 - INBOX/SAVES/` (inbox rewrite is tempfile+`os.replace` — needs create *and* delete-child)
+  and on `SAVES/` (`write_note` calls `os.makedirs`). Ownership stays with `OodaAdmin` /
+  `administrators` — never a service account.
+- **Credentials and state use no shared group.** `.env` and `cookies/` are `sa_saves:root`
+  600/700; state and logs are `sa_saves:administrators` 2750. **Not**
+  `docker_service_accounts` — `sa_forgejo` is in it and must not read SAVES's API key or
+  session cookies. Same tree ≠ same trust.
+- `preflight_nas.sh` `[7]` checks the ACL ordering, rejects a `users` grant, and verifies
+  POSIX ownership; the container write test in **SOP §5.1** is the only proof that an ACL
+  actually binds a container.
 - **Never hardcode a UID without checking.** `id sa_saves` is the authority.
 - `src/main.py` sets `os.umask(0o002)` (files 664 / dirs 775) so the **setgid** bit on the
   vault keeps notes editable by the human. Don't remove it.
@@ -718,7 +728,9 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
   record constraining decisions under "Decisions locked".
 - `docs/NAS_SERVICE_ACCOUNTS.md` — **NAS-wide SOP**: one service account per app/container,
   naming (`sa_<appname>`), group-by-tree, the account registry with confirmed UIDs, the
-  directory-ownership convention, and the Docker supplementary-group trap (`group_add`).
+  and **the permission scheme (§5)**: `users` is granted nothing anywhere; only
+  `OodaAdmin`/`administrators` hold Full Control; cross-app access is a named ACL exception
+  on the narrowest folder — never a group.
   Infrastructure, not application. Update it when an account is added or a convention
   changes; anything SAVES-specific belongs in `PROD_ROLLOUT.md` §1.6 instead.
 - `docs/FORGEJO.md` — the self-hosted **git forge** this repo lives on (Forgejo 15 LTS +

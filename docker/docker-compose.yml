@@ -27,14 +27,11 @@ services:
     # SOP: docs/NAS_SERVICE_ACCOUNTS.md · ownership map: docs/PROD_ROLLOUT.md §1.6.
     user: "${SAVES_UID:-1031}:${SAVES_GID:-65536}"
 
-    # REQUIRED — do not remove. Docker sets exactly ONE group from `user:` and does NOT
-    # inherit the DSM account's supplementary groups. sa_saves is in `users` (100) on the
-    # NAS, but the container would not be, and both the vault and the media store are
-    # group-`users` shared data (they are read/edited by a human over SMB and by Obsidian).
-    # Without this the container starts fine and then fails every note write with EACCES.
-    # Only ever list groups the DSM account genuinely has — NAS_SERVICE_ACCOUNTS.md §4.
-    group_add:
-      - "${SAVES_EXTRA_GID:-100}"
+    # NO `group_add`. Vault access is granted by a DSM ACL naming sa_saves, which matches on
+    # UID — group membership is irrelevant to it. Adding the container to a broad group
+    # (`users` = every DSM account) to solve a permission problem is explicitly forbidden:
+    # NAS_SERVICE_ACCOUNTS.md Rule 1. If a POSIX-only path ever needs a group the DSM account
+    # genuinely holds, add it here then — and never `users`.
 
     env_file: ../.env            # secrets: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
     environment:

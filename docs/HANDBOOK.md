@@ -481,10 +481,11 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 
 - **Vault + media paths (confirmed 2026-08-06):**
   `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` — **owned by `sa_obsidian`**, not SAVES;
-  `MEDIA_HOST=/volume1/MEDIA/SAVES` — owned by `sa_saves`. Both group `users` (100), mode
-  `2775` (setgid). SAVES writes the vault as a guest via group `users`, which is why compose
-  needs **`group_add: ["100"]`** — Docker does not inherit DSM supplementary groups. Created
-  in rollout step 0b; full map `PROD_ROLLOUT.md` §1.6, worked example SOP §6.
+  `MEDIA_HOST=/volume1/MEDIA/SAVES`. **Both are governed by DSM ACLs, not POSIX groups** —
+  ownership stays with `OodaAdmin`/`administrators` and `sa_saves` is a named exception with
+  three separate grants (read-only on the vault root, read+write on `0 - INBOX/SAVES/` and
+  `SAVES/`). The `users` group is granted nothing anywhere. Compose carries no `group_add`.
+  Created in rollout step 0b-0d; scheme `NAS_SERVICE_ACCOUNTS.md` §5, worked example §6.
 - **Git forge (Forgejo, on the same NAS):** `https://192.168.1.201:3443/`; project dir
   `/volume1/docker/forgejo`; runs as UID 1030 (`sa_forgejo`) : GID 65536. Full build =
   `docs/FORGEJO.md`. Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +

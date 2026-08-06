@@ -104,36 +104,27 @@ stat -c '%n  %U:%G  %a' /volume1/<tree>/<app> …
 
 ## 4 · ⚠️ The Docker trap: containers do NOT inherit supplementary groups
 
-This is the single most important thing in this document, and it is not obvious.
-
 Docker's `user: "UID:GID"` sets the process's **effective primary GID directly**. It does
 **not** read DSM's group database and does **not** inherit the account's supplementary
 groups. (`FORGEJO.md` §1 documents the same finding.)
 
 So although DSM says `sa_saves` is in `users` (100) *and* `docker_service_accounts` (65536),
-a container started as `user: "1031:65536"` has exactly **one** group: 65536. It is **not** in
-`users`, and it cannot write anything that relies on group-`users` permission.
+a container started as `user: "1031:65536"` has exactly **one** group: 65536.
 
-**Fix: restate the needed groups with `group_add:`.**
+**The resolution is NOT `group_add`.** Reaching for `group_add` — or inventing a new shared
+group per sharing need — is what turns a permission question into a sprawl of half-understood
+memberships. Grant the **account** directly with a DSM ACL entry instead (§5). An ACL `user:`
+ACE matches on **UID**, which the container always carries correctly, so group membership
+never enters into it.
 
-```yaml
-services:
-  app:
-    user: "1031:65536"        # primary GID = the service group (tight by default)
-    group_add:
-      - "100"                 # users — required to write the human-shared vault/media
-```
+| | |
+|---|---|
+| ❌ Don't | add the container to a broad group (`users`), or mint a new group to share one folder |
+| ✅ Do | add one ACL ACE naming the account, on exactly the folder it needs |
 
-Rules of thumb:
-
-- `user:` picks the **primary** GID → this is what new files get *unless* a setgid directory
-  overrides it. Keep it as the **service** group.
-- `group_add:` grants **additional** memberships → this is how a container reaches a directory
-  owned by a different group.
-- **Only add groups the DSM account genuinely has.** `group_add` will happily grant a
-  membership the real account does not possess; that silently diverges the container from its
-  own identity and defeats the audit story. If a container needs a new group, add it to the
-  DSM account first, re-run `id`, then update the registry *and* the compose file.
+`group_add` remains legitimate for one narrow case: a POSIX-only path whose group the account
+genuinely holds. It is **not** how APPS-tree access is granted here, and SAVES's compose file
+carries none.
 
 ### Names vs numbers across the boundary
 
@@ -144,84 +135,116 @@ why every `chown` in a runbook should use the **numeric** id.
 
 ---
 
-## 5 · Directory ownership convention
+## 5 · The permission scheme (Bora, 2026-08-06) — this is the standard
 
-**The group is chosen by the audience, not by the tree.** Two categories:
+Shared storage on this NAS is governed by **DSM ACLs**, not POSIX groups. Four rules.
 
-### 5.1 Service-private data — nothing human-facing reads it
+### Rule 1 — `users` (GID 100) is granted NOTHING, anywhere
 
-Databases, runtime state, session/credential stores, caches.
+DSM force-adds **every** account to `users`, so it is the everyone-group. Granting it any
+right on any path makes that path reachable by every present *and future* account on the NAS.
+It must never appear in an ACL as an allow, and must never be the group on a `chown`.
 
-| | Value |
-|---|---|
-| Owner | `sa_<app>` |
-| Group | the app's service group (65536 or 65537) |
-| Mode | **`2770`** dirs / `660` files |
-| Credentials (cookies, browser profiles, keys) | **`2700`** / `600` |
+> This supersedes an earlier revision of the SAVES docs that suggested group `users` + setgid
+> for "human-shared" data. That was wrong. There is no category of data on this NAS for which
+> the everyone-group is the right answer.
 
-### 5.2 Human-shared data — a person edits or browses it
+### Rule 2 — Only `OodaAdmin` + `administrators` hold Full Control
 
-Obsidian vaults, media libraries, document shares — anything reached over SMB or by a
-desktop app.
+Full Control = read + write + **take ownership** + **modify permissions**. No service account
+ever gets it. A service account that can rewrite its own ACL can undo every other rule here.
 
-| | Value |
-|---|---|
-| Owner | `sa_<app>` (whichever service writes it) |
-| Group | **`users` (100)** |
-| Mode | **`2775`** dirs / `664` files |
+### Rule 3 — The tree's service group gets Read + Write at the tree level
 
-**Why `users` here and not a service group:** a human edits these. Locking a vault to
-`app_service_accounts` locks *you* out of your own notes over SMB. The security boundary that
-matters is §5.1 — credentials and state — not your document library, which every DSM account
-can already reach through the share anyway.
+| Tree | Group with RW | GID |
+|---|---|---|
+| `/volume1/APPS` | `app_service_accounts` | 65537 |
+| `/volume1/docker` | `docker_service_accounts` | 65536 |
 
-### 5.3 The two bits that make it work
+A *classification* grant: it lets each app operate inside its own tree. It is **not** a licence
+to reach another tree — the other tree's group is explicitly denied (Rule 4).
 
-- **setgid (`2xxx`)** — new files and subdirectories inherit the **directory's** group instead
-  of the creating process's. Without it, a service writing into a shared directory stamps its
-  own service group on every file and the human loses write access one file at a time.
-- **umask `002`** in the writing process — produces `664`/`775` instead of `644`/`755`. Without
-  it the group bit is decorative and setgid achieves nothing. (SAVES sets this in
-  `src/main.py`.)
+### Rule 4 — Everything else is denied; cross-tree access is a NAMED exception
+
+Principals that must never touch a tree get an **explicit deny** (`guest`, `http`, the other
+tree's service group, unrelated service accounts). Where one app genuinely needs another app's
+data, grant **that one account, on that one folder, with the least verb it needs**:
+
+```bash
+# read-only where it only reads:
+sudo synoacltool -add "<path>" "user:sa_<app>:allow:r-x---a-R-c--:fd--"
+# read+write where it actually writes:
+sudo synoacltool -add "<path>" "user:sa_<app>:allow:rwxpdDaARWc--:fd--"
+```
+
+Scope every grant to the narrowest folder that works. Never grant at a tree root for
+convenience.
+
+> ⚠️ **Order matters — the scheme's one fragility.** An explicitly-set ACE (`level:0`) sorts
+> *before* an inherited deny (`level:3+`), which is what lets a named exception beat the
+> tree-wide deny. If the ACL is rebuilt — most commonly by applying permissions from a parent
+> folder in File Station (§7) — the level-0 exception can be lost or re-sorted behind the deny,
+> and the app **silently** loses access. Re-verify (§5.1) after any GUI permission change.
+
+### 5.1 — Verify, and verify from inside a container
+
+`synoacltool -get <path>` lists the ACEs; DSM's **Permission Inspector** shows how DSM
+evaluates them for one account. Neither proves the kernel applies the ACL to a *container*
+process, which never authenticated through DSM. Test that directly:
+
+```bash
+sudo docker run --rm -u <uid>:<gid> -v "<host path>:/t" alpine \
+  sh -c 'touch /t/.acltest 2>/dev/null && { echo "WRITE OK"; rm -f /t/.acltest; } || \
+         { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }'
+```
+
+### 5.2 — POSIX paths (where no share ACL applies)
+
+The `/volume1/docker/<app>` project trees. Same principles in plain POSIX. **Still no `users`.**
+
+| Data | Owner | Group | Mode |
+|---|---|---|---|
+| Credentials — cookies, browser profiles, `.env` | `sa_<app>` | `root` | **`600`** files / **`700`** dirs |
+| Runtime state the app owns | `sa_<app>` | `administrators` | **`2750`** — app writes, admins inspect |
+| Logs | `sa_<app>` | `administrators` | `2750` |
+| Source, build context, config mounted `:ro` | `root` | `root` | `755` / `644` |
+
+> **Why not group `docker_service_accounts` on state and credentials?** Because `sa_forgejo` is
+> in it. Group-readable state would let the git forge read SAVES's API key and session cookies.
+> Same tree does not mean same trust — Rule 4 applies between service accounts too.
 
 ---
 
-## 6 · Worked example: cross-tree access (SAVES → the Obsidian vault)
+## 6 · Worked example: SAVES reaching the Obsidian vault
 
-The case the SOP has to handle, and the reason §4 matters:
+The case that shaped the scheme. SAVES (`sa_saves`, a **docker**-tree account) must read and
+write inside `/volume1/APPS/OBSIDIAN/Remote Vault` — an **APPS**-tree path.
+`docker_service_accounts` is denied on APPS, which is correct and stays.
 
-| | |
-|---|---|
-| Writer | `saves_app` container, `sa_saves` = 1031, service group 65536 (`/volume1/docker`) |
-| Target | `/volume1/APPS/OBSIDIAN/Remote Vault` — the **Obsidian** app's tree, `sa_obsidian` = 1032, group 65537 |
-| Also uses it | Bora over SMB; the Obsidian sync client |
+Three grants, each the narrowest that works, traced to what the code actually does:
 
-Two different service accounts, two different trees, two different service groups, plus a
-human. Resolution:
+| Path | Grant | Because |
+|---|---|---|
+| `Remote Vault/` | **read + traverse** | `tag_index` walks the *entire* vault to build tag autocomplete and the taxonomy hint. Denied, it returns nothing **silently** — autocomplete dies and the analyzer starts inventing near-duplicate tags |
+| `Remote Vault/0 - INBOX/SAVES/` | **read + write** | the inbox rewrite is `tempfile.mkstemp(dir=<same dir>)` + `os.replace()` — needs **create file** *and* **delete child** on the directory, not write on the file |
+| `Remote Vault/SAVES/` | **read + write** | `write_note()` calls `os.makedirs()` — notes land here and it **creates nested folders**; this is *not* the inbox folder |
 
 ```bash
-# The vault is human-shared data (§5.2) — owner is the app that owns the tree, group is users:
-sudo chown -R 1032:100 "/volume1/APPS/OBSIDIAN/Remote Vault"
-sudo chmod -R 2775     "/volume1/APPS/OBSIDIAN/Remote Vault"
-
-# Media is written by SAVES and browsed by a human — same category, different owner:
-sudo chown -R 1031:100 /volume1/MEDIA/SAVES
-sudo chmod -R 2775     /volume1/MEDIA/SAVES
-
-# SAVES's own private state stays on the service group (§5.1):
-sudo chown -R 1031:65536 /volume1/docker/saves/state
-sudo chmod    2770       /volume1/docker/saves/state
+V="/volume1/APPS/OBSIDIAN/Remote Vault"
+sudo synoacltool -add "$V"                  "user:sa_saves:allow:r-x---a-R-c--:fd--"
+sudo synoacltool -add "$V/0 - INBOX/SAVES"  "user:sa_saves:allow:rwxpdDaARWc--:fd--"
+sudo synoacltool -add "$V/SAVES"            "user:sa_saves:allow:rwxpdDaARWc--:fd--"
 ```
+
+Compose stays minimal — no `group_add`, because the ACL matches `sa_saves` by UID:
 
 ```yaml
-# …and the container must be told it is in `users`, because Docker won't infer it (§4):
 user: "1031:65536"
-group_add: ["100"]
 ```
 
-Result: SAVES writes notes into Obsidian's vault via group `users`; setgid stamps each new
-note `…:users` so Obsidian and SMB can still edit it; SAVES's credentials and state stay
-locked to `docker_service_accounts`; neither service can read the other's private data.
+Net effect: containers as a class still cannot touch APPS; `sa_saves` reads the vault and
+writes exactly two folders; `sa_forgejo` stays denied; Full Control stays with `OodaAdmin` and
+`administrators`; `users` is granted nothing anywhere.
 
 ---
 
@@ -243,14 +266,22 @@ Change permissions here **only** with `chown`/`chmod` over SSH.
 
 - [ ] Pick the name: `sa_<appname>`
 - [ ] Decide the tree → `/volume1/APPS` (65537) or `/volume1/docker` (65536)
-- [ ] Create the account in DSM; deny all applications; grant Read/Write only on its shares
+- [ ] Create the account in DSM; **deny all applications**; grant Read/Write only on its shares
 - [ ] `id sa_<appname>` → **record the real UID in §2**
-- [ ] Create its directories with owner + mode per §5 (service-private vs human-shared)
-- [ ] If it is a container: set `user: "<uid>:<service-gid>"`, and `group_add` any group it
-      genuinely needs and genuinely has
-- [ ] Ensure the process uses umask `002` if it writes human-shared data
-- [ ] `stat -c '%n %U:%G %a'` every path to verify
-- [ ] Never touch those permissions in the DSM GUI afterwards (§7)
+- [ ] Ownership: `OodaAdmin` + `administrators` keep Full Control (Rule 2) — **never** the
+      service account
+- [ ] Confirm `users` appears **nowhere** in the ACL and is not the group on any `chown`
+      (Rule 1)
+- [ ] Does it need another app's data? Add **one named ACL ACE per folder**, least verb —
+      read-only where it only reads (Rule 4). Do **not** create a group for it, and do **not**
+      grant at a tree root
+- [ ] POSIX paths: credentials `600`/`700`, state and logs `2750` owned by the account with
+      group `administrators` (§5.2) — **not** the tree service group, which its siblings share
+- [ ] If it is a container: `user: "<uid>:<service-gid>"`, **no `group_add`** unless a
+      POSIX-only path needs a group the account genuinely holds
+- [ ] Verify: `synoacltool -get` **and** the container write test (§5.1) — Permission Inspector
+      alone does not prove container access
+- [ ] Never touch those permissions in the DSM GUI afterwards (§7); if you do, re-verify
 
 ---
 

@@ -236,19 +236,20 @@ is a blocker — SAVES will start cleanly and then fail with no useful error.
 
 | Path | Owner | Mode | Why |
 |---|---|---|---|
-| `/volume1/MEDIA/SAVES` | `sa_saves:docker_service_accounts` | **`2770`** | SAVES writes media here. Check whether this share also carries a DSM ACL (`synoacltool -get`) — if so it governs instead. |
 | `/volume1/docker/saves` | `root:root` | `755` | project root; nothing writes here at runtime |
 | `/volume1/docker/saves/app` (the clone) | `root:root` | `755` | source + build context, read-only at runtime |
-| `…/app/.env` | `root:sa_saves`† | **`640`** | **secrets** (API key, bot token). Container must read; nobody else should. |
+| `…/app/.env` | `sa_saves:root` | **`600`** | **secrets** (API key, bot token) — only `sa_saves` and root. † |
 | `…/app/docker/.env` | `root:root` | `644` | host paths only — no secrets |
 | `…/app/config.yaml` | `root:root` | `644` | mounted `:ro` |
-| `…/app/cookies` + contents | `sa_saves:65536` | **`2700`** dir | **credentials.** Container WRITES here (live Chromium profile), so it must own it. |
-| `…/app/logs` | `sa_saves:65536` | `2775` | container writes; you read |
-| `/volume1/docker/saves/state` | `sa_saves:65536` | **`2770`** | runtime JSONs; container-only |
+| `…/app/cookies` + contents | `sa_saves:root` | **`700`** dir / `600` files | **credentials** (provecho profile, platform cookies). Container writes here. † |
+| `…/app/logs` | `sa_saves:administrators` | `2750` | container writes; admins read |
+| `/volume1/docker/saves/state` | `sa_saves:administrators` | **`2750`** | runtime JSONs; container writes, admins inspect |
 | `/volume1/docker/certs/vineyard-root-ca.crt` | `root:root` | `644` | public certificate — world-readable by design |
 
-† `640` with group `sa_saves` lets the container read `.env` without it being world-readable.
-`chown root:sa_saves` — owner root so the container cannot rewrite its own secrets.
+† **Not group `docker_service_accounts`.** `sa_forgejo` is in that group — making secrets or
+cookies group-readable would let the git forge read SAVES's Anthropic key and session
+cookies. Same tree does not mean same trust (SOP §5.2). Group `administrators` on state/logs
+lets you inspect them without sudo; credentials get no group at all.
 
 **Why setgid (`2xxx`) on the POSIX dirs:** new files and subdirectories inherit the
 *directory's* group rather than the creating process's. Paired with `os.umask(0o002)` in
@@ -256,10 +257,10 @@ is a blocker — SAVES will start cleanly and then fail with no useful error.
 creates. Inside the **APPS tree the DSM ACL's `fd--` inheritance flags do this job instead**,
 which is why the vault needs no setgid from us.
 
-**`group_add` in compose:** currently `["100"]` (`users`), which `sa_saves` genuinely has. It
-is **no longer what grants vault access** — the DSM ACL is. Keep it only if a group-`users`
-path (e.g. the media share) still needs it; it is harmless but not load-bearing. Never add a
-group the DSM account does not actually hold (SOP §4).
+**`group_add` in compose: removed.** Vault and media access come from DSM ACL entries naming
+`sa_saves`, which match on **UID** — group membership is irrelevant to them. Adding the
+container to `users` (the everyone-group) to solve a permission problem is forbidden by
+**SOP Rule 1**. Preflight `[7]` fails if GID 100 reappears in a `group_add`.
 
 ### ⚠️ The DSM ACL trap — applies to every path above
 
@@ -329,51 +330,82 @@ uid=1032(sa_obsidian) gid=100(users) groups=100(users),65537(app_service_account
 > `docker/.env`. DSM assigns UIDs; you do not choose them.
 
 **Why two accounts:** the vault lives in the **APPS** tree, which belongs to **Obsidian**
-(`sa_obsidian`). SAVES writes into it as a guest, via group `users` + setgid — never by taking
-ownership. The media store and SAVES's own state belong to `sa_saves`. Worked example:
-SOP §6.
+(`sa_obsidian`). SAVES reaches it as a **named ACL exception** — never by taking ownership and
+never through a shared group. The media store and SAVES's own state belong to `sa_saves`.
+Scheme: **`NAS_SERVICE_ACCOUNTS.md` §5**; worked example §6.
 
-**0b. Create the directories with the right owner from the start.**
-
-```bash
-VAULT="/volume1/APPS/OBSIDIAN/Remote Vault"     # Obsidian's tree — sa_obsidian owns it
-MEDIA="/volume1/MEDIA/SAVES"                    # SAVES writes it, you browse it
-
-sudo mkdir -p "$VAULT/0 - INBOX" "$MEDIA"
-
-# Vault: owned by OBSIDIAN (1032), group users (100) so SAVES + SMB can both write.
-sudo chown -R 1032:100 "$VAULT"
-sudo chmod -R 2775     "$VAULT"      # 2 = setgid — new notes inherit group `users`
-
-# Media: owned by SAVES (1031), same shared group.
-sudo chown -R 1031:100 "$MEDIA"
-sudo chmod -R 2775     "$MEDIA"
-
-# The inbox file the watcher reads. SAVES must be able to REWRITE it (it removes URLs
-# after a save), so group-write matters here too.
-sudo touch "$VAULT/0 - INBOX/SAVES/SAVES.md"
-sudo chown 1032:100 "$VAULT/0 - INBOX/SAVES/SAVES.md"
-sudo chmod 664      "$VAULT/0 - INBOX/SAVES/SAVES.md"
-```
-
-> **Do not chown the vault to `sa_saves`.** It is Obsidian's tree. SAVES reaching it through
-> group `users` is the design, not a workaround — SOP §5.2/§6.
-
-**0c. Verify — this is the step people skip:**
+**0b. Create the directories.** Ownership stays with `OodaAdmin` / `administrators`
+(SOP Rule 2) — you do **not** chown these to a service account.
 
 ```bash
-stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX" "$VAULT/0 - INBOX/SAVES/SAVES.md"
+VAULT="/volume1/APPS/OBSIDIAN/Remote Vault"
+MEDIA="/volume1/MEDIA/SAVES"
+
+sudo mkdir -p "$VAULT/0 - INBOX/SAVES" "$VAULT/SAVES" "$MEDIA"
+sudo touch    "$VAULT/0 - INBOX/SAVES/SAVES.md"
 ```
 
-| Path | Want |
+> ⚠️ **Moving the real vault in later will not carry these ACLs.** A *copy* into the folder
+> inherits the destination ACL; a *move* within the same volume keeps the source's ACL, which
+> is almost certainly wrong. **Re-run 0c and 0d after the vault is actually in place** — this
+> is the single easiest way to end up with a silently broken deploy.
+
+**0c. Grant `sa_saves` — three separate grants, least verb each.**
+
+`docker_service_accounts` is denied across `/volume1/APPS` by design, so `sa_saves` needs an
+explicitly-set (`level:0`) allow ACE on each folder. Nothing is granted at the tree root, and
+no group is created:
+
+```bash
+# Read + traverse ONLY — tag_index walks the entire vault; it never writes here:
+sudo synoacltool -add "$VAULT"                 "user:sa_saves:allow:r-x---a-R-c--:fd--"
+
+# Read + write — the inbox rewrite is tempfile+os.replace, so it needs create AND delete-child:
+sudo synoacltool -add "$VAULT/0 - INBOX/SAVES" "user:sa_saves:allow:rwxpdDaARWc--:fd--"
+
+# Read + write — write_note() does os.makedirs(); notes and their nested folders land here:
+sudo synoacltool -add "$VAULT/SAVES"           "user:sa_saves:allow:rwxpdDaARWc--:fd--"
+
+# Media: SAVES writes it; sa_obsidian only needs to read it for media:// rendering.
+sudo synoacltool -add "$MEDIA" "user:sa_saves:allow:rwxpdDaARWc--:fd--"
+sudo synoacltool -add "$MEDIA" "user:sa_obsidian:allow:r-x---a-R-c--:fd--"
+```
+
+Verify the permission strings landed as intended — do not trust them unread:
+
+```bash
+sudo synoacltool -get "$VAULT/0 - INBOX/SAVES"
+```
+
+The `user:sa_saves:allow` ACE must appear **above** any
+`group:docker_service_accounts:deny`, and be `level:0` (explicitly set on this folder, not
+inherited). If it sorts below the deny, SAVES is blocked.
+
+**0d. Verify from inside a container — the only test that proves it.**
+
+`synoacltool -get` and DSM's Permission Inspector show how *DSM* evaluates the ACL. Neither
+proves the kernel applies it to a container process, which never authenticated through DSM:
+
+```bash
+for p in "" "/0 - INBOX/SAVES" "/SAVES"; do
+  sudo docker run --rm -u 1031:65536 -v "$VAULT$p:/t" alpine \
+    sh -c 'touch /t/.acltest 2>/dev/null && { echo "WRITE OK"; rm -f /t/.acltest; } || \
+           { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }' \
+    | sed "s|^|  ${p:-/ (vault root)} -> |"
+done
+sudo docker run --rm -u 1031:65536 -v "$MEDIA:/t" alpine \
+  sh -c 'touch /t/.acltest && rm -f /t/.acltest && echo "  media -> WRITE OK" || echo "  media -> BLOCKED"'
+```
+
+| Path | Wanted |
 |---|---|
-| `…/Remote Vault` | `sa_obsidian:users  2775` |
-| `/volume1/MEDIA/SAVES` | `sa_saves:users  2775` |
-| `…/Remote Vault/0 - INBOX` | `sa_obsidian:users  2775` |
-| `…/0 - INBOX/SAVES/SAVES.md` | `sa_obsidian:users  664` |
+| `/ (vault root)` | **READ ONLY** — write here would mean the grant is too broad |
+| `/0 - INBOX/SAVES` | **WRITE OK** |
+| `/SAVES` | **WRITE OK** |
+| `MEDIA` | **WRITE OK** |
 
-The **group must read `users`** on all of them — that is what SAVES writes through. An owner
-of `sa_obsidian` on the vault is correct, not a mistake.
+Any `NO ACCESS` is a blocker: SAVES would start cleanly and then fail with no useful error.
+`preflight_nas.sh [7]` re-checks the ACL ordering before every deploy.
 
 > ⚠️ **From here on, never touch these folders' permissions in File Station or Control
 > Panel → Shared Folder → Permissions.** DSM will rewrite ACLs across the subtree and
@@ -462,8 +494,8 @@ cd /volume1/docker/saves/app          # ← all paths below are relative to HERE
 
 sudo cp .env.example .env
 sudo vi .env                          # ANTHROPIC_API_KEY=... DISCORD_BOT_TOKEN=... (same as DEV)
-sudo chown root:sa_saves .env         # container reads it; root owns it so it can't be rewritten
-sudo chmod 640 .env                   # NOT world-readable — these are live credentials
+sudo chown 1031:root .env             # ONLY sa_saves (and root) — no group; sa_forgejo must not read it
+sudo chmod 600 .env                   # live credentials
 
 sudo cp docker/.env.example docker/.env
 sudo vi docker/.env                   # set SAVES_UID from step 0b; confirm VAULT_HOST/MEDIA_HOST
@@ -475,7 +507,7 @@ Leave `Remote Vault` **unquoted** despite the space — the compose file quotes 
 Verify:
 ```bash
 stat -c '%n  %U:%G  %a' .env docker/.env
-# want:  .env  root:sa_saves  640      docker/.env  root:root  644
+# want:  .env  sa_saves:root  600      docker/.env  root:root  644
 ```
 
 ### Step 3 — [YOU] Carry cookies + the provecho profile into `cookies/`
@@ -493,11 +525,11 @@ scp -r cookies/provecho.co_profile <you>@192.168.1.201:~/saves-cookies/
 cd /volume1/docker/saves/app
 sudo mkdir -p cookies
 sudo cp -r ~/saves-cookies/. cookies/
-sudo chown -R 1031:65536 cookies          # sa_saves : docker_service_accounts  — substitute your UID
-sudo chmod 2700 cookies                   # dir: owner-only, setgid
+sudo chown -R 1031:root cookies           # sa_saves owns; NO service group (sa_forgejo is in it)
+sudo chmod 700 cookies                    # credentials: owner-only
 sudo find cookies -type f -exec chmod 600 {} \;
 sudo find cookies -type d -exec chmod 2700 {} \;
-stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:docker_service_accounts  2700
+stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:root  700
 ```
 
 **Shrink the profile (optional):** most of the ~160 MB is disposable cache. Auth lives in
@@ -510,17 +542,17 @@ You may exclude `Default/Cache`, `Default/Code Cache`, `Default/GPUCache`, `Defa
 
 ```bash
 sudo mkdir -p /volume1/docker/saves/state
-sudo chown 1031:65536 /volume1/docker/saves/state    # substitute your UID
-sudo chmod 2770       /volume1/docker/saves/state    # container-only; setgid
+sudo chown 1031:administrators /volume1/docker/saves/state   # app writes, admins inspect
+sudo chmod 2750                /volume1/docker/saves/state
 
 # keep learned folder routing (vault-relative paths → portable):
 #   from the WORKSTATION:  scp preferences.json <you>@192.168.1.201:~/
 sudo mv ~/preferences.json /volume1/docker/saves/state/
-sudo chown 1031:65536 /volume1/docker/saves/state/preferences.json
-sudo chmod 660        /volume1/docker/saves/state/preferences.json
+sudo chown 1031:administrators /volume1/docker/saves/state/preferences.json
+sudo chmod 640        /volume1/docker/saves/state/preferences.json
 
 stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
-# want: sa_saves:docker_service_accounts  2770
+# want: sa_saves:administrators  2750
 ```
 
 **Do NOT copy** `processing_state.json`, `pending_approvals.json`, or `queue_state.json` from DEV — PROD starts with an **empty** save-history on purpose (the real vault doesn't have DEV's test saves). `queue_state.json` is created empty on first run.
@@ -530,7 +562,7 @@ stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
 ```bash
 cd /volume1/docker/saves/app
 sudo mkdir -p logs
-sudo chown 1031:65536 logs && sudo chmod 2775 logs
+sudo chown 1031:administrators logs && sudo chmod 2750 logs
 ```
 Without this, compose creates `logs/` as **root** on first `up` and the non-root container
 cannot open `logs/processor.log` — startup fails immediately.
