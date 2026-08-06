@@ -249,6 +249,27 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 ## Phase 5 — Ongoing tuning
 - [ ] Feed real URLs via `/save`; refine quality + routing; let `preferences.json` learn
 - [ ] Keep docs current per change; targeted single-agent reviews on risky edits only
+- [ ] **Revisit NAS-vs-workstation hosting once there is data (Bora, 2026-08-06).** Decision
+      for now: **run on the NAS**, but measure rather than guess. The concern is CPU, not RAM
+      (32 GB total; SAVES capped at 4 GB alongside Forgejo's 3 GB). The DS1621+'s embedded
+      Ryzen is roughly a tenth of the workstation's 7950X, and **Synology makes a CPU quota
+      impossible**, so a burst can transiently degrade SMB, Obsidian Sync, and the forge.
+      What makes it tolerable: processing is strictly serial and the approval gate idles the
+      pipeline between saves, so bursts are short.
+      **Instrumentation (shipped):** `processor._process_one` logs one `TIMING` line per save
+      with per-stage wall-clock — `extract` and `vision` are the local-CPU stages (Chromium,
+      ffmpeg); `download`/`transcribe`/`analyze` are mostly network waits.
+      `grep TIMING logs/processor.log` after a few dozen real saves.
+      **Move the pipeline to the workstation if** `extract`+`vision` dominate total time, or
+      NAS responsiveness visibly suffers during saves. The port is cheap by design — a
+      `config.local.yaml` and `python src\main.py`, same code (ARCHITECTURE §1b). Costs to
+      weigh then: the workstation must be up 24/7 (it already must be, for Whisper), and
+      notes would be written to the NAS vault over SMB, which is untested.
+      **Third option if only the browser is the problem:** keep the pipeline on the NAS and
+      connect Playwright to a Chromium on the workstation over CDP — the Whisper pattern.
+      Bonus: the provecho profile would then live on the machine where it was captured,
+      dissolving the §1.4 Windows-DPAPI-on-Linux risk entirely. Real engineering, not a
+      config change.
 
 ## Phase 5b — Discord-native saving & site crawlers
 > Raised by Bora (2026-07-22). Both shipped.

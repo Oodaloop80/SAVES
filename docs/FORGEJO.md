@@ -1,6 +1,9 @@
 # Forgejo on Synology DS1621+ — Hardened Non-Root Build (v3)
 
-> **Scope:** Forgejo 15 LTS + PostgreSQL 17 in Synology Container Manager on DSM 7.3.2-86009 U4. LAN-only, Forgejo-terminated HTTPS with step-ca certs, HTTPS-only Git with PATs, no SSH exposure. **Status:** v3 — corrected against an actual build on hardware. Supersedes v1 and v2. **Verification date:** 2026-08-05.
+> **Scope:** Forgejo 15 LTS + PostgreSQL 17 in Synology Container Manager on DSM 7.3.2-86009 U4.
+> LAN-only, Forgejo-terminated HTTPS with step-ca certs, HTTPS-only Git with PATs, no SSH exposure.
+> **Status:** v3 — corrected against an actual build on hardware. Supersedes v1 and v2.
+> **Verification date:** 2026-08-05.
 
 ---
 
@@ -8,19 +11,19 @@
 
 Everything below was discovered by deploying this on actual hardware, not from documentation.
 
-|#|v2 said|v3 says|Severity|
+| # | v2 said | v3 says | Severity |
 |---|---|---|---|
-|1|`cpus: 2.0` / `cpus: 1.0` in Compose|**Removed.** Synology kernels lack CFS bandwidth control; any CPU quota is a **hard build failure**: `NanoCPUs can not be set…`|🔴 **Blocked deployment**|
-|2|Repo root = `/var/lib/gitea/data/forgejo-repositories`|**`/var/lib/gitea/git/repositories`.** The rootless image overrides the cheat sheet's generic default — trust the installer's prefilled value|🔴 Wrong path|
-|3|Enter `git` for Run As Username; `$USER` fallback saves you|**False.** `os/user.Current()` does a real `getpwuid()` and returns `""` for an unmapped UID. No typed value can pass. **New Phase 4B mounts a corrected `/etc/passwd`**|🔴 **Blocked install**|
-|4|Strip `RUN_USER` from `app.ini` (Step 8.6)|**Obsolete.** With Phase 4B, `git` is genuinely UID 1030's name and `RUN_USER = git` is valid permanently|🟡 Workaround removed|
-|5|`INSTALL_LOCK` + CLI admin as the fallback|Kept for the Terraform rebuild, but **no longer needed here.** The `MustInstalled` error it produced was just a **missing `-c` flag** on the exec'd CLI, not corrupted state|🟡 Bad diagnosis corrected|
-|6|`ports: "3443:3000"`|**`"192.168.1.201:3443:3000"`.** The short form also binds IPv6 (`::`), which the IPv4-subnet firewall rule does not cover|🟡 Firewall bypass|
-|7|Certs at `custom/https/{cert,key}.pem`, defaults implied|**`server.crt` / `server.key`** from step-ca, with `CERT_FILE`/`KEY_FILE` set explicitly|🟢 Environment-specific|
-|8|—|**New:** seccomp is `unconfined` DSM-wide — an honest caveat that can't be fixed from Compose|🟢 Disclosure|
-|9|—|**New:** rootless vs unprivileged vs non-root defined precisely (§3)|🟢 Clarity|
-|10|—|**New:** installer field guidance for Server / third-party / email sections|🟢 Completeness|
-|11|—|**New:** Windows/PowerShell test commands (no netcat on Windows)|🟢 Practicality|
+| 1 | `cpus: 2.0` / `cpus: 1.0` in Compose | **Removed.** Synology kernels lack CFS bandwidth control; any CPU quota is a **hard build failure**: `NanoCPUs can not be set…` | 🔴 **Blocked deployment** |
+| 2 | Repo root = `/var/lib/gitea/data/forgejo-repositories` | **`/var/lib/gitea/git/repositories`.** The rootless image overrides the cheat sheet's generic default — trust the installer's prefilled value | 🔴 Wrong path |
+| 3 | Enter `git` for Run As Username; `$USER` fallback saves you | **False.** `os/user.Current()` does a real `getpwuid()` and returns `""` for an unmapped UID. No typed value can pass. **New Phase 4B mounts a corrected `/etc/passwd`** | 🔴 **Blocked install** |
+| 4 | Strip `RUN_USER` from `app.ini` (Step 8.6) | **Obsolete.** With Phase 4B, `git` is genuinely UID 1030's name and `RUN_USER = git` is valid permanently | 🟡 Workaround removed |
+| 5 | `INSTALL_LOCK` + CLI admin as the fallback | Kept for the Terraform rebuild, but **no longer needed here.** The `MustInstalled` error it produced was just a **missing `-c` flag** on the exec'd CLI, not corrupted state | 🟡 Bad diagnosis corrected |
+| 6 | `ports: "3443:3000"` | **`"192.168.1.201:3443:3000"`.** The short form also binds IPv6 (`::`), which the IPv4-subnet firewall rule does not cover | 🟡 Firewall bypass |
+| 7 | Certs at `custom/https/{cert,key}.pem`, defaults implied | **`server.crt` / `server.key`** from step-ca, with `CERT_FILE`/`KEY_FILE` set explicitly | 🟢 Environment-specific |
+| 8 | — | **New:** seccomp is `unconfined` DSM-wide — an honest caveat that can't be fixed from Compose | 🟢 Disclosure |
+| 9 | — | **New:** rootless vs unprivileged vs non-root defined precisely (§3) | 🟢 Clarity |
+| 10 | — | **New:** installer field guidance for Server / third-party / email sections | 🟢 Completeness |
+| 11 | — | **New:** Windows/PowerShell test commands (no netcat on Windows) | 🟢 Practicality |
 
 **Confirmed working on this build:** `2222` → refused, `3443` → succeeded, `docker exec forgejo id` → `uid=1030(git) gid=65536(git)`.
 
@@ -28,16 +31,16 @@ Everything below was discovered by deploying this on actual hardware, not from d
 
 ## Earlier revision log (v1 → v2)
 
-|#|v1 said|v2 says|Impact|
+| # | v1 said | v2 says | Impact |
 |---|---|---|---|
-|1|Mounted a second volume `config:/etc/gitea` and put certs at `/etc/gitea/https/`|**`/etc/gitea` is removed in Forgejo v15.** Config lives at `/var/lib/gitea/custom/conf/app.ini`. Certs go at `/var/lib/gitea/custom/https/`|**This was a real bug.** v1's compose would have started with config in a path Forgejo v15 no longer reads|
-|2|"GID 65536 is not the `users` group, that's GID 100 — verify"|Your `id` output resolves it: **primary GID 100 (`users`), supplementary GID 65536 (`service accounts`)**. We deliberately run the container as `1030:65536`|Tighter than GID 100. Explained in §1|
-|3|Long section correcting "rootless Docker"|You meant **rootless containers**, which is exactly what this builds. Correction retracted; short honest note retained because you want true rootless Docker later|Removed ~600 words of misdirected lecture|
-|4|`getent group 65536`|**`getent` does not exist on DSM.** Use `id`, `synogroup --get`, or `/etc/group`|v1 gave you a command that can't run|
-|5|Recommended `INSTALL_LOCK=true` from first boot + CLI-only admin|**Web installer first, then lock.** Your instinct was right|See Decision B|
-|6|Forgejo 15.0.5|Still **15.0.5** — see the note below about 15.0.6|—|
-|7|Container Manager 24.0.2-1543|**24.0.2-1606** (yours). 24.0.2-1630 exists for some models|Corrected|
-|8|—|**New:** Claude Code integration section|You asked; it has non-obvious CA-trust behaviour|
+| 1 | Mounted a second volume `config:/etc/gitea` and put certs at `/etc/gitea/https/` | **`/etc/gitea` is removed in Forgejo v15.** Config lives at `/var/lib/gitea/custom/conf/app.ini`. Certs go at `/var/lib/gitea/custom/https/` | **This was a real bug.** v1's compose would have started with config in a path Forgejo v15 no longer reads |
+| 2 | "GID 65536 is not the `users` group, that's GID 100 — verify" | Your `id` output resolves it: **primary GID 100 (`users`), supplementary GID 65536 (`docker_service_accounts`)**. We deliberately run the container as `1030:65536` | Tighter than GID 100. Explained in §1 |
+| 3 | Long section correcting "rootless Docker" | You meant **rootless containers**, which is exactly what this builds. Correction retracted; short honest note retained because you want true rootless Docker later | Removed ~600 words of misdirected lecture |
+| 4 | `getent group 65536` | **`getent` does not exist on DSM.** Use `id`, `synogroup --get`, or `/etc/group` | v1 gave you a command that can't run |
+| 5 | Recommended `INSTALL_LOCK=true` from first boot + CLI-only admin | **Web installer first, then lock.** Your instinct was right | See Decision B |
+| 6 | Forgejo 15.0.5 | Still **15.0.5** — see the note below about 15.0.6 | — |
+| 7 | Container Manager 24.0.2-1543 | **24.0.2-1606** (yours). 24.0.2-1630 exists for some models | Corrected |
+| 8 | — | **New:** Claude Code integration section | You asked; it has non-obvious CA-trust behaviour |
 
 ### On the version numbers you gave me
 
@@ -47,25 +50,25 @@ Everything below was discovered by deploying this on actual hardware, not from d
 
 ### Assumptions I'm still making — correct any that are wrong
 
-|#|Assumption|Change it by|
+| # | Assumption | Change it by |
 |---|---|---|
-|A1|You have no internal DNS record for the NAS yet, so the cert is built around **IP 192.168.1.201** with hostnames as extra SANs|Tell me your intended hostname; edit the SAN block in Phase 3|
-|A2|Volume 1 (`/volume1/docker`) is the right home for this|Substitute your volume number throughout|
-|A3|Host port **3443** is free|Verified in Phase 1 Step 5|
-|A4|You want the CA private key kept off the NAS|Phase 3 does this; skip the move step if you disagree|
+| A1 | You have no internal DNS record for the NAS yet, so the cert is built around **IP 192.168.1.201** with hostnames as extra SANs | Tell me your intended hostname; edit the SAN block in Phase 3 |
+| A2 | Volume 1 (`/volume1/docker`) is the right home for this | Substitute your volume number throughout |
+| A3 | Host port **3443** is free | Verified in Phase 1 Step 5 |
+| A4 | You want the CA private key kept off the NAS | Phase 3 does this; skip the move step if you disagree |
 
 ---
 
 ## 0 · Verified version matrix
 
-|Component|Pin|Resolves to|Support window|Source|
+| Component | Pin | Resolves to | Support window | Source |
 |---|---|---|---|---|
-|Forgejo|`codeberg.org/forgejo/forgejo:15-rootless`|15.0.5-rootless|**LTS to 15 July 2027**|forgejo.org/releases|
-|PostgreSQL|`postgres:17-alpine`|17.10|17.x supported to Nov 2029|postgresql.org|
-|DSM|7.3.2-86009 U4|—|yours|—|
-|Container Manager|24.0.2-1606|Docker Engine 24.0.2, Compose V2|Synology-maintained|Synology KB|
+| Forgejo | `codeberg.org/forgejo/forgejo:15-rootless` | 15.0.5-rootless | **LTS to 15 July 2027** | forgejo.org/releases |
+| PostgreSQL | `postgres:17-alpine` | 17.10 | 17.x supported to Nov 2029 | postgresql.org |
+| DSM | 7.3.2-86009 U4 | — | yours | — |
+| Container Manager | 24.0.2-1606 | Docker Engine 24.0.2, Compose V2 | Synology-maintained | Synology KB |
 
-**Why LTS `15` and not `16`:** Forgejo v15.0 is a Long Term Support release supported until 15 July 2027, whereas major releases are published every three months. The 16 line gets ~3 months before 17 supersedes it. For a system you want to _build once and not rework_, LTS is the defensible call. The **15** tag tracks the latest patch release automatically, while upgrading from X to X+1 requires a manual operation and human verification.
+**Why LTS `15` and not `16`:** Forgejo v15.0 is a Long Term Support release supported until 15 July 2027, whereas major releases are published every three months. The 16 line gets ~3 months before 17 supersedes it. For a system you want to *build once and not rework*, LTS is the defensible call. The **15** tag tracks the latest patch release automatically, while upgrading from X to X+1 requires a manual operation and human verification.
 
 ---
 
@@ -74,26 +77,30 @@ Everything below was discovered by deploying this on actual hardware, not from d
 Your `id sa_forgejo` output:
 
 ```
-uid=1030(sa_forgejo) gid=100(users) groups=100(users),65536(service accounts)
+uid=1030(sa_forgejo) gid=100(users) groups=100(users),65536(docker_service_accounts)
 ```
 
 This tells us three things:
 
 1. **UID 1030** — your target, above 1000. ✅
 2. **Primary GID is 100 (`users`)** — DSM forces this on every account and provides no GUI to change it. This is not a mistake on your part; it's a DSM constraint.
-3. **GID 65536 is your custom `service accounts` group** — a supplementary group.
+3. **GID 65536 is your custom `docker_service_accounts` group** — a supplementary group.
+
+> **Note on the group name:** this group was originally created as `service accounts` and later renamed to `docker_service_accounts`. **Renaming a DSM group does not change its GID** — it stays 65536, so nothing in the container configuration is affected. The compose `user: "1030:65536"`, every `chown`, and the mounted `/etc/group` all reference the *number*, not the name.
+>
+> This is the same principle as §2's two-passwd-file model: **numbers cross the boundary, names don't.** The container's `/etc/group` maps 65536 to the name `git` (its own namespace's choice) while DSM maps the same GID to `docker_service_accounts`. Both are correct simultaneously, because the only thing the kernel enforces is `65536`.
 
 ### The decision: which GID does the container run as?
 
-Docker's `user: "UID:GID"` sets the process's **effective primary GID directly**, independent of what DSM thinks. It does _not_ inherit supplementary groups from the host. So we get to choose:
+Docker's `user: "UID:GID"` sets the process's **effective primary GID directly**, independent of what DSM thinks. It does *not* inherit supplementary groups from the host. So we get to choose:
 
-||`user: "1030:100"`|**`user: "1030:65536"`** ← chosen|
+| | `user: "1030:100"` | **`user: "1030:65536"`** ← chosen |
 |---|---|---|
-|Matches DSM primary group|✅|❌ (irrelevant inside container)|
-|Group membership breadth|`users` — **every DSM account is in it**|`service accounts` — only what you put there|
-|If group-read leaks on a data file|Readable by every NAS user|Readable only by service accounts|
-|Meets your "1000+ UID and GID" goal|❌ GID 100|✅ GID 65536|
-|Works|✅|✅|
+| Matches DSM primary group | ✅ | ❌ (irrelevant inside container) |
+| Group membership breadth | `users` — **every DSM account is in it** | `docker_service_accounts` — only what you put there |
+| If group-read leaks on a data file | Readable by every NAS user | Readable only by docker_service_accounts members |
+| Meets your "1000+ UID and GID" goal | ❌ GID 100 | ✅ GID 65536 |
+| Works | ✅ | ✅ |
 
 **Locked: `user: "1030:65536"`, and all data directories `chown`ed to `1030:65536`.** The DSM-side primary group of 100 is irrelevant once the container is running — DSM assigns it, we override it at container start. Worth a paragraph in the blog post: it's a case where the container boundary lets you get tighter isolation than the host OS will give you natively.
 
@@ -104,7 +111,7 @@ DSM ships BusyBox userland without `getent`. Equivalents:
 ```bash
 id sa_forgejo                          # what you already ran — the authoritative check
 grep 65536 /etc/group                  # resolve a GID to a name
-synogroup --get "service accounts"     # DSM-native group inspection
+synogroup --get docker_service_accounts     # DSM-native group inspection
 synouser --get sa_forgejo              # DSM-native user inspection
 awk -F: '$3==70' /etc/passwd           # check whether UID 70 is taken (needed in Phase 4)
 ```
@@ -131,17 +138,17 @@ The v15.0.0 release notes state: In Forgejo v8.0.0 the default config file locat
 
 Resulting layout inside the container:
 
-|Purpose|Container path|Host path|
+| Purpose | Container path | Host path |
 |---|---|---|
-|Work dir (everything)|`/var/lib/gitea`|`/volume1/docker/forgejo/data`|
-|Config|`/var/lib/gitea/custom/conf/app.ini`|`…/data/custom/conf/app.ini`|
-|TLS cert/key|`/var/lib/gitea/custom/https/server.{crt,key}`|`…/data/custom/https/`|
-|**Repos**|**`/var/lib/gitea/git/repositories`**|`…/data/git/repositories`|
-|LFS + packages/registry|`/var/lib/gitea/data/{lfs,packages}`|`…/data/data/…`|
+| Work dir (everything) | `/var/lib/gitea` | `/volume1/docker/forgejo/data` |
+| Config | `/var/lib/gitea/custom/conf/app.ini` | `…/data/custom/conf/app.ini` |
+| TLS cert/key | `/var/lib/gitea/custom/https/server.{crt,key}` | `…/data/custom/https/` |
+| **Repos** | **`/var/lib/gitea/git/repositories`** | `…/data/git/repositories` |
+| LFS + packages/registry | `/var/lib/gitea/data/{lfs,packages}` | `…/data/data/…` |
 
 > ⚠️ **Repo path corrected.** The config cheat sheet's generic default (`%(APP_DATA_PATH)s/forgejo-repositories`) does **not** apply to the rootless image, which sets `HOME=/var/lib/gitea/git` and stores repos under `git/repositories`. Confirmed by Forgejo issue #4269, where a successful rootless run produces exactly `gitea/git` and `gitea/custom`. **Trust the installer's prefilled values over the cheat sheet for this image.**
 
-**Why certs at `custom/https/`:** the config cheat sheet gives `CERT_FILE` default `https/cert.pem` and `KEY_FILE` default `https/key.pem`, and states **"Paths are relative to _CustomPath_."** For the rootless image `CustomPath` = `/var/lib/gitea/custom`. So dropping the files at that default location means **we never have to set `CERT_FILE`/`KEY_FILE` at all** — fewer keys, fewer failure modes, no nested bind mounts for Container Manager to reject.
+**Why certs at `custom/https/`:** the config cheat sheet gives `CERT_FILE` default `https/cert.pem` and `KEY_FILE` default `https/key.pem`, and states **"Paths are relative to *CustomPath*."** For the rootless image `CustomPath` = `/var/lib/gitea/custom`. So dropping the files at that default location means **we never have to set `CERT_FILE`/`KEY_FILE` at all** — fewer keys, fewer failure modes, no nested bind mounts for Container Manager to reject.
 
 ---
 
@@ -149,15 +156,15 @@ Resulting layout inside the container:
 
 These get conflated constantly. Precision here is what makes the blog post defensible.
 
-|Term|Means|Your status|
+| Term | Means | Your status |
 |---|---|---|
-|**Rootless**|The _daemon_ runs as a non-root user|❌ Not possible on DSM|
-|**Unprivileged**|Container not run with `--privileged`; no added capabilities|✅ **Yes — and further**|
-|**Non-root**|Container _process_ is not UID 0|✅ UID 1030|
+| **Rootless** | The *daemon* runs as a non-root user | ❌ Not possible on DSM |
+| **Unprivileged** | Container not run with `--privileged`; no added capabilities | ✅ **Yes — and further** |
+| **Non-root** | Container *process* is not UID 0 | ✅ UID 1030 |
 
-**On unprivileged:** `--privileged` is opt-in and you never enabled it, so this build was never privileged. With `cap_drop: ALL` you go beyond the default — you've dropped capabilities an ordinary unprivileged container retains (`CHOWN`, `SETUID`, `SETGID`, `NET_RAW`, and others). This is _more_ restrictive than a stock unprivileged container.
+**On unprivileged:** `--privileged` is opt-in and you never enabled it, so this build was never privileged. With `cap_drop: ALL` you go beyond the default — you've dropped capabilities an ordinary unprivileged container retains (`CHOWN`, `SETUID`, `SETGID`, `NET_RAW`, and others). This is *more* restrictive than a stock unprivileged container.
 
-**On rootless:** DSM's `dockerd` runs as root and Synology exposes no supported rootless-daemon or `userns-remap` path. The honest claim is **"non-root, unprivileged containers on a root daemon."** An app-level Forgejo or Postgres CVE is contained to UID 1030 / UID 70; a _daemon or runc_ CVE would still yield root on the NAS.
+**On rootless:** DSM's `dockerd` runs as root and Synology exposes no supported rootless-daemon or `userns-remap` path. The honest claim is **"non-root, unprivileged containers on a root daemon."** An app-level Forgejo or Postgres CVE is contained to UID 1030 / UID 70; a *daemon or runc* CVE would still yield root on the NAS.
 
 ### ⚠️ The seccomp caveat — state this honestly
 
@@ -173,16 +180,16 @@ This is a Synology-wide decision, not something your Compose file caused, and it
 
 **Net posture, stated fairly:**
 
-|Control|Status|
+| Control | Status |
 |---|---|
-|Non-root process|✅ UID 1030|
-|Capabilities|✅ all dropped|
-|Privilege escalation|✅ blocked|
-|Root filesystem|✅ read-only|
-|Docker socket|✅ not mounted|
-|Network isolation|✅ DB on internal-only bridge|
-|Seccomp filter|⚠️ **unconfined (DSM-wide)**|
-|Daemon privilege|⚠️ **root (DSM-wide)**|
+| Non-root process | ✅ UID 1030 |
+| Capabilities | ✅ all dropped |
+| Privilege escalation | ✅ blocked |
+| Root filesystem | ✅ read-only |
+| Docker socket | ✅ not mounted |
+| Network isolation | ✅ DB on internal-only bridge |
+| Seccomp filter | ⚠️ **unconfined (DSM-wide)** |
+| Daemon privilege | ⚠️ **root (DSM-wide)** |
 
 The two warnings are both platform constraints, both out of your control here, and both close on the dedicated-server migration — see Appendix B, which is designed so that move is a data copy rather than a redesign.
 
@@ -194,30 +201,30 @@ The two warnings are both platform constraints, both out of your control here, a
 
 The official image documents the constraint precisely: the image supports running as a mostly arbitrary user via `--user`, and as of docker-library/postgres#1018 this is also true for the Alpine variants; the main caveat is that postgres doesn't care what UID it runs as as long as the owner of PGDATA matches, but `initdb` does care and needs the user to exist in `/etc/passwd`. Running `--user 1000:1000` produces `initdb: could not look up effective user ID 1000: user does not exist`.
 
-||**A1 · `user: "70:70"`** ← chosen|A2 · `user: "1030:65536"` + `/etc/passwd` mount|
+| | **A1 · `user: "70:70"`** ← chosen | A2 · `user: "1030:65536"` + `/etc/passwd` mount |
 |---|---|---|
-|How|UID 70 = `postgres`, already in the Alpine image|Bind-mount a passwd file containing UID 1030|
-|Non-root|✅|✅|
-|`cap_drop: ALL`|✅|✅|
-|Extra moving parts|none|a passwd file to maintain across image updates|
-|Breaks on image rebuild|no|possible if the image's passwd layout changes|
-|Meets "1000+ IDs"|❌ (internal to container)|✅|
-|On-disk owner of `db/`|`70`|`1030`|
+| How | UID 70 = `postgres`, already in the Alpine image | Bind-mount a passwd file containing UID 1030 |
+| Non-root | ✅ | ✅ |
+| `cap_drop: ALL` | ✅ | ✅ |
+| Extra moving parts | none | a passwd file to maintain across image updates |
+| Breaks on image rebuild | no | possible if the image's passwd layout changes |
+| Meets "1000+ IDs" | ❌ (internal to container) | ✅ |
+| On-disk owner of `db/` | `70` | `1030` |
 
 **Chosen: A1.** The 1000+ UID rule exists to avoid colliding with host system accounts and to keep a distinct identity — UID 70 inside a container that publishes no ports and sits on an `internal: true` network satisfies the spirit of it, with zero maintenance surface. If you'd rather have A2 for consistency in the blog narrative, it's a 4-line change and I'll write it out. Phase 1 includes a check that UID 70 is unused on your DSM host.
 
 ### Decision B · Bootstrap method
 
-You asked: _why disable the setup page and make it harder — can't we set it up then disable it?_ **You were right, and v1 over-engineered it.**
+You asked: *why disable the setup page and make it harder — can't we set it up then disable it?* **You were right, and v1 over-engineered it.**
 
-||**B1 · Web installer, then lock** ← chosen|B2 · `INSTALL_LOCK=true` + CLI admin|
+| | **B1 · Web installer, then lock** ← chosen | B2 · `INSTALL_LOCK=true` + CLI admin |
 |---|---|---|
-|Exposure window|~5 min, LAN-only, behind firewall rule|zero|
-|Real-world risk|very low|none|
-|Learning value (first build)|high — you see every setting|low|
-|Reproducible / IaC-friendly|❌ manual clicks|✅ fully declarative|
-|Works with arbitrary UID|✅ **once Phase 4B is done**|✅ always|
-|Steps|fewer|more|
+| Exposure window | ~5 min, LAN-only, behind firewall rule | zero |
+| Real-world risk | very low | none |
+| Learning value (first build) | high — you see every setting | low |
+| Reproducible / IaC-friendly | ❌ manual clicks | ✅ fully declarative |
+| Works with arbitrary UID | ✅ **once Phase 4B is done** | ✅ always |
+| Steps | fewer | more |
 
 **Chosen: B1**, enabled by Phase 4B.
 
@@ -225,7 +232,7 @@ There was an interim period in this build where B1 appeared impossible: the inst
 
 Worth recording for the blog: the first fix suppressed a legitimate self-check; the second made the check pass by making the underlying claim true. **Prefer correcting configuration over disabling validation** — the check exists for a reason, and an instance that lies about its own identity produces confusing failures later (empty usernames in audit output, `whoami` returning nothing).
 
-**Keep B2 for the Proxmox rebuild.** Under Terraform, declarative bootstrap is the right pattern — a nice arc for the series: _manual first to learn it, declarative second to own it._
+**Keep B2 for the Proxmox rebuild.** Under Terraform, declarative bootstrap is the right pattern — a nice arc for the series: *manual first to learn it, declarative second to own it.*
 
 ### Decision C · Where the DB volume lives
 
@@ -293,7 +300,7 @@ sudo -i          # enter your admin password
 id sa_forgejo
 ```
 
-Expected: `uid=1030(sa_forgejo) gid=100(users) groups=100(users),65536(service accounts)`
+Expected: `uid=1030(sa_forgejo) gid=100(users) groups=100(users),65536(docker_service_accounts)`
 
 **If the UID or GID differs, stop.** Every `1030` and `65536` below must be replaced with what this command actually prints.
 
@@ -339,22 +346,25 @@ ls -la /volume1/docker/forgejo
 
 Why these specific directories:
 
-|Directory|Purpose|
+| Directory | Purpose |
 |---|---|
-|`data/`|The single Forgejo volume → `/var/lib/gitea`|
-|`data/custom/conf/`|Where `app.ini` will be written|
-|`data/custom/https/`|Where Forgejo reads `cert.pem` / `key.pem` **by default**|
-|`db/`|PostgreSQL PGDATA|
+| `data/` | The single Forgejo volume → `/var/lib/gitea` |
+| `data/custom/conf/` | Where `app.ini` will be written |
+| `data/custom/https/` | Where Forgejo reads `cert.pem` / `key.pem` **by default** |
+| `db/` | PostgreSQL PGDATA |
 
 ---
 
 ## Phase 3 · Certificates — step-ca path (CURRENT)
 
-> **Status: done.** Certificates were issued by step-ca on the workstation and placed at `/volume1/docker/forgejo/data/custom/https/` as **`server.crt`** and **`server.key`**. The Compose file in Phase 6 points at those filenames explicitly. The self-signed openssl walkthrough that follows is retained only as a fallback.
+> **Status: done.** Certificates were issued by step-ca on the workstation and placed at
+> `/volume1/docker/forgejo/data/custom/https/` as **`server.crt`** and **`server.key`**.
+> The Compose file in Phase 6 points at those filenames explicitly.
+> The self-signed openssl walkthrough that follows is retained only as a fallback.
 
 ### 3A.1 — ⚠️ Check the certificate lifetime FIRST
 
-**step-ca issues 24-hour certificates by default**, and its default `maxTLSCertDuration` is _also_ 24h — so `--not-after` beyond a day is rejected unless the CA's claims were raised. Smallstep's own docs state that by default step-ca issues certificates valid for 24 hours, adjustable via `defaultTLSCertDuration` per provisioner or the `--not-after` flag.
+**step-ca issues 24-hour certificates by default**, and its default `maxTLSCertDuration` is *also* 24h — so `--not-after` beyond a day is rejected unless the CA's claims were raised. Smallstep's own docs state that by default step-ca issues certificates valid for 24 hours, adjustable via `defaultTLSCertDuration` per provisioner or the `--not-after` flag.
 
 If nothing was changed, **Forgejo will start fine today and serve an expired certificate tomorrow.** Check now:
 
@@ -372,10 +382,10 @@ openssl x509 -in /volume1/docker/forgejo/data/custom/https/server.crt \
 
 Read the `Valid from … to …` / `notAfter` line.
 
-|Result|What it means|Action|
+| Result | What it means | Action |
 |---|---|---|
-|~24 h window|CA claims are at defaults|Raise claims + reissue, **or** set up renewal — see 3A.3|
-|Weeks/months|You already raised `maxTLSCertDuration`|Note the expiry date and move on|
+| ~24 h window | CA claims are at defaults | Raise claims + reissue, **or** set up renewal — see 3A.3 |
+| Weeks/months | You already raised `maxTLSCertDuration` | Note the expiry date and move on |
 
 ### 3A.2 — Verify SAN and chain order
 
@@ -385,17 +395,17 @@ openssl x509 -in .../server.crt -noout -ext subjectAltName
 
 Must contain **`IP Address:192.168.1.201`** (and/or the hostname you'll actually type). Without an IP SAN, `https://192.168.1.201:3443` fails validation no matter what's in the trust store.
 
-Then check chain order. The Forgejo config cheat sheet is explicit: _"When chaining, the server certificate must come first, then intermediate CA certificates (if any)."_ step-ca uses a root→intermediate→leaf hierarchy, and `step ca certificate` normally bundles leaf + intermediate in that order — but verify:
+Then check chain order. The Forgejo config cheat sheet is explicit: *"When chaining, the server certificate must come first, then intermediate CA certificates (if any)."* step-ca uses a root→intermediate→leaf hierarchy, and `step ca certificate` normally bundles leaf + intermediate in that order — but verify:
 
 ```bash
 grep -c "BEGIN CERTIFICATE" /volume1/docker/forgejo/data/custom/https/server.crt
 ```
 
-|Count|Meaning|
+| Count | Meaning |
 |---|---|
-|`2`|leaf + intermediate — correct, nothing to do|
-|`1`|leaf only — clients that don't already have the intermediate will fail. Append it: `step ca provisioner` / `cat server.crt intermediate_ca.crt > server-bundle.crt` and point `CERT_FILE` at the bundle|
-|`3`|leaf + intermediate + root — works, root is redundant but harmless|
+| `2` | leaf + intermediate — correct, nothing to do |
+| `1` | leaf only — clients that don't already have the intermediate will fail. Append it: `step ca provisioner` / `cat server.crt intermediate_ca.crt > server-bundle.crt` and point `CERT_FILE` at the bundle |
+| `3` | leaf + intermediate + root — works, root is redundant but harmless |
 
 Confirm the leaf is genuinely first:
 
@@ -408,14 +418,14 @@ The first `subject=` must be your server, not the CA.
 
 ### 3A.3 — Renewal strategy
 
-|Option|How|Fits your build?|
+| Option | How | Fits your build? |
 |---|---|---|
-|**Long-lived cert (simplest now)**|Raise `maxTLSCertDuration` in `ca.json` claims (e.g. `"9480h"`), reissue with `--not-after=8760h`, replace the two files, restart the container|✅ Good transitional choice. Keep the leaf under **398 days** for Apple clients|
-|**`step ca renew --daemon` on the workstation + push**|Daemon renews at ~2/3 of lifetime, then `scp` to the NAS and restart Forgejo|Works, but couples the NAS to your workstation being up|
-|**`step ca renew` in a DSM Task Scheduler job**|Install `step` on the NAS, renew in place, then `docker restart forgejo`|Cleanest end state. Requires the step CLI on DSM|
-|**Forgejo built-in ACME against step-ca**|`ENABLE_ACME=true` + `ACME_URL=https://ca.lan/acme/acme/directory`|❌ **Won't work here** — see below|
+| **Long-lived cert (simplest now)** | Raise `maxTLSCertDuration` in `ca.json` claims (e.g. `"9480h"`), reissue with `--not-after=8760h`, replace the two files, restart the container | ✅ Good transitional choice. Keep the leaf under **398 days** for Apple clients |
+| **`step ca renew --daemon` on the workstation + push** | Daemon renews at ~2/3 of lifetime, then `scp` to the NAS and restart Forgejo | Works, but couples the NAS to your workstation being up |
+| **`step ca renew` in a DSM Task Scheduler job** | Install `step` on the NAS, renew in place, then `docker restart forgejo` | Cleanest end state. Requires the step CLI on DSM |
+| **Forgejo built-in ACME against step-ca** | `ENABLE_ACME=true` + `ACME_URL=https://ca.lan/acme/acme/directory` | ❌ **Won't work here** — see below |
 
-**Why Forgejo's ACME support is off the table in this build:** the cheat sheet notes `ENABLE_ACME` requires the CA to reach port 80 or 443 on this host. Our container runs as UID 1030 with `cap_drop: ALL`, so it cannot bind a port below 1024 — it has no `CAP_NET_BIND_SERVICE`. This is exactly the failure in Forgejo issue #6250 (_"Unable to bind port 80 for ACME HTTP-01 challenge"_). You'd have to hand back that capability, which trades a real hardening control for a convenience. **Renew externally and restart the container instead.**
+**Why Forgejo's ACME support is off the table in this build:** the cheat sheet notes `ENABLE_ACME` requires the CA to reach port 80 or 443 on this host. Our container runs as UID 1030 with `cap_drop: ALL`, so it cannot bind a port below 1024 — it has no `CAP_NET_BIND_SERVICE`. This is exactly the failure in Forgejo issue #6250 (*"Unable to bind port 80 for ACME HTTP-01 challenge"*). You'd have to hand back that capability, which trades a real hardening control for a convenience. **Renew externally and restart the container instead.**
 
 Forgejo reads the certificate at startup, so any renewal needs a restart (or `SIGHUP` — `ALLOW_GRACEFUL_RESTARTS` defaults to true). In a Task Scheduler job:
 
@@ -562,7 +572,7 @@ Store the CA key in your password manager or OpenBao once it's up. **If this key
 
 ## Phase 4 · Set ownership and permissions
 
-This is the #1 cause of first-boot failures. The Forgejo docs are blunt about it: _"Note that the volume should be owned by the user/group with the UID/GID specified in the config file. If you don't set the volume correct permissions, the container may not start."_
+This is the #1 cause of first-boot failures. The Forgejo docs are blunt about it: *"Note that the volume should be owned by the user/group with the UID/GID specified in the config file. If you don't set the volume correct permissions, the container may not start."*
 
 ```bash
 # Forgejo data → 1030:65536
@@ -601,7 +611,7 @@ If you ever need to change permissions here, do it over SSH with `chown`/`chmod`
 
 ## Phase 4B · The `/etc/passwd` mount (REQUIRED — do this before first boot)
 
-> **This is the single most important addition in v3.** Without it, the web installer cannot be completed at all when running as an arbitrary UID. Skipping this leads directly to the `'user to run as' username is not the current username: git ->` dead end.
+> **This is the single most important addition in v3.** Without it, the web installer cannot be completed at all when running as an arbitrary UID. Skipping this leads directly to the `'user to run as' username is not the current username: git -> ` dead end.
 
 ### Why it's needed
 
@@ -609,7 +619,7 @@ Two independent user databases exist (see §1). DSM knows UID 1030 as `sa_forgej
 
 Forgejo's installer validates that the `RUN_USER` you type matches the username it resolves at runtime. That resolution goes through Go's `os/user.Current()`, which performs a real `getpwuid()` lookup. **For an unmapped UID it returns an empty string**, so the comparison becomes `git` vs `""` and can never pass, no matter what you type.
 
-This is a long-standing, cross-project issue — the Gitea tracker has an issue titled _"`CurrentUsername` is not always reliable"_ (#1640), a TrueNAS user hit the byte-identical error with `apps ->` (truenas/apps #3108), and Gitea #3592 documents the same empty-right-hand-side failure under OpenShift's random-UID model. The upstream advice in the TrueNAS thread is precisely this fix: edit the passwd entry so the `git` user carries the correct UID.
+This is a long-standing, cross-project issue — the Gitea tracker has an issue titled *"`CurrentUsername` is not always reliable"* (#1640), a TrueNAS user hit the byte-identical error with `apps -> ` (truenas/apps #3108), and Gitea #3592 documents the same empty-right-hand-side failure under OpenShift's random-UID model. The upstream advice in the TrueNAS thread is precisely this fix: edit the passwd entry so the `git` user carries the correct UID.
 
 **The fix is to make the container's `/etc/passwd` tell the truth about UID 1030.**
 
@@ -649,11 +659,11 @@ grep '^git:' /volume1/docker/forgejo/group
 wc -l /volume1/docker/forgejo/passwd /volume1/docker/forgejo/group
 ```
 
-|Expected||
+| Expected | |
 |---|---|
-|passwd git line|`git:x:1030:65536:Linux User,,,:/var/lib/gitea/git:/bin/bash`|
-|group git line|`git:x:65536:git`|
-|Line counts|**~20 lines each**|
+| passwd git line | `git:x:1030:65536:Linux User,,,:/var/lib/gitea/git:/bin/bash` |
+| group git line | `git:x:65536:git` |
+| Line counts | **~20 lines each** |
 
 ⚠️ **If either file is 1 line long, it was clobbered — regenerate from Step 4B.1.** A single-line `/etc/passwd` mounted over the image's real one hides `root`, `nobody` and every other system account. It appears to work at first and produces strange failures later.
 
@@ -668,29 +678,29 @@ ls -la /volume1/docker/forgejo/passwd /volume1/docker/forgejo/group
 
 Expect `-rw-r--r-- 1 root root` on both.
 
-|Setting|Value|Reason|
+| Setting | Value | Reason |
 |---|---|---|
-|Owner|`root:root`|The container runs as 1030 — root ownership means it has no write path even if `:ro` were bypassed. Also matches every real Linux host|
-|Mode|**`644`**|**World-readable is required, not merely acceptable**|
+| Owner | `root:root` | The container runs as 1030 — root ownership means it has no write path even if `:ro` were bypassed. Also matches every real Linux host |
+| Mode | **`644`** | **World-readable is required, not merely acceptable** |
 
 > ⚠️ **Do not "harden" these to `600`.** Every UID→name lookup reads this file: `whoami`, `id`, `ls -l`, Git, and the `os/user.Current()` call this whole fix exists to satisfy. Mode `600` locks out UID 1030 and reproduces the original bug with a new error (`cat: can't open '/etc/passwd': Permission denied`).
-> 
+>
 > `/etc/passwd` is world-readable on every Linux system **by design** — it holds only name/UID/GID/home/shell mappings. The secret half was split into `/etc/shadow` (mode `640`, root-owned) decades ago precisely so passwd could stay open. You are not creating a shadow file; there is nothing confidential here.
 
 DSM's root shell umask commonly yields `600` on newly created files, so **run the `chmod` after every regeneration**, not just the first.
 
 ### Step 4B.5 — Is this secure?
 
-Yes — and it is _more_ correct than the alternatives. The only meaningful attack on a mounted passwd file is injecting a UID 0 entry. Four independent controls block that:
+Yes — and it is *more* correct than the alternatives. The only meaningful attack on a mounted passwd file is injecting a UID 0 entry. Four independent controls block that:
 
-|Control|Effect|
+| Control | Effect |
 |---|---|
-|`:ro` mount|Container cannot write the file|
-|Host file owned by `root`, process is 1030|No write access even without `:ro`|
-|`no-new-privileges:true`|`setuid` binaries cannot escalate|
-|**`cap_drop: ALL`**|**No `CAP_SETUID` — the kernel refuses any UID change regardless of what passwd says**|
+| `:ro` mount | Container cannot write the file |
+| Host file owned by `root`, process is 1030 | No write access even without `:ro` |
+| `no-new-privileges:true` | `setuid` binaries cannot escalate |
+| **`cap_drop: ALL`** | **No `CAP_SETUID` — the kernel refuses any UID change regardless of what passwd says** |
 
-The last is decisive: a passwd entry is only a _name-to-number mapping_. It grants nothing on its own.
+The last is decisive: a passwd entry is only a *name-to-number mapping*. It grants nothing on its own.
 
 Prove it after the container is up:
 
@@ -700,7 +710,7 @@ sudo docker exec forgejo touch /etc/passwd        # → Read-only file system
 sudo docker exec forgejo su root                  # → fails, no CAP_SETUID
 ```
 
-**Why this beats the workarounds it replaces:** the previous approach relied on the image's `USER=git` environment variable — an assertion that didn't correspond to the running UID. Forgejo's fallback accepted it, but `whoami`, `id -un` and `ls -l` inside the container still returned empty or numeric output, meaning audit and forensic inspection would show a nameless UID. After this mount, UID 1030 _genuinely is_ `git`, tooling behaves normally, and the `RUN_USER` strip (old Step 8.6) becomes unnecessary. **Correct configuration beats a suppressed check.**
+**Why this beats the workarounds it replaces:** the previous approach relied on the image's `USER=git` environment variable — an assertion that didn't correspond to the running UID. Forgejo's fallback accepted it, but `whoami`, `id -un` and `ls -l` inside the container still returned empty or numeric output, meaning audit and forensic inspection would show a nameless UID. After this mount, UID 1030 *genuinely is* `git`, tooling behaves normally, and the `RUN_USER` strip (old Step 8.6) becomes unnecessary. **Correct configuration beats a suppressed check.**
 
 ### Step 4B.6 — Maintenance caveat
 
@@ -712,12 +722,12 @@ Honest framing for the blog: this is a workaround for a gap between two systems 
 
 ### Optional: give `sa_forgejo` shared-folder access without login rights
 
-If you want `sa_forgejo` to be a _real_ DSM identity rather than just a UID number:
+If you want `sa_forgejo` to be a *real* DSM identity rather than just a UID number:
 
 1. **Control Panel** → **User & Group** → **User** → select `sa_forgejo` → **Edit**
 2. **Permissions** tab → `docker` shared folder → **Read/Write**
 3. **Applications** tab → **Deny** all (DSM, File Station, WebDAV, etc.)
-4. **User Groups** tab → confirm `service accounts` is ticked
+4. **User Groups** tab → confirm `docker_service_accounts` is ticked
 5. Apply
 
 This gives you a coherent identity story for the blog without granting the account any way to log in.
@@ -933,19 +943,19 @@ services:
 
 ### What each hardening key buys you
 
-|Key|Effect|Blog-worthy note|
+| Key | Effect | Blog-worthy note |
 |---|---|---|
-|`user: "1030:65536"`|Process runs as your service account, not root|The core of the whole exercise|
-|`cap_drop: ALL`|No Linux capabilities at all|Works because we bind :3000, not a privileged port|
-|`no-new-privileges:true`|`setuid` binaries can't escalate|Blocks a whole class of container escapes|
-|`read_only: true`|Root filesystem immutable|Bind mounts and tmpfs stay writable|
-|`tmpfs /run/postgresql`|Postgres socket dir|**Without this, Postgres fails** under `read_only` — documented in docker-library/postgres#264|
-|`internal: true` on backend|No route out of that bridge|Postgres is unreachable even if a port were accidentally published|
-|No `/var/run/docker.sock`|—|The single most important thing you _don't_ do|
-|`OFFLINE_MODE: true`|No Gravatar/CDN egress|Also a privacy win|
-|`ALLOW_LOCALNETWORKS: false`|Blocks SSRF via repo migration|Forgejo can't be tricked into scanning your LAN|
-|`DISABLE_GIT_HOOKS: true`|No custom server-side hooks|Already the default; set explicitly so it's visible|
-|`PASSWORD_HASH_ALGO: argon2`|Stronger than the `pbkdf2` default|Costs RAM — fine at 2 GB|
+| `user: "1030:65536"` | Process runs as your service account, not root | The core of the whole exercise |
+| `cap_drop: ALL` | No Linux capabilities at all | Works because we bind :3000, not a privileged port |
+| `no-new-privileges:true` | `setuid` binaries can't escalate | Blocks a whole class of container escapes |
+| `read_only: true` | Root filesystem immutable | Bind mounts and tmpfs stay writable |
+| `tmpfs /run/postgresql` | Postgres socket dir | **Without this, Postgres fails** under `read_only` — documented in docker-library/postgres#264 |
+| `internal: true` on backend | No route out of that bridge | Postgres is unreachable even if a port were accidentally published |
+| No `/var/run/docker.sock` | — | The single most important thing you *don't* do |
+| `OFFLINE_MODE: true` | No Gravatar/CDN egress | Also a privacy win |
+| `ALLOW_LOCALNETWORKS: false` | Blocks SSRF via repo migration | Forgejo can't be tricked into scanning your LAN |
+| `DISABLE_GIT_HOOKS: true` | No custom server-side hooks | Already the default; set explicitly so it's visible |
+| `PASSWORD_HASH_ALGO: argon2` | Stronger than the `pbkdf2` default | Costs RAM — fine at 2 GB |
 
 ### Resource limits on Synology — memory yes, CPU no
 
@@ -960,17 +970,17 @@ Error response from daemon: NanoCPUs can not be set, as your kernel does not
 support CPU CFS scheduler or the cgroup is not mounted
 ```
 
-**This is a hard build failure, not a warning** — the project does not deploy. SynoForum's verdict: _"Nope, not going to work on a Syno. The kernel lacks required modules. This will work on every other Linux system like a charm."_ Same error is reported across other NAS platforms with similarly stripped kernels.
+**This is a hard build failure, not a warning** — the project does not deploy. SynoForum's verdict: *"Nope, not going to work on a Syno. The kernel lacks required modules. This will work on every other Linux system like a charm."* Same error is reported across other NAS platforms with similarly stripped kernels.
 
 **What you can still do for CPU:**
 
-|Approach|Works on DSM?|Notes|
+| Approach | Works on DSM? | Notes |
 |---|---|---|
-|`cpus: 2.0`|❌|Hard failure|
-|`deploy.resources.limits.cpus`|❌|Same daemon rejection, and ignored by Compose anyway|
-|`cpu_shares` (relative weight)|✅ usually|Soft priority, not a cap — only matters under contention|
-|Container Manager GUI CPU priority (Low/Medium/High)|✅|GUI-only; maps to cpu_shares|
-|`mem_limit`|✅|Works normally — keep it|
+| `cpus: 2.0` | ❌ | Hard failure |
+| `deploy.resources.limits.cpus` | ❌ | Same daemon rejection, and ignored by Compose anyway |
+| `cpu_shares` (relative weight) | ✅ usually | Soft priority, not a cap — only matters under contention |
+| Container Manager GUI CPU priority (Low/Medium/High) | ✅ | GUI-only; maps to cpu_shares |
+| `mem_limit` | ✅ | Works normally — keep it |
 
 **Practical impact here: near zero.** Forgejo idles at a few percent CPU on a LAN-only instance with one user. The memory limits are what actually protect the NAS, and those work. If you later want CPU containment as a hard guarantee, that's another argument for moving this to the Proxmox host, where the kernel supports it and you can also set cgroup limits at the VM/LXC boundary.
 
@@ -1019,31 +1029,31 @@ Your browser will warn about the certificate — **expected**, because you haven
 
 Because the `FORGEJO__database__*` env vars are set, the installer should already show:
 
-|Field|Expected|
+| Field | Expected |
 |---|---|
-|Database Type|PostgreSQL|
-|Host|`db:5432`|
-|Username|`forgejo`|
-|Password|(filled)|
-|Database Name|`forgejo`|
-|SSL|Disable|
+| Database Type | PostgreSQL |
+| Host | `db:5432` |
+| Username | `forgejo` |
+| Password | (filled) |
+| Database Name | `forgejo` |
+| SSL | Disable |
 
 **If any of these are blank or wrong, stop** — it means the env vars aren't reaching the container, and you'll get a broken `app.ini`. Check that `.env` is in the project directory and re-deploy.
 
 ### Step 8.3 — General settings
 
-|Field|Value|Why|
+| Field | Value | Why |
 |---|---|---|
-|Site Title|your choice|—|
-|Repository Root Path|**leave default — `/var/lib/gitea/git/repositories`**|⚠️ v2 of this doc wrongly said `/var/lib/gitea/data/forgejo-repositories`. **Trust the installer's prefilled value.** See note below|
-|Git LFS Root Path|**leave default**|`/var/lib/gitea/data/lfs`|
-|Run As Username|**must match what the container reports** — see Step 8.3b|Do not blindly accept or blindly change it|
-|Server Domain|`192.168.1.201`|must match your cert SAN|
-|Forgejo HTTP Listen Port|`3000`|container-internal port, not 3443|
-|Forgejo Base URL|`https://192.168.1.201:3443/`|**the externally reachable URL**|
-|Log Path|leave default|—|
+| Site Title | your choice | — |
+| Repository Root Path | **leave default — `/var/lib/gitea/git/repositories`** | ⚠️ v2 of this doc wrongly said `/var/lib/gitea/data/forgejo-repositories`. **Trust the installer's prefilled value.** See note below |
+| Git LFS Root Path | **leave default** | `/var/lib/gitea/data/lfs` |
+| Run As Username | **must match what the container reports** — see Step 8.3b | Do not blindly accept or blindly change it |
+| Server Domain | `192.168.1.201` | must match your cert SAN |
+| Forgejo HTTP Listen Port | `3000` | container-internal port, not 3443 |
+| Forgejo Base URL | `https://192.168.1.201:3443/` | **the externally reachable URL** |
+| Log Path | leave default | — |
 
-> The Base URL is the field people get wrong most often. It must be what a _client_ types, including the published port 3443 — not the internal 3000.
+> The Base URL is the field people get wrong most often. It must be what a *client* types, including the published port 3443 — not the internal 3000.
 
 ### ⚠️ Correction: Repository Root Path
 
@@ -1055,13 +1065,13 @@ General rule for this image: **where the cheat sheet and the installer's prefill
 
 Corrected on-disk layout:
 
-|Content|Container path|Host path|
+| Content | Container path | Host path |
 |---|---|---|
-|Repositories|`/var/lib/gitea/git/repositories`|`…/data/git/repositories`|
-|LFS objects|`/var/lib/gitea/data/lfs`|`…/data/data/lfs`|
-|Packages / registry|`/var/lib/gitea/data/packages`|`…/data/data/packages`|
-|Config|`/var/lib/gitea/custom/conf/app.ini`|`…/data/custom/conf/app.ini`|
-|TLS|`/var/lib/gitea/custom/https/server.{crt,key}`|`…/data/custom/https/`|
+| Repositories | `/var/lib/gitea/git/repositories` | `…/data/git/repositories` |
+| LFS objects | `/var/lib/gitea/data/lfs` | `…/data/data/lfs` |
+| Packages / registry | `/var/lib/gitea/data/packages` | `…/data/data/packages` |
+| Config | `/var/lib/gitea/custom/conf/app.ini` | `…/data/custom/conf/app.ini` |
+| TLS | `/var/lib/gitea/custom/https/server.{crt,key}` | `…/data/custom/https/` |
 
 Backups are unaffected — everything is still under the single `data/` bind mount.
 
@@ -1078,28 +1088,28 @@ sudo docker exec forgejo id
 
 **The name in parentheses is the whole point.** A bare `uid=1030` with no name means the passwd mount isn't live — revisit Phase 4B, and note that adding a volume requires **Action → Build**, not Stop/Start.
 
-`git` is now a _true_ statement about UID 1030, so `RUN_USER = git` in `app.ini` stays valid across restarts forever. **The old "strip RUN_USER" step is obsolete and has been removed.**
+`git` is now a *true* statement about UID 1030, so `RUN_USER = git` in `app.ini` stays valid across restarts forever. **The old "strip RUN_USER" step is obsolete and has been removed.**
 
 #### Background: why this used to fail
 
-The installer's help text says: _"The operating system username that Forgejo runs as. Note that this user must have access to the repository root path."_
+The installer's help text says: *"The operating system username that Forgejo runs as. Note that this user must have access to the repository root path."*
 
-Reasonable reading: _"that's `sa_forgejo`, UID 1030."_ **That is wrong** — and understanding why is the core mental model of this entire build.
+Reasonable reading: *"that's `sa_forgejo`, UID 1030."* **That is wrong** — and understanding why is the core mental model of this entire build.
 
 ##### Two separate user databases
 
 There are **two independent `/etc/passwd` files** in play, and they know nothing about each other:
 
-||Host (DSM) `/etc/passwd`|Container `/etc/passwd`|
+| | Host (DSM) `/etc/passwd` | Container `/etc/passwd` |
 |---|---|---|
-|UID 1000|_(some DSM account)_|`git`|
-|UID 1030|**`sa_forgejo`**|**no entry — unnamed**|
+| UID 1000 | *(some DSM account)* | `git` |
+| UID 1030 | **`sa_forgejo`** | **no entry — unnamed** |
 
-**Only the number crosses the boundary.** The Linux kernel tracks file ownership and process identity as _integers_. Usernames are a presentation layer that each namespace resolves through its own passwd file.
+**Only the number crosses the boundary.** The Linux kernel tracks file ownership and process identity as *integers*. Usernames are a presentation layer that each namespace resolves through its own passwd file.
 
 So when you `ls -la` on the NAS and see `sa_forgejo` owning the data directory, and the container looks at the exact same inode, the container sees owner `1030` and has no name for it. The name `sa_forgejo` **does not exist inside the container** and never will.
 
-`RUN_USER` is read by the Forgejo process _inside_ the container. Entering `sa_forgejo` makes Forgejo compare that string against the username it resolves internally — which will never be `sa_forgejo` — and it aborts:
+`RUN_USER` is read by the Forgejo process *inside* the container. Entering `sa_forgejo` makes Forgejo compare that string against the username it resolves internally — which will never be `sa_forgejo` — and it aborts:
 
 ```
 Expect user 'sa_forgejo' but current user is: git
@@ -1107,7 +1117,7 @@ Expect user 'sa_forgejo' but current user is: git
 
 #### But the help text says it needs repo access — is that satisfied?
 
-**Yes, and it already is** — via the number, not the name. Phase 4 set the data tree to `1030:65536`, and the container runs as `1030:65536`. The kernel compares integers, so access is granted. The _name_ is irrelevant to permissions; it only matters for Forgejo's own identity self-check.
+**Yes, and it already is** — via the number, not the name. Phase 4 set the data tree to `1030:65536`, and the container runs as `1030:65536`. The kernel compares integers, so access is granted. The *name* is irrelevant to permissions; it only matters for Forgejo's own identity self-check.
 
 This is exactly why Phase 4's `chown` is the make-or-break step and why the GUI ACL warning matters. Numbers are the contract.
 
@@ -1121,7 +1131,7 @@ The "user to run as" username is not the current username: git ->
 
 No typed value could satisfy it, because everything compares unequal to `""`. Entering `sa_forgejo` fails for a second reason too — that name exists only in DSM's passwd file, never in the container's.
 
-> **Blog note:** a clean illustration of container UID semantics — one integer, two names, only the integer real. It's also why the eventual rootless-Docker migration is fiddly: `subuid` mapping adds a _third_ translation layer on top of these two.
+> **Blog note:** a clean illustration of container UID semantics — one integer, two names, only the integer real. It's also why the eventual rootless-Docker migration is fiddly: `subuid` mapping adds a *third* translation layer on top of these two.
 
 ### Step 8.3c — SSH port field
 
@@ -1137,20 +1147,20 @@ Consequences to accept knowingly: no email verification, no notification emails,
 
 ### Step 8.3e — Server and third-party service settings
 
-|Setting|Value|Why|
+| Setting | Value | Why |
 |---|---|---|
-|Disable Gravatar|✅ **check**|`OFFLINE_MODE: true` already blocks it; checking keeps `app.ini` consistent with the compose|
-|Enable Federated Avatars|❌ **uncheck**|No outbound calls from a LAN-only box|
-|**Enable Local Mode**|✅ **check** (if shown)|Serves JS/CSS from the container instead of a CDN|
-|Enable Open ID Sign-In|❌ **uncheck**|Needs external IdP reachability; Authentik replaces this later|
-|Enable Open ID Sign-Up|❌ **uncheck**|Same|
-|Disable Self-Registration|✅ **check**|Matches `DISABLE_REGISTRATION: true`|
-|Allow Only External Registration|❌ leave|Irrelevant with registration off|
-|Require Sign-In to View Pages|✅ **check**|Matches `REQUIRE_SIGNIN_VIEW: true`|
-|Enable Captcha|❌ **uncheck**|Pointless with registration disabled; some providers phone home|
-|Default Keep Email Private|✅ **check**|Sensible default|
-|Default Allow Creation of Organizations|✅ leave checked|Useful for grouping homelab repos|
-|Default Enable Timetracking|your call|Harmless either way|
+| Disable Gravatar | ✅ **check** | `OFFLINE_MODE: true` already blocks it; checking keeps `app.ini` consistent with the compose |
+| Enable Federated Avatars | ❌ **uncheck** | No outbound calls from a LAN-only box |
+| **Enable Local Mode** | ✅ **check** (if shown) | Serves JS/CSS from the container instead of a CDN |
+| Enable Open ID Sign-In | ❌ **uncheck** | Needs external IdP reachability; Authentik replaces this later |
+| Enable Open ID Sign-Up | ❌ **uncheck** | Same |
+| Disable Self-Registration | ✅ **check** | Matches `DISABLE_REGISTRATION: true` |
+| Allow Only External Registration | ❌ leave | Irrelevant with registration off |
+| Require Sign-In to View Pages | ✅ **check** | Matches `REQUIRE_SIGNIN_VIEW: true` |
+| Enable Captcha | ❌ **uncheck** | Pointless with registration disabled; some providers phone home |
+| Default Keep Email Private | ✅ **check** | Sensible default |
+| Default Allow Creation of Organizations | ✅ leave checked | Useful for grouping homelab repos |
+| Default Enable Timetracking | your call | Harmless either way |
 
 **On Local Mode specifically:** a CDN-dependent UI on a LAN-only box produces missing styles and long hangs whenever outbound DNS or HTTP is blocked — and this environment is heading toward tighter egress control, not looser. It also means your browser never tells an external CDN which internal Git host you're loading. Cost is a few hundred KB served locally. If the checkbox isn't present in your version, `OFFLINE_MODE: true` already covers it.
 
@@ -1162,12 +1172,12 @@ Several of these duplicate env vars you've already set. That's deliberate — en
 
 **Do this now.** If you skip it, the first user to register becomes admin — and with `DISABLE_REGISTRATION: true` that leaves you locked out.
 
-|Field|Value|
+| Field | Value |
 |---|---|
-|Administrator Username|e.g. `bora` (not `admin`)|
-|Password|14+ chars, mixed classes (your policy requires it)|
-|Confirm Password|—|
-|Email Address|any valid-format address; no mailer configured yet|
+| Administrator Username | e.g. `bora` (not `admin`) |
+| Password | 14+ chars, mixed classes (your policy requires it) |
+| Confirm Password | — |
+| Email Address | any valid-format address; no mailer configured yet |
 
 ### Step 8.5 — Install
 
@@ -1175,8 +1185,8 @@ Click **Install Forgejo**. It writes `app.ini`, runs migrations, creates your ad
 
 ### Step 8.6 — ~~Strip `RUN_USER`~~ — OBSOLETE in v3
 
-> **No longer required.** This step existed because `git` was a _lie_ about UID 1030 — the name came from the image's `USER` env var while the actual UID had no passwd entry, so a hard-coded `RUN_USER = git` would fail the identity check on the next restart.
-> 
+> **No longer required.** This step existed because `git` was a *lie* about UID 1030 — the name came from the image's `USER` env var while the actual UID had no passwd entry, so a hard-coded `RUN_USER = git` would fail the identity check on the next restart.
+>
 > **Phase 4B makes `git` true.** UID 1030 now genuinely resolves to `git`, so `RUN_USER = git` in `app.ini` passes on every restart, indefinitely. Leave it in place.
 
 Optional confirmation that the config is coherent:
@@ -1243,13 +1253,13 @@ The firewall matters more than usual here because Forgejo is now the only thing 
 3. Click **Edit Rules** on your active profile
 4. **Create** → configure:
 
-|Field|Value|
+| Field | Value |
 |---|---|
-|Ports|**Custom**|
-|Protocol|TCP|
-|Port|`3443`|
-|Source IP|**Specific IP** → **Subnet** → IP `192.168.1.0`, Netmask `255.255.255.0`|
-|Action|**Allow**|
+| Ports | **Custom** |
+| Protocol | TCP |
+| Port | `3443` |
+| Source IP | **Specific IP** → **Subnet** → IP `192.168.1.0`, Netmask `255.255.255.0` |
+| Action | **Allow** |
 
 5. **OK**
 6. Make sure you also have **Allow** rules for the DSM ports you use (5000/5001) from your LAN, or you'll lock yourself out of the GUI
@@ -1275,10 +1285,10 @@ If your LAN has IPv6, a client could reach 3443 over IPv6 and **bypass the IPv4 
 ip -6 addr show | grep "scope global"
 ```
 
-|Result|Action|
+| Result | Action |
 |---|---|
-|Global IPv6 addresses listed|Add a matching IPv6 firewall rule, **or** use the explicit bind below|
-|No output|IPv6 isn't in play — the explicit bind is still good hygiene|
+| Global IPv6 addresses listed | Add a matching IPv6 firewall rule, **or** use the explicit bind below |
+| No output | IPv6 isn't in play — the explicit bind is still good hygiene |
 
 **Recommended fix (already in the Phase 6 compose):** bind the published port to the LAN address explicitly.
 
@@ -1303,7 +1313,7 @@ sudo docker inspect forgejo --format '{{.NetworkSettings.Ports}}'
 
 **`2222/tcp:[]` — the empty brackets are the host-binding list. Empty means nothing is bound and the port is unreachable.** It appears only because the image declares `EXPOSE 2222` in its Dockerfile: metadata, not a listener.
 
-`docker ps` shows exposed-but-unpublished ports in its PORTS column too, which is routinely misread as "this port is open." It isn't. `EXPOSE` documents what the image _would_ listen on; only `ports:` in Compose (or `-p`) creates a host binding.
+`docker ps` shows exposed-but-unpublished ports in its PORTS column too, which is routinely misread as "this port is open." It isn't. `EXPOSE` documents what the image *would* listen on; only `ports:` in Compose (or `-p`) creates a host binding.
 
 Here, 2222 is unreachable twice over: the SSH server never starts, and there's no host mapping regardless.
 
@@ -1374,7 +1384,7 @@ $c.Issuer
 
 **Subject and Issuer must be identical** — that is what makes it self-signed, i.e. a root.
 
-> ⚠️ **`certutil -dump file.crt | Select-String "Subject:","Issuer:"` returns blank values.** This is a `Select-String` artifact, not a broken file: `certutil` prints the distinguished name on the _lines after_ those labels. Use `-Context 0,2`, or the .NET method above. A 639-byte file with a `-----BEGIN CERTIFICATE-----` line is healthy.
+> ⚠️ **`certutil -dump file.crt | Select-String "Subject:","Issuer:"` returns blank values.** This is a `Select-String` artifact, not a broken file: `certutil` prints the distinguished name on the *lines after* those labels. Use `-Context 0,2`, or the .NET method above. A 639-byte file with a `-----BEGIN CERTIFICATE-----` line is healthy.
 
 #### Verify it landed
 
@@ -1382,9 +1392,7 @@ $c.Issuer
 Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -eq $c.Subject }
 ```
 
-> The filter matches the certificate's **Subject**, which was set at `step ca init` — **not the filename**. The two are independent: this root was originally exported as `vineyard**s**-root-ca.crt` while the CA itself is named `vineyard`. Searching for the wrong string produces a false negative — read the Subject with the .NET method above rather than trusting the filename.
-
-> **Filename normalized 2026-08-06:** the canonical name is **`vineyard-root-ca.crt`** (singular, matching the CA's own name). If your workstation copy is still `vineyards-root-ca.crt`, rename it — `Rename-Item C:\Users\Bora\vineyards-root-ca.crt vineyard-root-ca.crt`. **This is purely cosmetic and invalidates nothing:** the filename is a container for the bytes; the CA's identity lives in the certificate's Subject, and every cert already issued keeps validating. Renaming the *CA* would be the expensive operation (new root key, re-trust every client) — that is **not** what this is.
+> The filter matches the certificate's **Subject**, which was set at `step ca init` — **not the filename**. A root exported as `vineyard-root-ca.crt` may have Subject `Homelab Root CA` or similar. Searching for the wrong string produces a false negative.
 
 **`LocalMachine\Root` rather than `CurrentUser\Root`** is deliberate — it covers every user and service on the box, including anything running under a service account.
 
@@ -1463,9 +1471,9 @@ Success without `-k` means the chain validates. If it still fails, the SAN doesn
 3. **Applications** tab
 4. Under **Manage Access Tokens**: **Token Name** → e.g. `workstation`
 5. **Select permissions** → expand and grant:
-    - `repository` → **Read and Write**
-    - `package` → **Read and Write** (for the future container registry)
-    - leave everything else **No Access**
+   - `repository` → **Read and Write**
+   - `package` → **Read and Write** (for the future container registry)
+   - leave everything else **No Access**
 6. **Generate Token**
 7. **Copy it now** — it is shown exactly once
 
@@ -1504,17 +1512,17 @@ A successful push is your end-to-end proof: TLS chain, PAT auth, Postgres write,
 
 ### What you lose by disabling SSH
 
-|Feature|Status without SSH|
+| Feature | Status without SSH |
 |---|---|
-|Clone / fetch / push over HTTPS|✅|
-|REST API|✅|
-|Web UI|✅|
-|Git LFS|✅|
-|Package / container registry|✅|
-|Forgejo Actions|✅|
-|SSH clone URLs shown in UI|❌ hidden|
-|SSH key management page|❌|
-|SSH-key commit signing verification|❌ (GPG signing still works)|
+| Clone / fetch / push over HTTPS | ✅ |
+| REST API | ✅ |
+| Web UI | ✅ |
+| Git LFS | ✅ |
+| Package / container registry | ✅ |
+| Forgejo Actions | ✅ |
+| SSH clone URLs shown in UI | ❌ hidden |
+| SSH key management page | ❌ |
+| SSH-key commit signing verification | ❌ (GPG signing still works) |
 
 Nothing on your roadmap needs SSH. If you later want it, the rootless image's SSH server listens on **2222** (not 22) — publish `2222:2222` and flip `DISABLE_SSH` to `false`.
 
@@ -1526,10 +1534,10 @@ This is where the private CA bites in a non-obvious way, so it's worth doing del
 
 ### The key insight: two separate trust stores are in play
 
-|What makes the connection|Trust store it uses|How to fix|
+| What makes the connection | Trust store it uses | How to fix |
 |---|---|---|
-|`git clone` / `git push` (a subprocess)|Git's own CA config — OpenSSL bundle or schannel|Phase 11|
-|Claude Code's own HTTPS calls (WebFetch, MCP)|Node/native binary trust chain|`NODE_EXTRA_CA_CERTS` or OS store|
+| `git clone` / `git push` (a subprocess) | Git's own CA config — OpenSSL bundle or schannel | Phase 11 |
+| Claude Code's own HTTPS calls (WebFetch, MCP) | Node/native binary trust chain | `NODE_EXTRA_CA_CERTS` or OS store |
 
 **For ordinary use — Claude Code reading, editing, committing, and pushing your repo — Phase 11 is sufficient.** Claude Code shells out to `git`, and `git` uses the trust you configured there. Nothing else is required.
 
@@ -1683,11 +1691,11 @@ sudo chown -R 1030:65536 /volume1/docker/forgejo/data
 
 Then rebuild the project.
 
-### `The "user to run as" username is not the current username: git ->` (empty right side)
+### `The "user to run as" username is not the current username: git -> ` (empty right side)
 
 **Cause:** UID 1030 has no `/etc/passwd` entry, so `os/user.Current()` returns `""`. No typed value can match. **You skipped Phase 4B.**
 
-**Fix:** do Phase 4B, then **Action → Build** (a volume addition needs a rebuild, not Stop/Start). Verify with `docker exec forgejo id` — you need `uid=1030(git)` _with the name_.
+**Fix:** do Phase 4B, then **Action → Build** (a volume addition needs a rebuild, not Stop/Start). Verify with `docker exec forgejo id` — you need `uid=1030(git)` *with the name*.
 
 ### `cat: can't open '/etc/passwd': Permission denied`
 
@@ -1702,7 +1710,7 @@ No rebuild needed — permission changes on a bind-mounted file take effect imme
 
 ### `MustInstalled() [F] Unable to load config file for a installed Forgejo instance`
 
-**Cause:** you ran a `forgejo` CLI subcommand via `docker exec`, which **bypasses the image entrypoint** and therefore never gets `GITEA_APP_INI` set. The binary looks for `app.ini` at its compiled-in default rather than where the entrypoint writes it. The error text says exactly this: _"you should either use `--config` to set your config file."_
+**Cause:** you ran a `forgejo` CLI subcommand via `docker exec`, which **bypasses the image entrypoint** and therefore never gets `GITEA_APP_INI` set. The binary looks for `app.ini` at its compiled-in default rather than where the entrypoint writes it. The error text says exactly this: *"you should either use `--config` to set your config file."*
 
 **Fix — pass `-c` explicitly:**
 
@@ -1756,24 +1764,24 @@ sudo docker exec -it forgejo-db psql -U forgejo -c "ALTER USER forgejo WITH PASS
 
 ### Container Manager rejects the YAML
 
-|Error|Fix|
+| Error | Fix |
 |---|---|
-|`NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler or the cgroup is not mounted`|**Remove every `cpus:` line.** Synology kernels lack CFS bandwidth control. This is a hard build failure — the project will not deploy. Keep `mem_limit`|
-|`Additional property X is not allowed`|Typo in a key name — check spelling against the compose above|
-|`Unsupported config option for services: 'mem_limit'`|A `version:` key crept in — remove it|
-|Long-form `depends_on` rejected|Fall back to `depends_on: [db]` and accept slower first-boot ordering (the healthcheck still protects steady state)|
-|`internal` network rejected|Remove `internal: true`, and instead verify no ports are published on `db` — weaker, but functional. Report it; this would be a notable Container Manager limitation|
+| `NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler or the cgroup is not mounted` | **Remove every `cpus:` line.** Synology kernels lack CFS bandwidth control. This is a hard build failure — the project will not deploy. Keep `mem_limit` |
+| `Additional property X is not allowed` | Typo in a key name — check spelling against the compose above |
+| `Unsupported config option for services: 'mem_limit'` | A `version:` key crept in — remove it |
+| Long-form `depends_on` rejected | Fall back to `depends_on: [db]` and accept slower first-boot ordering (the healthcheck still protects steady state) |
+| `internal` network rejected | Remove `internal: true`, and instead verify no ports are published on `db` — weaker, but functional. Report it; this would be a notable Container Manager limitation |
 
 ### `Connection refused` on port 3443
 
 **Diagnose before changing anything** — refused and timeout mean different things, and treating one as the other sends you down the wrong path:
 
-|Symptom|Meaning|Cause|
+| Symptom | Meaning | Cause |
 |---|---|---|
-|**Connection refused** (immediate)|TCP RST — **nothing is listening**|Container not running, build failed, or wrong port|
-|**Connection timed out** (hangs, then fails)|Packets silently dropped|Firewall blocking|
+| **Connection refused** (immediate) | TCP RST — **nothing is listening** | Container not running, build failed, or wrong port |
+| **Connection timed out** (hangs, then fails) | Packets silently dropped | Firewall blocking |
 
-DSM's firewall **drops** blocked traffic rather than rejecting it, so a firewall problem presents as a _timeout_. **Refused means the container isn't up.**
+DSM's firewall **drops** blocked traffic rather than rejecting it, so a firewall problem presents as a *timeout*. **Refused means the container isn't up.**
 
 Check in this order:
 
@@ -1791,7 +1799,7 @@ sudo docker logs forgejo-db --tail 50
 
 If `docker ps -a` shows nothing at all, the **project build failed** and no containers were ever created — go back to the Container Manager build log and read the first error, not the last.
 
-### Firewall check (only if you get a _timeout_)
+### Firewall check (only if you get a *timeout*)
 
 ```bash
 # Is the DSM firewall even on?
@@ -1802,44 +1810,41 @@ If enabled, confirm your Phase 10 allow rule exists and sits **above** the deny-
 
 ### `ERR_CERT_AUTHORITY_INVALID` / `schannel: SEC_E_UNTRUSTED_ROOT (0x80090325)`
 
-**Both mean the same thing: the certificate was served correctly, but the issuing CA isn't in the client's trust store.** This is _expected_ before Phase 11 and is actually a good sign — it proves TLS is working end to end.
+**Both mean the same thing: the certificate was served correctly, but the issuing CA isn't in the client's trust store.** This is *expected* before Phase 11 and is actually a good sign — it proves TLS is working end to end.
 
 Distinguish it from its neighbour:
 
-|Error|Meaning|
+| Error | Meaning |
 |---|---|
-|`ERR_CERT_AUTHORITY_INVALID` / `SEC_E_UNTRUSTED_ROOT`|Cert fine, **issuer not trusted** → install the root|
-|`ERR_CERT_COMMON_NAME_INVALID`|Issuer trusted, **wrong hostname/IP in SAN** → reissue|
+| `ERR_CERT_AUTHORITY_INVALID` / `SEC_E_UNTRUSTED_ROOT` | Cert fine, **issuer not trusted** → install the root |
+| `ERR_CERT_COMMON_NAME_INVALID` | Issuer trusted, **wrong hostname/IP in SAN** → reissue |
 
 Check in this order:
 
 1. **Chain completeness on the server:**
-    
-    ```bash
-    grep -c "BEGIN CERTIFICATE" /volume1/docker/forgejo/data/custom/https/server.crt
-    ```
-    
-    `2` = leaf + intermediate (correct). `1` = leaf only — clients can't build a path even with the root installed; append the intermediate and restart the container.
-    
+   ```bash
+   grep -c "BEGIN CERTIFICATE" /volume1/docker/forgejo/data/custom/https/server.crt
+   ```
+   `2` = leaf + intermediate (correct). `1` = leaf only — clients can't build a path even with the root installed; append the intermediate and restart the container.
+
 2. **Root installed on the client** — see Phase 11. On Windows, `certutil -addstore -f "Root" <path>` in an **elevated** shell.
-    
+
 3. **Chrome fully restarted** — not just the tab.
-    
+
 4. **Right CA?** If step-ca has multiple contexts, `step ca root` may export a different CA's root than the one that signed `server.crt`. The root's **Subject** must equal the server cert's **Issuer**.
-    
 
 ### Browser shows a padlock but still says "Not secure" / "Connection is not secure"
 
 Once the root is trusted and the cert reports as valid, Chrome should show a normal padlock. If it still flags the connection, work through these:
 
-|Cause|Check|Fix|
+| Cause | Check | Fix |
 |---|---|---|
-|**Chrome not fully restarted**|Most common by far|Quit every window _and_ the tray icon, reopen|
-|**Stale tab**|Reload with `Ctrl+Shift+R`|Hard-refresh bypasses the cached security state|
-|**Cert validity > 398 days**|`$c.NotAfter - $c.NotBefore`|Chrome rejects leaf certs over 398 days. Reissue shorter|
-|**Mixed content**|F12 → Console, look for `Mixed Content:` warnings|Usually a wrong `ROOT_URL` — it must be `https://…:3443/`, not `http://`|
-|**Wrong `ROOT_URL`**|`grep ROOT_URL …/custom/conf/app.ini`|Must match exactly what you type, including scheme and port|
-|**Looking at the wrong indicator**|Click the padlock|"Connection is secure" + "Certificate is valid" = correct|
+| **Chrome not fully restarted** | Most common by far | Quit every window *and* the tray icon, reopen |
+| **Stale tab** | Reload with `Ctrl+Shift+R` | Hard-refresh bypasses the cached security state |
+| **Cert validity > 398 days** | `$c.NotAfter - $c.NotBefore` | Chrome rejects leaf certs over 398 days. Reissue shorter |
+| **Mixed content** | F12 → Console, look for `Mixed Content:` warnings | Usually a wrong `ROOT_URL` — it must be `https://…:3443/`, not `http://` |
+| **Wrong `ROOT_URL`** | `grep ROOT_URL …/custom/conf/app.ini` | Must match exactly what you type, including scheme and port |
+| **Looking at the wrong indicator** | Click the padlock | "Connection is secure" + "Certificate is valid" = correct |
 
 **Private CAs do not cause a permanent "Not secure" label.** Once the root is in `LocalMachine\Root` and Chrome has restarted, a privately-issued certificate gets the same padlock as a public one. If the warning persists after a full restart, it's mixed content or a `ROOT_URL` mismatch — not the private CA.
 
@@ -1899,11 +1904,11 @@ Produces one consistent archive including the DB. Slower and disk-hungry, but si
 
 ### Fitting your existing targets
 
-|Target|What to point it at|
+| Target | What to point it at |
 |---|---|
-|Restic|`/volume1/docker/forgejo/{data,backup}`|
-|Proxmox Backup Server|same paths, via the future backup NAS|
-|**Exclude**|`/volume1/docker/forgejo/db` — restore from the logical dump instead; a btrfs snapshot of a live PGDATA is crash-consistent at best|
+| Restic | `/volume1/docker/forgejo/{data,backup}` |
+| Proxmox Backup Server | same paths, via the future backup NAS |
+| **Exclude** | `/volume1/docker/forgejo/db` — restore from the logical dump instead; a btrfs snapshot of a live PGDATA is crash-consistent at best |
 
 **Keep `.env` in your password manager.** If you lose `SECRET_KEY`, every stored 2FA secret is permanently undecryptable.
 
@@ -1946,7 +1951,7 @@ Safe: as with other minor releases, users are not required to dump and reload th
 
 ### PostgreSQL major (17 → 18) — the trap
 
-**You cannot just change the tag.** The on-disk cluster is version-specific, _and_ PG18 relocated `PGDATA` and changed the declared `VOLUME` path, so an existing mount won't even line up.
+**You cannot just change the tag.** The on-disk cluster is version-specific, *and* PG18 relocated `PGDATA` and changed the declared `VOLUME` path, so an existing mount won't even line up.
 
 ```bash
 # 1. Dump from the running 17 container
@@ -1989,7 +1994,7 @@ The design already accommodates both — nothing here requires rearchitecting.
 
 > **Critical:** a runner needs Docker access to execute container jobs. **Do not mount the host's `/var/run/docker.sock`** — that hands any workflow root on your NAS and would undo everything in this document. Use a **Docker-in-Docker sidecar** so the runner's privilege requirement never touches the Forgejo or Postgres containers.
 
-Honestly: on a DS1621+ (Ryzen V1500B) sharing duty with your primary storage, CI is a poor fit. The right home for runners is the DIY Proxmox server from Deep Dive 2. Plan for Forgejo-on-NAS as the _forge_, and runners elsewhere.
+Honestly: on a DS1621+ (Ryzen V1500B) sharing duty with your primary storage, CI is a poor fit. The right home for runners is the DIY Proxmox server from Deep Dive 2. Plan for Forgejo-on-NAS as the *forge*, and runners elsewhere.
 
 ---
 
@@ -1997,12 +2002,12 @@ Honestly: on a DS1621+ (Ryzen V1500B) sharing duty with your primary storage, CI
 
 When this moves to a dedicated server, you close the last gap — the root daemon.
 
-||Now (Synology)|Later (dedicated)|
+| | Now (Synology) | Later (dedicated) |
 |---|---|---|
-|Daemon|root|**rootless** (`dockerd-rootless.sh`) or Podman|
-|Container UID|1030|1030 (unchanged)|
-|Daemon-CVE blast radius|**root on NAS**|unprivileged user|
-|Compose file|as written|~unchanged|
+| Daemon | root | **rootless** (`dockerd-rootless.sh`) or Podman |
+| Container UID | 1030 | 1030 (unchanged) |
+| Daemon-CVE blast radius | **root on NAS** | unprivileged user |
+| Compose file | as written | ~unchanged |
 
 **Why the migration is easy:** the design is already portable. One data volume, one DB volume, no Docker socket, no host networking, no privileged flags, no DSM-specific Compose keys.
 
@@ -2019,21 +2024,109 @@ Migration outline:
 
 ---
 
+## Appendix B2 · Moving step-ca to a dedicated box — and fixing the CA name then
+
+**Deferred by decision (Bora, 2026-08-06).** step-ca currently runs on the **workstation**,
+which makes the whole LAN's trust anchor dependent on one desktop being up and backed up.
+It moves to a dedicated host (the Proxmox server from Deep Dive 2) as part of the same
+migration as Appendix B.
+
+**The naming inconsistency is corrected at that migration, not before.** Today there are
+three names that don't quite agree:
+
+| | Value |
+|---|---|
+| CA as Bora named it | `vineyard` |
+| Root cert **Subject** | set at `step ca init` — verify with the .NET snippet in Phase 11 |
+| Filename | **`vineyard-root-ca.crt`** (normalized 2026-08-06; was `vineyards-…`) |
+
+> ⚠️ **Do not re-initialise the CA just to fix a name.** The filename is free to change — it
+> is only a container for the bytes. The **Subject** is baked into the root certificate and
+> stamped as the `Issuer` on every certificate it has ever signed. Changing it means a new
+> root key, every issued cert invalidated, and a re-trust on every client and container.
+> There is **zero functional gain** for a cosmetic fix.
+
+**Why the migration is the right moment:** moving step-ca to a new host re-initialises it
+anyway — new root, fresh trust distribution to every client. That is the one point where
+correcting the Subject costs nothing incremental. Do it in a single pass then:
+
+1. `step ca init` on the dedicated host with the intended name (`Vineyard Root CA`)
+2. Re-issue the Forgejo leaf from the new CA; swap `server.crt` / `server.key`; restart
+3. Distribute the new root to every client (Phase 11) and to the NAS
+   (`/volume1/docker/certs/vineyard-root-ca.crt` — see `PROD_ROLLOUT.md` step 1a)
+4. Retire the old root from the trust stores **last**, once everything validates
+
+Until then the mismatch is cosmetic and harmless. Record it here so it is not "discovered"
+again and fixed impulsively at the wrong time.
+
+---
+
+## Appendix C · What actually uses this forge — the SAVES repo
+
+This document lives *inside* the first repository hosted on this instance, so the two are
+coupled in a few concrete ways worth recording.
+
+**Remote.** `origin` for SAVES is `https://192.168.1.201:3443/<user>/SAVES.git`.
+**GitHub is retired (Bora, 2026-08-05.)** SAVES-side consequences are documented in
+`CLAUDE.md` → *Git Workflow*; the constraining decision is in `docs/ROADMAP.md` →
+*Decisions locked*.
+
+**⚠️ This forge is now the only copy of that history.** With GitHub gone there is no off-site
+remote. `/volume1/docker/forgejo` — the repo tree **and** a `pg_dump` of the database — must
+be in the backup set (see *Backups* above). Local clones hold the commits but not issues,
+PRs, or settings.
+
+**Same-NAS co-tenancy.** SAVES also *deploys* to this NAS (`/volume1/docker/saves`, Compose
+project `saves_app`), so the two stacks share RAM, disk, and the DSM firewall:
+
+| Concern | Forgejo | SAVES |
+|---|---|---|
+| Published ports | `192.168.1.201:3443` | **none** — dials out only (Discord, Whisper, Anthropic) |
+| Memory | 2 GB + 1 GB (Postgres) | `SAVES_MEM_LIMIT`, 4 GB (NAS measured 32 GB) |
+| CPU quota | ❌ impossible (§6) | ❌ same — never add `cpus:` |
+| Runs as | UID 1030 (`sa_forgejo`) : GID 65536 | UID of `sa_saves` : GID 65536 |
+
+Both the **`cpus:` finding (§6)** and the **top-level-`version:`-key finding** were
+propagated into `docker/docker-compose.yml`; `scripts/preflight_nas.sh` check `[6]` fails the
+deploy if either regresses, and reports RAM headroom against the limits other containers
+already reserve.
+
+**SAVES adopted this document's identity model (2026-08-06).** `saves_app` now runs
+**non-root** as `sa_saves`, the direct analogue of `sa_forgejo` — same reasoning, same
+GID 65536, same DSM-ACL caveat. It is not yet hardened to the *full* standard here
+(`cap_drop: ALL`, `read_only`, `no-new-privileges` are still Forgejo-only); that remains a
+sensible follow-on, not a rollout prerequisite. SAVES's ownership map, which extends this
+model to a human-shared vault via setgid + group `users`, is `docs/PROD_ROLLOUT.md` §1.6.
+
+**The NAS pulls SAVES from the NAS.** `git pull` in `/volume1/docker/saves/app` talks to this
+forge over the LAN address, so the forge must be up to *update* SAVES. A running `saves_app`
+container needs no git access at all, so a forge outage never interrupts saving. The clone
+needs the step-ca root in the NAS's Git trust config plus a `repository: Read` PAT —
+sequence in `docs/PROD_ROLLOUT.md` step 1.
+
+---
+
 ## LOCKED DECISIONS
 
-1. **Image:** `codeberg.org/forgejo/forgejo:15-rootless` — LTS to 15 July 2027, floating `15` tag for automatic patches. _(15.0.6 unverified; `15` makes it moot.)_
+1. **Image:** `codeberg.org/forgejo/forgejo:15-rootless` — LTS to 15 July 2027, floating `15` tag for automatic patches. *(15.0.6 unverified; `15` makes it moot.)*
 2. **Database:** `postgres:17-alpine` (17.10), `user: "70:70"`, `scram-sha-256`, **no published port**, `internal: true` network only.
-3. **Container identity:** `user: "1030:65536"` — UID 1030 with the _`service accounts`_ GID, deliberately **not** DSM's broad `users` GID 100. 3b. **`/etc/passwd` + `/etc/group` mounted read-only** (Phase 4B), rewritten so `git` = 1030:65536. **Mandatory** — without it the web installer cannot be completed. Files are `root:root 644`; `644` is required, not lax.
+3. **Container identity:** `user: "1030:65536"` — UID 1030 with the *`docker_service_accounts`* GID, deliberately **not** DSM's broad `users` GID 100.
+3b. **`/etc/passwd` + `/etc/group` mounted read-only** (Phase 4B), rewritten so `git` = 1030:65536. **Mandatory** — without it the web installer cannot be completed. Files are `root:root 644`; `644` is required, not lax.
 4. **Volume layout:** single Forgejo volume `data/ → /var/lib/gitea`. **No `/etc/gitea` mount** — removed in Forgejo v15. DB in the same tree per your instruction.
 5. **TLS:** Forgejo built-in HTTPS, static cert issued by **step-ca**, at `custom/https/server.crt` + `server.key` with `CERT_FILE`/`KEY_FILE` set explicitly (relative to CustomPath). Host port **3443**. Distribute the step-ca **root** to clients. **Forgejo's built-in ACME is rejected** — it cannot bind :80 under `cap_drop: ALL`; renew externally and restart the container. Keep leaf validity under 398 days.
 6. **Git access:** HTTPS + PAT only. `DISABLE_SSH=true`, `START_SSH_SERVER=false`, no SSH port published.
-7. **Bootstrap:** web installer first, `INSTALL_LOCK=true` immediately after. **`RUN_USER = git` stays in `app.ini`** — Phase 4B makes it true. Declarative bootstrap deferred to the Terraform rebuild. 7b. **Repository root:** `/var/lib/gitea/git/repositories` — the installer's prefilled value. **Where the cheat sheet and the installer disagree, the installer wins**, because it reflects the image's env overrides. 7c. **Port binding:** `192.168.1.201:3443:3000` — explicit IPv4 bind, no IPv6 listener. `2222/tcp:[]` is exposed-not-published and unreachable.
-8. **Hardening:** `cap_drop: ALL`, `no-new-privileges:true`, `read_only: true` + tmpfs, no Docker socket, argon2 password hashing, `OFFLINE_MODE`, SSRF guards on migrations and webhooks. 8b. **Resource limits:** `mem_limit` only. **No `cpus:` — Synology kernels lack CFS bandwidth control and any CPU quota is a hard build failure.** Hard CPU containment waits for the Proxmox migration.
-9. **Security posture claim (blog-precise):** _non-root, unprivileged containers on a root daemon, without seccomp filtering._ Two platform caveats you cannot fix from Compose: DSM's `dockerd` runs as root (no supported rootless or `userns-remap` path), and DSM sets `"seccomp-profile": "unconfined"` daemon-wide. Both close on the dedicated-server migration. **Rootless ≠ unprivileged ≠ non-root** — see §3.
+7. **Bootstrap:** web installer first, `INSTALL_LOCK=true` immediately after. **`RUN_USER = git` stays in `app.ini`** — Phase 4B makes it true. Declarative bootstrap deferred to the Terraform rebuild.
+7b. **Repository root:** `/var/lib/gitea/git/repositories` — the installer's prefilled value. **Where the cheat sheet and the installer disagree, the installer wins**, because it reflects the image's env overrides.
+7c. **Port binding:** `192.168.1.201:3443:3000` — explicit IPv4 bind, no IPv6 listener. `2222/tcp:[]` is exposed-not-published and unreachable.
+8. **Hardening:** `cap_drop: ALL`, `no-new-privileges:true`, `read_only: true` + tmpfs, no Docker socket, argon2 password hashing, `OFFLINE_MODE`, SSRF guards on migrations and webhooks.
+8b. **Resource limits:** `mem_limit` only. **No `cpus:` — Synology kernels lack CFS bandwidth control and any CPU quota is a hard build failure.** Hard CPU containment waits for the Proxmox migration.
+9. **Security posture claim (blog-precise):** *non-root, unprivileged containers on a root daemon, without seccomp filtering.* Two platform caveats you cannot fix from Compose: DSM's `dockerd` runs as root (no supported rootless or `userns-remap` path), and DSM sets `"seccomp-profile": "unconfined"` daemon-wide. Both close on the dedicated-server migration. **Rootless ≠ unprivileged ≠ non-root** — see §3.
 10. **Permissions:** POSIX `chown` over SSH — **never** touch this subtree's permissions in File Station or Control Panel afterwards.
 11. **Firewall:** DSM firewall allow `192.168.1.0/24 → tcp/3443`, deny-all last. **No router port-forward.**
 12. **Claude Code:** works via the OS/Git trust store from Phase 11; `NODE_EXTRA_CA_CERTS` **exported in the shell** (not `settings.json`) only if running the Node distribution.
 13. **CI runners:** deferred to the Proxmox server. If ever run on the NAS, **DinD sidecar — never the host Docker socket.**
+14. **CA naming + relocation (Bora, 2026-08-06):** the root cert **file** is normalized to `vineyard-root-ca.crt` now (cosmetic, invalidates nothing). The **CA's own Subject** is corrected only when step-ca moves to a dedicated box, because that migration re-initialises the CA anyway — see **Appendix B2**. **Never re-init a running CA to fix a name:** it invalidates every issued certificate and forces a re-trust on every client, for zero functional gain.
+15. **This document is repo-canonical (Bora, 2026-08-06).** `docs/FORGEJO.md` in the SAVES repo is the authoritative copy — edit it here, not in an external copy pasted over the top. Two earlier paste-overs silently dropped Appendix C and a requested cert rename. Verify with `git status` before editing.
 
 ---
 

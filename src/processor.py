@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from src.ai.claude_client import analyze_content, fact_check
 from src.ai.verifier import check_travel_location
@@ -102,6 +103,20 @@ async def _process_one(
     platform = detect_platform(url)
     logger.info(f"Processing [{platform}] {url}")
     state.mark_pending(url)
+    # Wall-clock instrumentation (Bora, 2026-08-06). PROD runs on the NAS, whose embedded
+    # Ryzen is roughly a tenth of the workstation's — and Synology kernels make a CPU quota
+    # impossible, so SAVES can transiently saturate the box that also serves SMB, Obsidian
+    # Sync and the Forgejo forge. The decision to keep it there vs. move the pipeline to the
+    # workstation should rest on measurements, not a hunch, so each stage's duration is
+    # logged and summarized at the end of the run. Grep: "TIMING".
+    _t_start = time.monotonic()
+    _stage: dict[str, float] = {}
+
+    def _mark(name: str, since: float) -> float:
+        """Record a stage duration and return a fresh timestamp for the next stage."""
+        now = time.monotonic()
+        _stage[name] = now - since
+        return now
 
     # 1. Extract
     extractor = get_extractor(url, config)
@@ -113,6 +128,7 @@ async def _process_one(
     try:
         async with asyncio.timeout(extract_timeout):
             content = await extractor.extract(url)
+        _t = _mark("extract", _t_start)   # Playwright/Chromium lives here — the CPU-heaviest stage
     except (TimeoutError, asyncio.TimeoutError):
         err_msg = f"extraction timed out after {extract_timeout}s"
         logger.warning("%s: %s", err_msg, url)
@@ -167,6 +183,7 @@ async def _process_one(
     except Exception as e:
         logger.warning(f"Media download failed for {url}: {e}")
         content.metadata["media_download_failed"] = True
+    _t = _mark("download", _t)   # network/disk bound, not CPU
 
     embed_paths = [abs_to_obsidian_embed(p, media_root, vault_root) for p in media_paths_abs]
 
@@ -205,6 +222,7 @@ async def _process_one(
         audio_candidates = [p for p in media_paths_abs if is_audio_video(p)]
         if audio_candidates and config.get("transcription", {}).get("enabled", True):
             transcript = await transcribe(audio_candidates[0], config)
+    _t = _mark("transcribe", _t)   # remote (workstation Whisper) — network wait, not local CPU
 
     # 5. Prepare vision data (images + video keyframes) for non-YouTube platforms.
     # Skip generic web pages (article text already extracted as Markdown) and regular YouTube
@@ -222,6 +240,7 @@ async def _process_one(
                 logger.info(f"Vision: prepared {len(image_blocks)} image block(s) for {url}")
         except Exception as e:
             logger.warning(f"Vision preparation failed (non-fatal): {e}")
+    _t = _mark("vision", _t)   # ffmpeg scene-detect + montage — the other CPU-heavy stage
 
     # 6. AI analysis (text + vision, with preferences hint + existing vault folders/tags)
     saves_root = config.get("paths", {}).get("saves_root") or os.path.join(vault_root, "SAVES")
@@ -319,6 +338,19 @@ async def _process_one(
     bot.store.add(pending)
     await bot.send_for_approval(pending)
     logger.info(f"Sent for approval: {url}")
+
+    # One greppable line per save. `extract` and `vision` are the local-CPU stages
+    # (Chromium, ffmpeg); `transcribe` and `analyze` are mostly waiting on the network.
+    # If total time on the NAS turns out to be dominated by extract+vision, that is the
+    # evidence for moving the pipeline to the workstation — ROADMAP Phase 5.
+    _mark("analyze", _t)
+    total = time.monotonic() - _t_start
+    logger.info(
+        "TIMING [%s] total=%.1fs %s | %s",
+        platform, total,
+        " ".join(f"{k}={v:.1f}s" for k, v in _stage.items()),
+        url,
+    )
     return True
 
 

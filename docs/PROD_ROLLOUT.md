@@ -667,6 +667,20 @@ python src\main.py
 | Refresh provecho auth | re-capture the profile (workstation/WSL2), recopy to `cookies/provecho.co_profile/`, `restart` |
 | Refresh IG/TikTok/FB cookies | re-export `*.txt`, copy into `cookies/`, `restart` |
 
+**Is the NAS the right home? Measure, don't guess.** Every save logs one `TIMING` line with
+per-stage wall-clock:
+
+```bash
+sudo docker compose -f docker/docker-compose.yml logs | grep TIMING
+# TIMING [provecho] total=48.3s extract=31.2s download=6.1s transcribe=8.0s vision=2.4s analyze=0.6s | https://…
+```
+
+`extract` (Chromium) and `vision` (ffmpeg) are the **local-CPU** stages; `download`,
+`transcribe` and `analyze` are mostly network waits. If `extract`+`vision` come to dominate,
+or the NAS feels sluggish over SMB while a save runs, that's the signal to move the pipeline
+to the workstation — same code, a `config.local.yaml` away (`ARCHITECTURE.md` §1b,
+`ROADMAP.md` Phase 5). Synology cannot cap CPU (§1.5), so this log is the only warning you get.
+
 **Health signals:** the container is `restart: unless-stopped`; `docker compose ps` shows it Up. Alerts (cookie expiry, extraction failures, unreachable Whisper) post to **#SAVES-alerts**; the pipeline log lives in `logs/` and `#SAVES-logs`.
 
 ---
