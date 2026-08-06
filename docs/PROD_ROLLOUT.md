@@ -328,12 +328,17 @@ not modify. **Git** gets its trust from the `http.sslCAInfo` key set above, so t
 
 **1b. Clone the repo.**
 
-> **What this clone is — it is _not_ the container.** `/volume1/docker/saves/app` is an
-> ordinary directory holding the source. `docker compose up --build` reads it as the **build
-> context**, produces an *image*, and runs that image as the container `saves_app`. The clone
-> additionally supplies three things at **runtime** via bind mounts — `config.yaml`,
-> `cookies/`, and `logs/` — which is why it stays on disk after the build rather than being
-> throwaway. `/volume1/docker/` is just Synology's conventional home for container projects.
+> **Yes, SAVES runs as a Docker container** — `saves_app`, defined by
+> `docker/docker-compose.yml`, exactly like the Forgejo stack next door. `/volume1/docker/saves/`
+> is therefore the correct home: it is a **container project directory**, the same role
+> `/volume1/docker/forgejo/` plays.
+>
+> What the clone *is*, precisely: `docker compose up --build` reads it as the **build context**,
+> produces an image, and runs that image as the container. The clone then keeps serving the
+> container at **runtime** through three bind mounts — `config.yaml`, `cookies/`, and `logs/` —
+> which is why it stays on disk permanently rather than being consumed by the build. That dual
+> role (build context *and* live mount source) is the only reason this looks different from a
+> plain "docker pull an image" deployment.
 
 Use a **PAT** (Forgejo → Settings → Applications → *Manage Access Tokens*, scope
 `repository: Read` — a deploy-only token, separate from your workstation token):
