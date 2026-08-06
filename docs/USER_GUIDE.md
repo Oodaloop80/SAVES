@@ -154,9 +154,17 @@ server (e.g. `#SAVES-logs`): type `/` and Discord pops up a command picker; keep
   `python scripts/capture_session.py https://www.provecho.co/platform/login provecho.co` once
   (log in, confirm a recipe shows unlocked, press Enter) before `/crawl` will work.
 - A creator can have 60–150+ recipes — queuing "New K" means K approval cards and K Claude
-  calls. Consider `📋 List` first, or a smaller creator, before queuing a big one.
+  calls, and because approvals are **serial**, K sequential manual reviews. Consider
+  `📋 List` first, or a smaller creator, before queuing a big one.
 - CLI equivalent (no Discord needed): `python scripts/crawl_creator.py <creator-url>` (add
   `--to-inbox` to actually feed the pipeline; without it, it only lists).
+- **Safety net:** `crawl.max_recipes` in `config.yaml` (default `300`) is a hard cap on how
+  many URLs one crawl will queue. Lowering it to ~10 while you're getting a feel for the
+  batch behavior is the cheapest possible guard.
+- ▶ **First time running a real crawl?** Follow the staged escalation in
+  `docs/PROD_ROLLOUT.md` **Part 4** (auth check → free CLI dry-run → one recipe → small
+  creator → restart test → large creator). The batch path is the least-exercised part of the
+  system and the largest token spend a single click can trigger.
 
 ### `/queue` — see the review queue
 

@@ -73,7 +73,7 @@ bot (commands register at startup).
 | `python src\main.py` | Start the whole system — inbox watcher, processor, and Discord bot. |
 | `python scripts\whisper_server.py --model large-v3-turbo` | Start the local transcription server (the NAS container POSTs audio to it). |
 | `python scripts\process_one.py "<url>" [--dry-run]` | Run the full pipeline for one URL and write the note. `--dry-run` prints only, no write. `--deep` runs the web-searched fact-check. |
-| `python scripts\crawl_creator.py <creator-url> [--to-inbox]` | Crawl one creator: lists discovered/new/saved URLs; `--to-inbox` appends new URLs to the inbox for a running pipeline. |
+| `python scripts\crawl_creator.py <creator-url> [--to-inbox]` | Crawl one creator: lists discovered/new/saved URLs (a **free, zero-token dry run** — stage 1 of `PROD_ROLLOUT.md` Part 4); `--to-inbox` appends new URLs to the inbox for a running pipeline. |
 | `python scripts\capture_session.py <login-url> <name>` | Log in once to a gated site → saves a persistent browser profile (e.g. `… /platform/login provecho.co`). |
 | `python scripts\test_connection.py` | Smoke-test connections: Anthropic API, Discord bot, Reddit JSON API. |
 | `python scripts\refresh_cookies.py` | Guided instructions for re-exporting Instagram/TikTok/Facebook cookies. |

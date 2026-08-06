@@ -260,6 +260,16 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   - [x] Discord `/crawl` slash command + confirm card (✅ Queue / 📋 List / ✖ Cancel),
         `CrawlConfirmView` in `bot.py`; backgrounds the enqueue paced by `crawl.rate_limit_seconds`.
   - [x] Embedded video download+transcribe + recipe photos (see below) — LIVE-VERIFIED.
+  - [ ] **END-TO-END BATCH RUN — the one thing still untested (as of 2026-08-05).** What IS
+        verified is `discover_urls()` + single-recipe extraction, both via the CLI. What has
+        **never** been run: `/crawl` in a live bot → ✅ Queue → `enqueue_discovered()` pacing →
+        the serial gate holding across dozens of cards → `queue_state.json` restoring after a
+        restart mid-batch. Staged test plan (auth check → free CLI dry-run → one recipe →
+        small creator → restart test → large creator): **`docs/PROD_ROLLOUT.md` Part 4**.
+        Do stages 0–2 in DEV on Windows *before* the NAS cutover — that isolates the crawler
+        from the §1.4 cross-OS profile risk. Never big-bang the first run: one click on a
+        65-recipe creator is the largest token spend the system can make, and serial approval
+        turns it into 65 sequential manual reviews.
 
   **Per-creator scoping (Bora, 2026-07-28) — HARD REQUIREMENT.** provecho has many creators;
   crawling the whole site would be far too much. `/crawl` takes a single **creator page** and

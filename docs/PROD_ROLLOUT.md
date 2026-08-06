@@ -2,7 +2,9 @@
 
 The full guided rollout: the **plan**, the **step-by-step**, the **acceptance tests** (including
 everything added recently — serial queue, `#SAVES-inbox`, the Android/Tasker webhook, `/crawl`),
-and **rollback**. Self-contained — follow it top to bottom.
+the **staged first `/crawl` run** (Part 4 — the batch path has never been exercised end to end,
+and it's the largest token spend one click can trigger), and **rollback**. Self-contained —
+follow it top to bottom.
 
 > This supersedes and expands `docs/DEPLOY_NAS.md` (kept as the terse core-install reference).
 > Portability model: `ARCHITECTURE.md` §1b. User-facing behavior: `USER_GUIDE.md` / `COMMANDS.md`.
@@ -303,9 +305,122 @@ Run these in PROD after step 8. Each is one action with a clear expected result.
 
 Tests **15** and **20** depend on external pieces (Whisper up; Obsidian Sync bridge up). Tests **8/9/14** depend on the provecho profile (§1.4).
 
+Acceptance tests **8–12** touch `/crawl` at the smallest possible scale. **Before running a
+real creator crawl, work through PART 4** — the batch path has never been exercised end to end.
+
 ---
 
-# PART 4 — ROLLBACK
+# PART 4 — PROVECHO CRAWL: STAGED FIRST RUN
+
+> **Why this has its own part.** As of 2026-08-05, `discover_urls()` and single-recipe
+> extraction are live-verified, but **`/crawl` → ✅ Queue → approval cards → notes has never
+> been run end to end.** It is also the largest token spend a single click can trigger: one
+> click on a 65-recipe creator queues 65 saves, and `serial_approval` then makes that 65
+> sequential manual approvals. **Escalate in stages; never big-bang the first run.**
+
+Relevant config (`config.yaml` → `crawl:`): `rate_limit_seconds: 2.0`, `max_recipes: 300`
+(safety cap on one crawl), `enabled: true`.
+
+### Do stages 0–2 in DEV, on the workstation, BEFORE the PROD cutover
+
+The provecho profile is the rollout's one genuinely risky item (§1.4 — Windows DPAPI cookie
+encryption doesn't port to the Linux container). Proving the crawl works **natively on
+Windows first** means that if PROD later shows "locked", you know it's the cross-OS port and
+not the crawler. This ordering costs nothing and removes the main ambiguity.
+
+### Stage 0 — Is the auth still alive? *(zero tokens, ~1 min)*
+
+Firebase refresh tokens expire, and the profile ages. Check before anything else:
+
+```powershell
+python scripts\process_one.py "https://www.provecho.co/platform/recipe/<known-id>" --dry-run
+```
+
+| Result | Meaning |
+|---|---|
+| Real ingredients + directions printed | Auth alive — continue |
+| "This recipe is locked" / a login page | Re-capture: `python scripts\capture_session.py https://www.provecho.co/platform/login provecho.co` |
+
+### Stage 1 — CLI dry-run *(zero tokens, queues nothing)*
+
+```powershell
+python scripts\crawl_creator.py https://www.provecho.co/platform/creator/<handle>
+```
+
+Exercises `discover_urls()` + `partition()` with no cost and no queueing. Verify:
+
+- The count matches the page's own "**N** Recipes" header (a mismatch is logged as a WARNING).
+- Every URL is `/platform/recipe/<id>` — **zero** `/platform/creator/` URLs (per-creator
+  scoping is a hard requirement; cross-creator bleed is a bug, not a preference).
+- The new-vs-already-saved split looks sane against `processing_state.json`.
+
+### Stage 2 — One recipe, full pipeline, nothing written
+
+```powershell
+python scripts\process_one.py "<one URL from stage 1>" --dry-run
+```
+
+Inspect the printed note for:
+
+| Check | Expected |
+|---|---|
+| Embedded video | downloaded + `EmbedRelativeTo` block; transcript present (needs Whisper up) |
+| Ingredient icons | inline `![\|24](data:image/webp;base64,…)` |
+| Self-containment | **zero** `http` image URLs anywhere in the note (Hard Constraint #3) |
+| Ingredient tags | every ingredient in **both** detailed and simplified form |
+| Identity | `platform: provecho` (not `generic`), author handle resolved (not `unknown`) |
+| Caption | suppressed if it's a pure recipe re-dump; kept if it carries extra content |
+
+### Stage 3 — The Discord surface, smallest possible creator
+
+**This is the part that has never run.** In Discord: `/crawl <a SMALL creator's URL>`.
+
+1. Confirm card appears with Found / Already-saved / New counts.
+2. **📋 List first** — the ephemeral dry-run list is free. Verify before spending.
+3. Then **✅ Queue**.
+
+Watch for:
+
+| # | Expected |
+|---|---|
+| 3a | Cards arrive **one at a time**, not all at once |
+| 3b | Footer reads "Save X of N · M still waiting" and the counter advances on each approve |
+| 3c | `/queue` agrees with what you actually see |
+| 3d | **⏭️ Skip** retracts the card, releases the gate, and the next card appears immediately |
+| 3e | A skipped URL comes back later (re-queued to the BACK, reprocessed fresh) |
+
+### Stage 4 — Restart resilience mid-batch
+
+With one card pending and several still queued:
+
+```bash
+sudo docker compose -f docker/docker-compose.yml restart
+```
+
+The pending card must still gate, `queue_state.json` must restore the waiting list, and
+**nothing may be auto-approved** (`auto_approve_on_timeout` stays `false` by decision). This
+is the specific failure mode the persistent queue was built for — verify it deliberately.
+
+### Stage 5 — Only now, a large creator
+
+Two things to accept before clicking ✅ Queue on a 65-recipe creator: it is the largest token
+spend one click can trigger, and serial approval turns it into **65 sequential manual
+approvals**. Use **⏭️ Skip** freely — skipped URLs return to the back of the queue rather than
+being lost.
+
+> **Blast-radius tip:** while you're still learning the batch behavior, temporarily lower
+> `crawl.max_recipes` (e.g. to `10`) in `config.yaml` and `restart`. It's a hard cap on how
+> many URLs one crawl will queue, and it's the cheapest possible safety net.
+
+### If PROD shows "locked" but DEV worked
+
+That is the §1.4 cross-OS profile failure, not a crawler bug. Re-capture the profile under
+**WSL2/WSLg** (or any Linux desktop), recopy to `cookies/provecho.co_profile/`, and
+`restart`. Nothing else in the rollout depends on it.
+
+---
+
+# PART 5 — ROLLBACK
 
 Because it's **one bot token**, only one of DEV/PROD runs at a time — rollback is "stop PROD, start DEV."
 
@@ -323,7 +438,7 @@ python src\main.py
 
 ---
 
-# PART 5 — DAY-2 OPERATIONS
+# PART 6 — DAY-2 OPERATIONS
 
 | Task | Command (from `/volume1/docker/saves/app`) |
 |---|---|
@@ -340,7 +455,7 @@ python src\main.py
 
 ---
 
-# PART 6 — Optional later (NOT needed to run)
+# PART 7 — Optional later (NOT needed to run)
 
 Docker Compose above **is** the whole deployment. If you later want conveniences, each is
 additive and changes nothing about how SAVES runs — ask for steps when you want them:
