@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create the account BEFORE anything user-scoped is installed, so ownership is right from
-# the start. `-o` allows a non-unique id: GID 65536 is DSM's shared "service accounts"
+# the start. `-o` allows a non-unique id: GID 65536 is DSM's shared "docker_service_accounts"
 # group, deliberately reused across service containers.
 RUN groupadd -o -g "${SAVES_GID}" saves \
     && useradd -o -u "${SAVES_UID}" -g "${SAVES_GID}" -m -d /home/saves -s /bin/bash saves

@@ -163,7 +163,7 @@ Three settings must agree, or nothing works:
 | Data | Group | Reasoning |
 |---|---|---|
 | Vault, media | **`users` (GID 100)** | These are *your documents*. A human edits them in Obsidian and over SMB, and every DSM account is in `users`. Locking them to a service group would lock **you** out. |
-| State, cookies | **`service accounts` (GID 65536)** | Runtime internals and **credentials** (the provecho login profile, platform cookies). Nothing human-facing should read these. Same group as Forgejo. |
+| State, cookies | **`docker_service_accounts` (GID 65536)** | Runtime internals and **credentials** (the provecho login profile, platform cookies). Nothing human-facing should read these. Same group as Forgejo. |
 
 ### The ownership map
 
@@ -186,7 +186,7 @@ Three settings must agree, or nothing works:
 
 **Why setgid (`2xxx`) on the shared dirs:** it makes new files and subdirectories inherit the
 *directory's* group rather than the creating process's group. Without it, notes SAVES writes
-would land in group `service accounts` and you'd lose write access to your own vault. Paired
+would land in group `docker_service_accounts` and you'd lose write access to your own vault. Paired
 with `os.umask(0o002)` in `src/main.py` (files `664`, dirs `775`), both sides stay writable.
 
 ### ⚠️ The DSM ACL trap — applies to every path above
@@ -242,7 +242,7 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 
 1. **Control Panel → User & Group → User → Create**
 2. Name `sa_saves`, a long random password (never used — login is denied below)
-3. **User Groups:** tick `service accounts` — leave `users` ticked too (DSM forces it)
+3. **User Groups:** tick `docker_service_accounts` — leave `users` ticked too (DSM forces it)
 4. **Permissions:** give **Read/Write** on the shared folders holding the vault and media; **No Access** everywhere else
 5. **Applications:** **Deny all** (DSM, File Station, WebDAV…) — it must not be able to log in
 6. Apply
@@ -252,12 +252,12 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 ```bash
 ssh <you>@192.168.1.201
 id sa_saves
-# expect: uid=10xx(sa_saves) gid=100(users) groups=100(users),65536(service accounts)
+# expect: uid=10xx(sa_saves) gid=100(users) groups=100(users),65536(docker_service_accounts)
 ```
 
 > ⚠️ **Whatever UID this prints is the number you use everywhere below and in
 > `docker/.env` (`SAVES_UID`).** DSM assigns it; you do not choose it. GID stays **65536**
-> (`service accounts`) — we override the container's primary group deliberately, exactly as
+> (`docker_service_accounts`) — we override the container's primary group deliberately, exactly as
 > the Forgejo build does (`FORGEJO.md` §1).
 
 **0c. Create the vault and media directories with the right owner from the start.**
@@ -401,11 +401,11 @@ scp -r cookies/provecho.co_profile <you>@192.168.1.201:~/saves-cookies/
 cd /volume1/docker/saves/app
 sudo mkdir -p cookies
 sudo cp -r ~/saves-cookies/. cookies/
-sudo chown -R 1031:65536 cookies          # sa_saves : service accounts  — substitute your UID
+sudo chown -R 1031:65536 cookies          # sa_saves : docker_service_accounts  — substitute your UID
 sudo chmod 2700 cookies                   # dir: owner-only, setgid
 sudo find cookies -type f -exec chmod 600 {} \;
 sudo find cookies -type d -exec chmod 2700 {} \;
-stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:service accounts  2700
+stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:docker_service_accounts  2700
 ```
 
 **Shrink the profile (optional):** most of the ~160 MB is disposable cache. Auth lives in
@@ -428,7 +428,7 @@ sudo chown 1031:65536 /volume1/docker/saves/state/preferences.json
 sudo chmod 660        /volume1/docker/saves/state/preferences.json
 
 stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
-# want: sa_saves:service accounts  2770
+# want: sa_saves:docker_service_accounts  2770
 ```
 
 **Do NOT copy** `processing_state.json`, `pending_approvals.json`, or `queue_state.json` from DEV — PROD starts with an **empty** save-history on purpose (the real vault doesn't have DEV's test saves). `queue_state.json` is created empty on first run.

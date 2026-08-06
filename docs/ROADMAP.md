@@ -74,7 +74,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       undeletable by Obsidian and over SMB**. It now runs as a DSM service account
       (`user:` + a matching in-image account via build args). The vault and media dirs are
       `sa_saves:users` mode **2775** (setgid, so notes stay in a group the human can write);
-      state and cookies are `sa_saves:service accounts` (2770/2700 — the latter holds
+      state and cookies are `sa_saves:docker_service_accounts` (2770/2700 — the latter holds
       credentials). `src/main.py` sets `os.umask(0o002)` so new files are 664/775 rather
       than 644/755, which is what makes the setgid bit actually useful.
   (b) **Runbook discipline.** *Every* step that creates, copies or moves a file MUST state

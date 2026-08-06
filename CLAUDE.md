@@ -628,7 +628,7 @@ into the bind-mounted vault that **Obsidian and SMB could not edit or delete** �
 bug this fixes. Consequences to respect when touching deploy files:
 - **Every host directory SAVES writes must be owned by that UID** (vault, media, state,
   cookies, logs). The full ownership map — including *why* vault/media use group `users`
-  while state/cookies use `service accounts` — is `docs/PROD_ROLLOUT.md` **§1.6**.
+  while state/cookies use `docker_service_accounts` — is `docs/PROD_ROLLOUT.md` **§1.6**.
   `preflight_nas.sh` `[7]` fails the deploy when they disagree.
 - **Never hardcode the UID.** `id sa_saves` is the authority; `1031` in `docker/.env.example`
   is a placeholder.

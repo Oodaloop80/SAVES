@@ -470,7 +470,7 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
   2026-08-06: 32071 MB total / ~29.8 GB available → `SAVES_MEM_LIMIT=4g`);
   `/volume1` = 37 TB, 24 TB free; SAVES app dir = `/volume1/docker/saves/app`.
 - **SAVES service account:** `sa_saves` — **UID = _TODO_** (read it from `id sa_saves`; do
-  **not** assume 1031), GID 65536 (`service accounts`). This UID must appear in
+  **not** assume 1031), GID 65536 (`docker_service_accounts`). This UID must appear in
   `docker/.env` as `SAVES_UID` and own every directory SAVES writes. Ownership map +
   rationale: `PROD_ROLLOUT.md` §1.6.
 - **Vault + media paths:** `VAULT_HOST` = _TODO — confirm the real path_,
