@@ -11,8 +11,21 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        # Baked into the image so the account EXISTS inside the container (needed for
+        # $HOME, `id`, and named-volume seeding). Must equal the `user:` below.
+        SAVES_UID: ${SAVES_UID:-1031}
+        SAVES_GID: ${SAVES_GID:-65536}
     container_name: saves_app
     restart: unless-stopped
+
+    # NON-ROOT (Bora, 2026-08-06). Must match `id sa_saves` on the NAS. This is what keeps
+    # notes/media/state owned by the service account instead of root:root — root-owned notes
+    # in the vault cannot be edited or deleted by Obsidian or over SMB. Changing this WITHOUT
+    # re-chowning the host directories will make every write fail with EACCES.
+    # Full ownership map: docs/PROD_ROLLOUT.md §1.6.
+    user: "${SAVES_UID:-1031}:${SAVES_GID:-65536}"
+
     env_file: ../.env            # secrets: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
     environment:
       - TZ=${TZ:-America/New_York}   # saved_date uses local time, not UTC
@@ -31,8 +44,9 @@ services:
       - ../cookies:/app/cookies:rw
       - ../config.yaml:/app/config.yaml:ro
       - ../logs:/app/logs:rw
-      - instaloader-session:/root/.config/instaloader
-      - whisper-cache:/root/.cache/whisper
+      # Under $HOME of the non-root user, not /root (which it cannot write).
+      - instaloader-session:/home/saves/.config/instaloader
+      - whisper-cache:/home/saves/.cache/whisper
 
     # DECISION (Bora, 2026-08-05): cap memory. This NAS is no longer single-tenant — it also
     # runs the Forgejo forge (2g) + PostgreSQL (1g). Chromium/Playwright + ffmpeg were

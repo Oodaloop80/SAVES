@@ -18,6 +18,16 @@ from src.utils.preferences import PreferencesStore
 from src.utils.validation import validate_startup
 from src.watcher import FileWatcher
 
+# Group-writable output (Bora, 2026-08-06). The container runs as the sa_saves service
+# account, but the vault and media dirs are ALSO written/edited by a human over SMB and by
+# the Obsidian Sync client. The default umask (022) would create notes as 0644 — readable
+# but NOT editable by the shared group, so editing a saved note in Obsidian would fail with
+# a permission error. 002 creates files 0664 / dirs 0775; combined with the setgid bit on
+# the vault + media directories (see PROD_ROLLOUT.md §1.7) every file SAVES writes stays
+# owned by the shared group and editable by both sides. Subprocesses (yt-dlp, ffmpeg)
+# inherit this umask, so downloaded media gets the same treatment.
+os.umask(0o002)
+
 os.makedirs("logs", exist_ok=True)
 
 logging.basicConfig(

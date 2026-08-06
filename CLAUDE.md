@@ -621,6 +621,27 @@ secrets / cookies-writable + provecho profile / unreachable Whisper / RAM headro
 sanity). **Cookies mount is `:rw`** — the provecho browser profile is a live Chromium
 user-data-dir Playwright writes to.
 
+**Container identity — NON-ROOT (Bora, 2026-08-06).** `saves_app` runs as the DSM service
+account **`sa_saves`** (`user: "${SAVES_UID}:${SAVES_GID}"` in compose, plus a matching
+in-image account created from the same build args). Root-in-container wrote `root:root` notes
+into the bind-mounted vault that **Obsidian and SMB could not edit or delete** — that is the
+bug this fixes. Consequences to respect when touching deploy files:
+- **Every host directory SAVES writes must be owned by that UID** (vault, media, state,
+  cookies, logs). The full ownership map — including *why* vault/media use group `users`
+  while state/cookies use `service accounts` — is `docs/PROD_ROLLOUT.md` **§1.6**.
+  `preflight_nas.sh` `[7]` fails the deploy when they disagree.
+- **Never hardcode the UID.** `id sa_saves` is the authority; `1031` in `docker/.env.example`
+  is a placeholder.
+- `src/main.py` sets `os.umask(0o002)` (files 664 / dirs 775) so the **setgid** bit on the
+  vault keeps notes editable by the human. Don't remove it.
+- Playwright browsers live at `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` (world-readable),
+  **not** `~/.cache` — a non-root user can't read root's cache, and Playwright fails with
+  "Executable doesn't exist". The instaloader/whisper volumes moved to `/home/saves/…`.
+
+**Documentation rule that came with it:** any runbook step that creates, copies, or moves a
+file **states its owner and mode and gives the `chown`/`chmod`**. Bora works from an admin
+account, so nothing inherits the right owner by default.
+
 **NAS co-tenancy (since 2026-08-05): the NAS also runs the Forgejo forge.** `192.168.1.201`,
 `/volume1/docker/forgejo`, host port `3443`, ~3 GB of memory limits (Forgejo 2 GB + Postgres
 1 GB). Two consequences for SAVES:

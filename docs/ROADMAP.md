@@ -67,6 +67,24 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       NAS must use a **DinD sidecar — never the host Docker socket**.
   (d) ⚠️ **There is no longer an off-site copy of the repo.** `/volume1/docker/forgejo` (repo
       tree + a `pg_dump`) must be in the backup set, or a NAS loss loses the history.
+- **SAVES runs NON-ROOT as `sa_saves`, and every filesystem step states owner + mode
+  (Bora, 2026-08-06).** Two linked decisions:
+  (a) **Container identity.** `saves_app` previously ran as root in-container, which meant
+      every note it wrote into the bind-mounted vault was `root:root` — **uneditable and
+      undeletable by Obsidian and over SMB**. It now runs as a DSM service account
+      (`user:` + a matching in-image account via build args). The vault and media dirs are
+      `sa_saves:users` mode **2775** (setgid, so notes stay in a group the human can write);
+      state and cookies are `sa_saves:service accounts` (2770/2700 — the latter holds
+      credentials). `src/main.py` sets `os.umask(0o002)` so new files are 664/775 rather
+      than 644/755, which is what makes the setgid bit actually useful.
+  (b) **Runbook discipline.** *Every* step that creates, copies or moves a file MUST state
+      its owner and mode and give the `chown`/`chmod`. Bora works from an admin account over
+      SSH, so everything he touches is created owned by the wrong account. This is not a
+      style preference — it blocked the rollout: he would not create the vault directories
+      because no doc said what to give them. `PROD_ROLLOUT.md` §1.6 is the ownership map;
+      preflight `[7]` enforces UID/owner agreement and warns on a missing setgid bit.
+  Corollary: **never assume the UID.** `id sa_saves` is the authority; `1031` is a
+  placeholder default in `docker/.env.example`, not a fact.
 - **NAS resource limits: `mem_limit` yes, `cpus:` never (Bora, 2026-08-05).** Discovered during
   the Forgejo build: Synology kernels lack CFS bandwidth control, so *any* CPU quota is a **hard
   deploy failure** (`NanoCPUs can not be set…`), not a warning. `docker/docker-compose.yml`

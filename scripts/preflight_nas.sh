@@ -168,6 +168,54 @@ if docker compose version >/dev/null 2>&1; then
   fi
 fi
 
+# --- 7. Identity: container UID/GID vs host directory ownership -------------
+# The container runs NON-ROOT as SAVES_UID:SAVES_GID (docker/.env). Three things must
+# agree: the DSM account, docker/.env, and the owner of every directory it writes. If they
+# disagree the container starts and then fails every write with EACCES — which surfaces as
+# "notes never appear, no errors". Catch it here instead. Map: PROD_ROLLOUT.md §1.6.
+echo "[7] Container identity vs directory ownership"
+if [ -f docker/.env ]; then
+  S_UID=$(grep -E '^SAVES_UID=' docker/.env | head -1 | cut -d= -f2- | tr -d ' ')
+  S_GID=$(grep -E '^SAVES_GID=' docker/.env | head -1 | cut -d= -f2- | tr -d ' ')
+  if [ -z "$S_UID" ] || [ -z "$S_GID" ]; then
+    bad "SAVES_UID/SAVES_GID not set in docker/.env — the container would run as root and write root-owned notes into your vault"
+  else
+    ok "docker/.env declares ${S_UID}:${S_GID}"
+    # Does that UID actually exist on this host? (A typo'd UID "works" until it can't write.)
+    if command -v getent >/dev/null 2>&1; then
+      nm=$(getent passwd "$S_UID" 2>/dev/null | cut -d: -f1)
+    else
+      nm=$(awk -F: -v u="$S_UID" '$3==u {print $1}' /etc/passwd 2>/dev/null | head -1)
+    fi
+    if [ -n "$nm" ]; then ok "UID $S_UID resolves to '$nm' on this host"
+    else warn "UID $S_UID has no /etc/passwd entry — fine for Docker, but confirm it matches 'id sa_saves'"; fi
+
+    # Every directory the container WRITES must be owned by that UID.
+    check_owner() {
+      d="$2"
+      [ -d "$d" ] || return 0                     # missing dirs already reported by [3]
+      o=$(stat -c '%u' "$d" 2>/dev/null)
+      g=$(stat -c '%g' "$d" 2>/dev/null)
+      m=$(stat -c '%a' "$d" 2>/dev/null)
+      if [ "$o" = "$S_UID" ]; then
+        ok "$1 owned by $S_UID (mode $m)"
+      else
+        bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID:$g \"$d\""
+      fi
+      # setgid on the shared dirs keeps human-editable group ownership on new notes.
+      case "$m" in 2*) : ;; *) [ "$1" = "VAULT_HOST" ] || [ "$1" = "MEDIA_HOST" ] && \
+        warn "$1 mode $m has no setgid bit — new notes may become un-editable by your Obsidian/SMB user (want 2775)";; esac
+    }
+    check_owner VAULT_HOST "$VAULT_HOST"
+    check_owner MEDIA_HOST "$MEDIA_HOST"
+    check_owner STATE_HOST "$STATE_HOST"
+    check_owner cookies    "$ROOT/cookies"
+    check_owner logs       "$ROOT/logs"
+  fi
+else
+  bad "docker/.env missing — cannot verify container identity"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32mPre-flight PASSED — safe to run: docker compose up --build -d\033[0m\n'

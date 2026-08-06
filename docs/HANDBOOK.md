@@ -466,14 +466,24 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 > Capturing these is what makes this doc a true recreate guide. Replace each TODO.
 
 - **NAS:** model = **DS1621+**; LAN IP = **192.168.1.201**; DSM 7.3.2-86009 U4;
-  Container Manager 24.0.2-1606; SMB hostname = _TODO_; **installed RAM = _TODO_** (needed to
-  size `SAVES_MEM_LIMIT` — see `PROD_ROLLOUT.md` §1.5); volumes = `/volume1/NAS/OBSIDIAN`,
-  `/volume1/NAS/MEDIA/SAVES`; SAVES app dir = `/volume1/docker/saves/app`.
+  Container Manager 24.0.2-1606; SMB hostname = _TODO_; **RAM = 32 GB** (measured
+  2026-08-06: 32071 MB total / ~29.8 GB available → `SAVES_MEM_LIMIT=4g`);
+  `/volume1` = 37 TB, 24 TB free; SAVES app dir = `/volume1/docker/saves/app`.
+- **SAVES service account:** `sa_saves` — **UID = _TODO_** (read it from `id sa_saves`; do
+  **not** assume 1031), GID 65536 (`service accounts`). This UID must appear in
+  `docker/.env` as `SAVES_UID` and own every directory SAVES writes. Ownership map +
+  rationale: `PROD_ROLLOUT.md` §1.6.
+- **Vault + media paths:** `VAULT_HOST` = _TODO — confirm the real path_,
+  `MEDIA_HOST` = _TODO_. ⚠️ As of 2026-08-06 neither `/volume1/NAS/OBSIDIAN/Remote Vault`
+  nor `/volume1/NAS/MEDIA/SAVES` existed on the NAS — they are created in rollout step 0c
+  with owner `sa_saves:users` and mode `2775`.
 - **Git forge (Forgejo, on the same NAS):** `https://192.168.1.201:3443/`; project dir
   `/volume1/docker/forgejo`; runs as UID 1030 (`sa_forgejo`) : GID 65536. Full build =
   `docs/FORGEJO.md`. Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +
   renewal mechanism** = _TODO_ (a 24 h default would expire the forge daily — `FORGEJO.md`
-  §3A.1/3A.3); PAT names in use (workstation / NAS-deploy / Claude Code) = _TODO_;
+  §3A.1/3A.3) — **✅ resolved: issued 2026-07-31, expires 2027-09-01 (~397 days, just under
+  the 398-day Apple ceiling). Set a renewal reminder for ~Aug 2027.** Root CA file =
+  `vineyard-root-ca.crt`; PAT names in use (workstation / NAS-deploy / Claude Code) = _TODO_;
   **is `/volume1/docker/forgejo` in the backup set** = _TODO_ (⚠️ now the only copy of the
   repo — GitHub retired).
 - **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `0 - INBOX/SAVES.md`.

@@ -206,7 +206,10 @@ That's PROD live. DEV can stay stopped, or come back later on its own token/chan
 | Bot connects then disconnects repeatedly | DEV bot still running with the same token (step 6) |
 | Approval cards appear but transcripts are empty | Whisper unreachable — preflight [5]; check the workstation server + firewall (step 5) |
 | `os.replace` / EBUSY errors on state | `STATE_HOST` was bound as a file, not a directory (step 4) |
-| Notes never appear, no errors | vault mount not writable by the container user — preflight [3] "VAULT_HOST writable" |
+| Notes never appear, no errors | vault not writable **by the container's UID**. The container runs non-root as `sa_saves`; if the vault is owned by anyone else every write fails with EACCES. Preflight `[7]`; fix per `PROD_ROLLOUT.md` §1.6 |
+| `PermissionError` / EACCES on state or logs | those dirs were created as admin (or by compose as root) and never chowned to `SAVES_UID` — `PROD_ROLLOUT.md` steps 4 / 4b |
+| Notes appear but Obsidian can't edit them | vault missing the **setgid** bit, so new notes got the service group — `chmod 2775` on the vault (§1.6) |
+| `Executable doesn't exist` from Playwright | image built before the non-root change; rebuild so Chromium lands in `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` |
 | Instagram/TikTok/Facebook fail immediately | cookies missing/expired — preflight [4]; re-export and copy into `cookies/` |
 | Build OOM / disk full on NAS | free space on the volume; if arm64, expect a heavier Chromium build |
 

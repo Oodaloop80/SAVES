@@ -20,7 +20,8 @@ follow it top to bottom.
 | Scope | **Everything built** | Core pipeline + serial approval queue + `#SAVES-inbox` + Android/Tasker webhook + `/crawl` (needs the provecho login profile on the NAS). |
 | State/history | **Fresh dedup, keep prefs** | Start with EMPTY `processing_state.json` (so real-vault saves aren't blocked by DEV's test-vault history); copy **`preferences.json`** so learned folder routing carries over. |
 | Code source | **Self-hosted Forgejo** (added 2026-08-05) | The NAS clones SAVES from its *own* Forgejo at `https://192.168.1.201:3443/`, not GitHub (retired). Needs the step-ca root CA in the NAS trust store + a PAT. Build details: `docs/FORGEJO.md`. |
-| Resource limits | **`mem_limit` yes, `cpus:` never** | The NAS is now shared with the forge (Forgejo 2 GB + Postgres 1 GB), so `saves_app` declares `SAVES_MEM_LIMIT` (default `3g`). A CPU quota is a **hard deploy failure** on Synology — see §1.5. |
+| Resource limits | **`mem_limit` yes, `cpus:` never** | The NAS is now shared with the forge (Forgejo 2 GB + Postgres 1 GB), so `saves_app` declares `SAVES_MEM_LIMIT` (`4g` — the NAS measured 32 GB on 2026-08-06). A CPU quota is a **hard deploy failure** on Synology — see §1.5. |
+| Container identity | **Non-root `sa_saves`** (added 2026-08-06) | `saves_app` no longer runs as root. Every file it writes is owned by the service account, not `root:root` — root-owned notes cannot be edited or deleted by Obsidian or over SMB. Requires `SAVES_UID`/`SAVES_GID` in `docker/.env` and matching directory ownership: **§1.6**. |
 
 ---
 
@@ -131,7 +132,79 @@ verify SMB/Obsidian-Sync access to the vault still works — that path *is* inbo
 Control Panel → Shared Folder → Permissions. DSM rewrites ACLs across the subtree and can
 clobber the POSIX owner, breaking the container at its next restart.
 
-## 1.6 Risk register
+## 1.6 Identity, ownership and permissions (READ BEFORE CREATING ANYTHING)
+
+> **Standing rule (Bora, 2026-08-06): every step that creates, copies or moves a file states
+> its owner and mode, and gives the command to set them.** You do this work from an admin
+> account over SSH, so *everything you touch is created owned by that admin account* — which
+> is almost never the account that should own it at rest. Verifying ownership is part of each
+> step, not a cleanup pass afterwards.
+
+### The identity
+
+`saves_app` runs as a **non-root DSM service account, `sa_saves`** — the same pattern as
+`sa_forgejo` (`FORGEJO.md` §1). Before 2026-08-06 the container ran as **root**, which is
+why this section did not exist and why the vault directories were never created: root in a
+container writing to a bind-mounted vault produces `root:root` notes that **Obsidian and SMB
+cannot edit or delete**. That is the actual problem being solved here.
+
+Three settings must agree, or nothing works:
+
+| Where | Setting |
+|---|---|
+| DSM | the `sa_saves` account's real UID/GID (`id sa_saves`) |
+| `docker/.env` | `SAVES_UID` / `SAVES_GID` (feeds both the build arg and `user:`) |
+| Host directories | owned by that same UID:GID |
+
+**If they disagree, every write fails with `EACCES`.** Preflight `[7]` checks all three.
+
+### Group choice — why two different groups
+
+| Data | Group | Reasoning |
+|---|---|---|
+| Vault, media | **`users` (GID 100)** | These are *your documents*. A human edits them in Obsidian and over SMB, and every DSM account is in `users`. Locking them to a service group would lock **you** out. |
+| State, cookies | **`service accounts` (GID 65536)** | Runtime internals and **credentials** (the provecho login profile, platform cookies). Nothing human-facing should read these. Same group as Forgejo. |
+
+### The ownership map
+
+| Path | Owner | Mode | Why |
+|---|---|---|---|
+| `/volume1/NAS/OBSIDIAN/Remote Vault` | `sa_saves:users` | **`2775`** | setgid (the `2`) forces every note SAVES writes to inherit group `users`, so you can still edit it. Group-writable both ways. |
+| `/volume1/NAS/MEDIA/SAVES` | `sa_saves:users` | **`2775`** | same — you browse media over SMB |
+| `/volume1/docker/saves` | `root:root` | `755` | project root; nothing writes here at runtime |
+| `/volume1/docker/saves/app` (the clone) | `root:root` | `755` | source + build context, read-only at runtime |
+| `…/app/.env` | `root:sa_saves`† | **`640`** | **secrets** (API key, bot token). Container must read; nobody else should. |
+| `…/app/docker/.env` | `root:root` | `644` | host paths only — no secrets |
+| `…/app/config.yaml` | `root:root` | `644` | mounted `:ro` |
+| `…/app/cookies` + contents | `sa_saves:65536` | **`2700`** dir | **credentials.** Container WRITES here (live Chromium profile), so it must own it. |
+| `…/app/logs` | `sa_saves:65536` | `2775` | container writes; you read |
+| `/volume1/docker/saves/state` | `sa_saves:65536` | **`2770`** | runtime JSONs; container-only |
+| `/volume1/docker/certs/vineyard-root-ca.crt` | `root:root` | `644` | public certificate — world-readable by design |
+
+† `640` with group `sa_saves` lets the container read `.env` without it being world-readable.
+`chown root:sa_saves` — owner root so the container cannot rewrite its own secrets.
+
+**Why setgid (`2xxx`) on the shared dirs:** it makes new files and subdirectories inherit the
+*directory's* group rather than the creating process's group. Without it, notes SAVES writes
+would land in group `service accounts` and you'd lose write access to your own vault. Paired
+with `os.umask(0o002)` in `src/main.py` (files `664`, dirs `775`), both sides stay writable.
+
+### ⚠️ The DSM ACL trap — applies to every path above
+
+Containers honour **POSIX** ownership; DSM layers its own **ACLs** on top, invisible from
+inside a container. **Once you have run the `chown`s below, never open these folders'
+permissions in File Station or Control Panel → Shared Folder → Edit → Permissions.** DSM
+rewrites ACLs across the subtree and clobbers the POSIX owner, breaking the container at its
+next restart. If you need to change something here, do it over SSH with `chown`/`chmod`.
+
+### Verify, always
+
+```bash
+# %U = owner name, %G = group name, %a = octal mode
+stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
+```
+
+## 1.7 Risk register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
@@ -143,6 +216,10 @@ clobber the POSIX owner, breaking the container at its next restart.
 | Whisper workstation off/unreachable | Video/audio saves get **empty transcripts** (non-fatal) | Preflight `[5]`; DHCP-reserve + auto-start the Whisper server. |
 | Cookies mounted read-only | `/crawl` + login sites fail to launch browser | **Fixed:** compose now mounts `cookies :rw`; preflight `[4]` checks writability. |
 | Windows provecho profile won't decrypt on Linux | `/crawl` provecho shows locked | §1.4 fallback: re-capture under WSL2/WSLg. |
+| `SAVES_UID` ≠ real `id sa_saves` | Container starts, then **every write fails with EACCES** — looks like "notes never appear, no errors" | Read the UID from `id sa_saves` (step 0b), never assume `1031`; preflight **`[7]`** compares it against every directory's owner. |
+| Directories created as admin, never chowned | Same EACCES failure — the default outcome if you skip the `chown`s | Every step in Part 2 states owner + mode; verify with `stat -c '%n %U:%G %a'`. |
+| Vault dirs lack the setgid bit | Notes land in the wrong group; **you** lose write access to your own vault in Obsidian | `chmod 2775` on vault + media (§1.6); preflight `[7]` warns. |
+| Permissions "fixed" in File Station afterwards | DSM rewrites ACLs across the subtree, clobbering the POSIX owner; container breaks at next restart | The DSM ACL trap (§1.6) — POSIX `chown`/`chmod` over SSH only, never the GUI. |
 | DEV `processing_state.json` copied by mistake | PROD thinks real-vault URLs are already saved | **Don't copy it.** Only copy `preferences.json` (step 4). |
 | Obsidian Sync bridge down | Phone saves + note sync-back stall | Keep the bridging Obsidian client up; the `#SAVES-inbox`/webhook path is independent of it. |
 | Synology is arm64 | Heavier/longer first build | Supported (Chromium arm64); ensure ~4 GB free; expect a longer build. |
@@ -153,79 +230,213 @@ clobber the POSIX owner, breaking the container at its next restart.
 # PART 2 — STEP-BY-STEP
 
 > **[YOU]** = manual (SSH / DSM / phone). **[APP]** = automated (compose / the container).
+>
+> **Every step states the working directory, the owner, and the mode.** Read §1.6 first.
+> Shorthand used below: `APP=/volume1/docker/saves/app`.
 
-### Step 1 — [YOU] Get the code onto the NAS (from Forgejo)
-Enable SSH (DSM → Control Panel → Terminal & SNMP → Enable SSH), then from the workstation:
+### Step 0 — [YOU] Create the service account and the data directories
+
+**Nothing else works until this is done** — the UID here is what every later `chown` uses.
+
+**0a. Create `sa_saves` in DSM** (GUI; there is no supported CLI for user creation on DSM):
+
+1. **Control Panel → User & Group → User → Create**
+2. Name `sa_saves`, a long random password (never used — login is denied below)
+3. **User Groups:** tick `service accounts` — leave `users` ticked too (DSM forces it)
+4. **Permissions:** give **Read/Write** on the shared folders holding the vault and media; **No Access** everywhere else
+5. **Applications:** **Deny all** (DSM, File Station, WebDAV…) — it must not be able to log in
+6. Apply
+
+**0b. Read back its real IDs — do not assume 1031:**
+
 ```bash
 ssh <you>@192.168.1.201
+id sa_saves
+# expect: uid=10xx(sa_saves) gid=100(users) groups=100(users),65536(service accounts)
 ```
 
-**1a. Trust the step-ca root on the NAS** (once — `git` will not talk to the forge without it).
-Copy the root you exported in `FORGEJO.md` §3A.5 and register it:
+> ⚠️ **Whatever UID this prints is the number you use everywhere below and in
+> `docker/.env` (`SAVES_UID`).** DSM assigns it; you do not choose it. GID stays **65536**
+> (`service accounts`) — we override the container's primary group deliberately, exactly as
+> the Forgejo build does (`FORGEJO.md` §1).
+
+**0c. Create the vault and media directories with the right owner from the start.**
+Substitute your real UID for `1031`:
+
 ```bash
-# from the WORKSTATION:
-scp homelab-root-ca.crt <you>@192.168.1.201:/tmp/
-# on the NAS:
-sudo cp /tmp/homelab-root-ca.crt /usr/share/pki/trust/anchors/ 2>/dev/null \
-  || sudo cp /tmp/homelab-root-ca.crt /etc/ssl/certs/
-sudo git config --system http.sslCAInfo /etc/ssl/certs/homelab-root-ca.crt
+# Confirm where the shares actually are FIRST — these paths are not guaranteed:
+ls -ld /volume1/*/ ; find /volume1 -maxdepth 3 -iname '*obsidian*' 2>/dev/null
+
+VAULT="/volume1/NAS/OBSIDIAN/Remote Vault"
+MEDIA="/volume1/NAS/MEDIA/SAVES"
+
+sudo mkdir -p "$VAULT/0 - INBOX" "$MEDIA"
+sudo chown -R 1031:100 "$VAULT" "$MEDIA"     # group 100 = users  (see §1.6)
+sudo chmod -R 2775     "$VAULT" "$MEDIA"     # 2 = setgid; keeps YOU able to edit
+sudo touch "$VAULT/0 - INBOX/SAVES.md" && sudo chown 1031:100 "$VAULT/0 - INBOX/SAVES.md"
 ```
-Verify before continuing — this must succeed with **no** TLS error:
+
+**0d. Verify — this is the step people skip:**
+
 ```bash
-curl -fsS --cacert /etc/ssl/certs/homelab-root-ca.crt \
+stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX"
+# want:  sa_saves:users  2775   on all three
+```
+
+> ⚠️ **From here on, never touch these folders' permissions in File Station or Control
+> Panel → Shared Folder → Permissions.** DSM will rewrite ACLs across the subtree and
+> clobber the POSIX owner (§1.6, the DSM ACL trap).
+
+### Step 1 — [YOU] Get the code onto the NAS (from Forgejo)
+
+Enable SSH (DSM → Control Panel → Terminal & SNMP → Enable SSH), then `ssh <you>@192.168.1.201`.
+
+**1a. Trust the step-ca root on the NAS** — `git` will not talk to the forge without it.
+
+Store it in **one** place, on `/volume1`, and point Git at that file. Deliberately **not**
+`/etc/ssl/certs`: DSM rewrites `/etc` on package and OS updates, which would silently break
+`git pull` months later. One canonical copy, one config key, survives upgrades.
+
+```bash
+# from the WORKSTATION — copy to your home dir (the only place scp can write unprivileged):
+scp vineyard-root-ca.crt <you>@192.168.1.201:~/
+
+# on the NAS — move it to its permanent home and set ownership explicitly:
+sudo mkdir -p /volume1/docker/certs
+sudo mv ~/vineyard-root-ca.crt /volume1/docker/certs/
+sudo chown root:root /volume1/docker/certs/vineyard-root-ca.crt
+sudo chmod 644       /volume1/docker/certs/vineyard-root-ca.crt   # public cert — 644 is correct
+sudo git config --system http.sslCAInfo /volume1/docker/certs/vineyard-root-ca.crt
+```
+
+Verify before continuing — this must succeed with **no** TLS error and **no** `-k`:
+
+```bash
+git --version          # confirm git is present on the NAS before you rely on it
+
+# Authoritative check — proves the cert chain validates against your root:
+curl -fsS --cacert /volume1/docker/certs/vineyard-root-ca.crt \
   https://192.168.1.201:3443/api/v1/version
 ```
+
+`curl` needs `--cacert` because it reads the *system* trust store, which we deliberately did
+not modify. **Git** gets its trust from the `http.sslCAInfo` key set above, so the clone in
+1b needs no extra flags — that asymmetry is expected, not a misconfiguration.
+
 > ⚠️ If it fails, fix the trust store. **Do not set `http.sslVerify=false`** — that discards
 > the entire point of the certificate work and silently accepts any MITM on the LAN.
 
-**1b. Clone.** Use a **PAT** (Forgejo Settings → Applications → *Manage Access Tokens*, scope
+**1b. Clone the repo.**
+
+> **What this clone is — it is _not_ the container.** `/volume1/docker/saves/app` is an
+> ordinary directory holding the source. `docker compose up --build` reads it as the **build
+> context**, produces an *image*, and runs that image as the container `saves_app`. The clone
+> additionally supplies three things at **runtime** via bind mounts — `config.yaml`,
+> `cookies/`, and `logs/` — which is why it stays on disk after the build rather than being
+> throwaway. `/volume1/docker/` is just Synology's conventional home for container projects.
+
+Use a **PAT** (Forgejo → Settings → Applications → *Manage Access Tokens*, scope
 `repository: Read` — a deploy-only token, separate from your workstation token):
+
 ```bash
-sudo mkdir -p /volume1/docker/saves && cd /volume1/docker/saves
+sudo mkdir -p /volume1/docker/saves
+sudo chown root:root /volume1/docker/saves && sudo chmod 755 /volume1/docker/saves
+cd /volume1/docker/saves
 sudo git clone https://192.168.1.201:3443/<user>/SAVES.git app
-cd app
+sudo chown -R root:root app && sudo chmod -R u=rwX,go=rX app   # 755 dirs / 644 files
 uname -m          # expect x86_64 (aarch64 also works, heavier build)
 ```
-Username = your Forgejo username; password = **the token**. To avoid re-typing on every
-`git pull`, either `sudo git config --global credential.helper store` (plaintext in
-`/root/.git-credentials` — acceptable on a NAS only you administer) or embed the token in
-the remote URL.
 
-No git on the NAS? Install **Git Server** from Package Center, or copy the repo over SMB into `/volume1/docker/saves/app`.
+Username = your Forgejo username; password = **the token**. To avoid re-typing on every
+`git pull`: `sudo git config --global credential.helper store` (plaintext in
+`/root/.git-credentials`, mode 600 — acceptable on a NAS only you administer).
 
 ### Step 2 — [YOU] Secrets + host paths (two gitignored files)
-```bash
-cp .env.example .env
-vi .env                       # ANTHROPIC_API_KEY=... and DISCORD_BOT_TOKEN=... (same as DEV)
 
-cp docker/.env.example docker/.env
-cat docker/.env               # confirm VAULT_HOST / MEDIA_HOST / STATE_HOST match your NAS
+Both files live **inside the clone**, not at the root of `/volume1/docker`:
+
+| File | Absolute path | Holds |
+|---|---|---|
+| repo `.env` | `/volume1/docker/saves/app/.env` | **secrets** — API key, bot token |
+| `docker/.env` | `/volume1/docker/saves/app/docker/.env` | host paths + UID/GID + TZ — **no secrets** |
+
+```bash
+cd /volume1/docker/saves/app          # ← all paths below are relative to HERE
+
+sudo cp .env.example .env
+sudo vi .env                          # ANTHROPIC_API_KEY=... DISCORD_BOT_TOKEN=... (same as DEV)
+sudo chown root:sa_saves .env         # container reads it; root owns it so it can't be rewritten
+sudo chmod 640 .env                   # NOT world-readable — these are live credentials
+
+sudo cp docker/.env.example docker/.env
+sudo vi docker/.env                   # set SAVES_UID from step 0b; confirm VAULT_HOST/MEDIA_HOST
+sudo chown root:root docker/.env && sudo chmod 644 docker/.env
 ```
-`docker/.env.example` already has the PROD values; leave `Remote Vault` **unquoted** (the compose file quotes the mount, so the space is fine).
+
+Leave `Remote Vault` **unquoted** despite the space — the compose file quotes the mount.
+
+Verify:
+```bash
+stat -c '%n  %U:%G  %a' .env docker/.env
+# want:  .env  root:sa_saves  640      docker/.env  root:root  644
+```
 
 ### Step 3 — [YOU] Carry cookies + the provecho profile into `cookies/`
-The clone has no cookies (gitignored). From the **workstation**:
-```bash
-# .txt cookies (Instagram/TikTok/Facebook):
-scp cookies/*.txt <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
 
-# provecho login profile for /crawl (large — ~160 MB; trims below):
-scp -r cookies/provecho.co_profile <you>@192.168.1.201:/volume1/docker/saves/app/cookies/
+The clone has no cookies (gitignored). These are **credentials** — the container must *write*
+the browser profile, so `sa_saves` owns the directory and nobody else may read it.
+
+```bash
+# from the WORKSTATION (scp into your home dir — you cannot scp directly into a root-owned dir):
+scp cookies/*.txt <you>@192.168.1.201:~/saves-cookies/
+scp -r cookies/provecho.co_profile <you>@192.168.1.201:~/saves-cookies/
 ```
-**Shrink the profile (optional):** most of the 160 MB is disposable cache. Auth lives in
+```bash
+# on the NAS:
+cd /volume1/docker/saves/app
+sudo mkdir -p cookies
+sudo cp -r ~/saves-cookies/. cookies/
+sudo chown -R 1031:65536 cookies          # sa_saves : service accounts  — substitute your UID
+sudo chmod 2700 cookies                   # dir: owner-only, setgid
+sudo find cookies -type f -exec chmod 600 {} \;
+sudo find cookies -type d -exec chmod 2700 {} \;
+stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:service accounts  2700
+```
+
+**Shrink the profile (optional):** most of the ~160 MB is disposable cache. Auth lives in
 `Default/IndexedDB`, `Default/Local Storage`, `Default/Preferences`, and top-level `Local State`.
-You may exclude `Default/Cache`, `Default/Code Cache`, `Default/GPUCache`, `Default/Service Worker/CacheStorage`
-when copying to save space and time.
+You may exclude `Default/Cache`, `Default/Code Cache`, `Default/GPUCache`, `Default/Service Worker/CacheStorage`.
 
 > If `/crawl` later shows provecho **locked** in PROD, this profile didn't port cleanly — re-capture under **WSL2/WSLg** (§1.4) and recopy. This is expected-possible; nothing else depends on it.
 
 ### Step 4 — [YOU] State dir + carry preferences (fresh dedup, keep prefs)
+
 ```bash
 sudo mkdir -p /volume1/docker/saves/state
+sudo chown 1031:65536 /volume1/docker/saves/state    # substitute your UID
+sudo chmod 2770       /volume1/docker/saves/state    # container-only; setgid
+
 # keep learned folder routing (vault-relative paths → portable):
-scp preferences.json <you>@192.168.1.201:/tmp/ && sudo mv /tmp/preferences.json /volume1/docker/saves/state/
+#   from the WORKSTATION:  scp preferences.json <you>@192.168.1.201:~/
+sudo mv ~/preferences.json /volume1/docker/saves/state/
+sudo chown 1031:65536 /volume1/docker/saves/state/preferences.json
+sudo chmod 660        /volume1/docker/saves/state/preferences.json
+
+stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
+# want: sa_saves:service accounts  2770
 ```
+
 **Do NOT copy** `processing_state.json`, `pending_approvals.json`, or `queue_state.json` from DEV — PROD starts with an **empty** save-history on purpose (the real vault doesn't have DEV's test saves). `queue_state.json` is created empty on first run.
+
+### Step 4b — [YOU] The `logs/` directory the container writes
+
+```bash
+cd /volume1/docker/saves/app
+sudo mkdir -p logs
+sudo chown 1031:65536 logs && sudo chmod 2775 logs
+```
+Without this, compose creates `logs/` as **root** on first `up` and the non-root container
+cannot open `logs/processor.log` — startup fails immediately.
 
 ### Step 5 — [YOU] Whisper up + firewall + stop the DEV bot
 On the **workstation** (PowerShell):
