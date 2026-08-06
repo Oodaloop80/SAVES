@@ -48,7 +48,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   `bot._finalize()`. The lowercase mirror of the ALL-CAPS `clean_folder_path()` convention
   for folders. Don't add a tag entry point without routing it through `clean_tags()`.
 - **Mobile capture is Obsidian-Sync-mediated (Bora, 2026-07-06).** Both iOS and Android append
-  the shared URL to the *local* vault's `0 - INBOX/SAVES.md` via the Obsidian **Advanced URI**
+  the shared URL to the *local* vault's `0 - INBOX/SAVES/SAVES.md` via the Obsidian **Advanced URI**
   plugin; Obsidian Sync propagates to the NAS copy the container watches and syncs the finished
   note back. This **replaces** the earlier SMB-append-over-Tailscale plan — it works off the
   home network with no VPN and is identical on both OSes. Dependency: an Obsidian client must
@@ -249,7 +249,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       — runbook `docs/DEPLOY_NAS.md`; preflight `scripts/preflight_nas.sh`; `.dockerignore` added
       (trims context + keeps secrets/state out of image). Go-live gate: stop DEV bot first
       (one Discord token = one gateway connection).
-- [ ] Mobile share capture — **both** phones append to the local vault's `0 - INBOX/SAVES.md`
+- [ ] Mobile share capture — **both** phones append to the local vault's `0 - INBOX/SAVES/SAVES.md`
       via the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync carries it to the
       NAS and the finished note + cleared inbox back. iOS = Shortcuts share sheet; Android =
       Tasker/MacroDroid share trigger. Runbook: `docs/MOBILE_SHORTCUTS.md`.

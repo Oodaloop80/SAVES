@@ -8,7 +8,7 @@
 paths:
   vault_root: "/vault"
   saves_root: "/vault/SAVES"
-  inbox_file: "/vault/0 - INBOX/SAVES.md"
+  inbox_file: "/vault/0 - INBOX/SAVES/SAVES.md"
   media_root: "/media"
   cookies_dir: "cookies"
   logs_dir: "logs"

@@ -13,7 +13,7 @@ should be here. (A one-line-per-command cheat sheet is in `COMMANDS.md`; archite
 
 ## Saving things
 
-- **The inbox is one file:** `0 - INBOX/SAVES.md` in the vault. Paste URLs there (one per
+- **The inbox is one file:** `0 - INBOX/SAVES/SAVES.md` in the vault. Paste URLs there (one per
   line); the watcher picks them up within ~3 seconds. Nothing else in the vault triggers
   processing.
 - **Or paste in `#SAVES-inbox` (Discord).** Drop a URL into that channel and it's queued just

@@ -165,7 +165,7 @@ are the remaining levers. Quick wins first; test each on a handful of real saves
 - [ ] **Docker deploy to NAS** — `docker-compose up --build`; verify all volume mounts + vault
       writability; confirm container can reach the Whisper host.
 - [ ] **iOS share shortcut** (Obsidian Actions URI) + **Android** (HTTP Shortcuts → SMB append
-      via Tailscale) writing to `0 - INBOX/SAVES.md`.
+      via Tailscale) writing to `0 - INBOX/SAVES/SAVES.md`.
 - [ ] **Whisper runbook** — start command, host/port, firewall, restart procedure (into HANDBOOK).
 
 ---
@@ -202,14 +202,14 @@ watch), pyyaml, python-dotenv, aiofiles, requests, flask (whisper server), pillo
 `scripts/test_connection.py` → `scripts/process_one.py <url>` → `python -m src.main` → Docker.
 
 **"Lives in your head" (HANDBOOK fill-in):** NAS model/SMB hostnames + volume layout; exact vault
-inbox path (`0 - INBOX/SAVES.md`) and SAVES folder tree; Discord server + channel IDs + bot invite
+inbox path (`0 - INBOX/SAVES/SAVES.md`) and SAVES folder tree; Discord server + channel IDs + bot invite
 scopes; which social accounts back each cookie file + refresh cadence; Whisper host details +
 firewall; Anthropic org/key + budget; mobile shortcut configs; per-platform performance baselines.
 
 **Inaccuracies to ignore from the audits:** the wiring agent wrongly reported extractors/AI/media/
 notes as "missing" (they exist and are substantial); the dev-loop agent invented some specifics
 (`config.local.yaml.example`, an `init_windows` script, and a wrong inbox filename) — real inbox is
-`0 - INBOX/SAVES.md` (was `00 - FILE.md` at audit time). Dependency inventory and run steps from it
+`0 - INBOX/SAVES/SAVES.md` (was `00 - FILE.md` at audit time). Dependency inventory and run steps from it
 are reliable.
 
 ---
@@ -222,5 +222,5 @@ are reliable.
   finalize — pipeline degrades gracefully and never double-loses a URL.
 - **Phase 3:** per lever, compare note quality on ~10–50 real saves pre/post; watch for truncation
   and routing regressions; confirm batch results land by morning.
-- **Phase 4:** mobile share → URL in `0 - INBOX/SAVES.md` < 30s → Discord approval → approve → note in
+- **Phase 4:** mobile share → URL in `0 - INBOX/SAVES/SAVES.md` < 30s → Discord approval → approve → note in
   vault; Docker container healthy on NAS with all mounts writable.

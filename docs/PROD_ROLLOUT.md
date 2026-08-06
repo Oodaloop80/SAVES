@@ -38,7 +38,7 @@ Nothing about the code changes per host — `config.yaml` uses canonical contain
 ```
                           ┌─────────────────── Synology NAS ───────────────────┐
  Inputs (3 ways):         │                                                     │
-  • Obsidian inbox file ──┼─▶ 0 - INBOX/SAVES.md (real vault, host mount)       │
+  • Obsidian inbox file ──┼─▶ 0 - INBOX/SAVES/SAVES.md (real vault, host mount)       │
   • #SAVES-inbox paste ───┼─▶ Discord ─▶ bot on_message ─┐                      │
   • Android/Tasker share ─┼─▶ Discord webhook ─▶ #SAVES-inbox ─┘                │
                           │                               ▼                      │
@@ -56,7 +56,7 @@ Nothing about the code changes per host — `config.yaml` uses canonical contain
 
 | Canonical (container) | Host (`docker/.env`) | Holds |
 |---|---|---|
-| `/vault` | `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` | real vault; inbox `0 - INBOX/SAVES.md`; notes written here |
+| `/vault` | `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` | real vault; inbox `0 - INBOX/SAVES/SAVES.md`; notes written here |
 | `/media` | `MEDIA_HOST=/volume1/MEDIA/SAVES` | downloaded videos/images |
 | `/app/state` | `STATE_HOST=/volume1/docker/saves/state` | `processing_state.json`, `pending_approvals.json`, `preferences.json`, `queue_state.json` |
 | `/app/cookies` (**:rw**) | `../cookies` in the repo clone | `*.txt` cookies **and** `provecho.co_profile/` (browser profile — needs write) |
@@ -154,45 +154,89 @@ Confirmed on the NAS (2026-08-06):
 uid=1031(sa_saves) gid=100(users) groups=100(users),65536(docker_service_accounts)
 ```
 
-Four settings must agree, or nothing works:
+Settings that must agree, or nothing works:
 
 | Where | Setting |
 |---|---|
 | DSM | `id sa_saves` → **1031**, service group **65536** |
-| `docker/.env` | `SAVES_UID=1031`, `SAVES_GID=65536`, `SAVES_EXTRA_GID=100` |
-| compose | `user: "1031:65536"` **plus `group_add: ["100"]`** |
-| Host directories | owned per the map below |
+| `docker/.env` | `SAVES_UID=1031`, `SAVES_GID=65536` |
+| compose | `user: "1031:65536"` |
+| APPS tree | a **DSM ACL** granting `sa_saves` (see below) |
+| `/volume1/docker/*`, `/volume1/MEDIA/SAVES` | POSIX ownership per the map below |
 
-**If they disagree, every write fails with `EACCES`.** Preflight `[7]` checks them.
+**If they disagree, every write fails with `EACCES`.** Preflight `[7]` checks the POSIX side.
 
-### ⚠️ Why `group_add: ["100"]` is not optional
+### The APPS tree is governed by DSM ACLs, not POSIX groups
 
-**Docker sets exactly one group from `user:` and does NOT inherit the DSM account's
-supplementary groups** (`FORGEJO.md` §1; SOP §4). So although DSM says `sa_saves` is in
-`users` (100), a container started as `1031:65536` is **not** — and the vault and media are
-group-`users` shared data. Without `group_add` the container starts cleanly and then fails
-every note write. Symptom: *"notes never appear, no errors."*
+**Correction (Bora, 2026-08-06).** An earlier revision of this section told you to give the
+vault group `users` (GID 100) and rely on setgid. **That was wrong for a secure build:** on
+DSM, `users` contains *every* account and DSM force-adds every new account to it, so it is
+the everyone-group. Using it as the access group would make the vault writable by every
+present and future DSM user.
 
-### Group choice — audience, not location
+The APPS tree instead uses **DSM ACLs**, which is the DSM-native mechanism and strictly
+tighter:
 
-| Data | Group | Reasoning |
+| Principal | Access on `/volume1/APPS` and below |
+|---|---|
+| `OodaAdmin` + group `administrators` | **Full Control** (own, modify permissions, RW) |
+| group `app_service_accounts` (65537) | Read + Write |
+| group `docker_service_accounts` (65536) | **explicitly denied** — containers get nothing by default |
+| `sa_forgejo`, `guest`, `http`, others | explicitly denied |
+
+`sa_saves` is in `docker_service_accounts`, so **the blanket deny catches it.** It is
+therefore granted as a **named exception**, with an explicitly-set (level 0) ACE that sorts
+*before* the inherited group deny:
+
+```
+[0] user:sa_saves:allow:rwxpdDaARWc--:fd--  (level:0)   ← explicit, evaluated first
+...
+[4] group:docker_service_accounts:deny:…    (level:4)   ← inherited, would otherwise block it
+```
+
+> ⚠️ **This makes ACE *order* load-bearing.** If the ACL is ever rebuilt — most likely by
+> applying permissions from a parent folder in File Station, the DSM ACL trap below — the
+> level-0 exception can be dropped or re-sorted behind the deny, and SAVES silently loses
+> vault access. Re-run the verification below after any permission change in the GUI.
+
+### Which paths `sa_saves` actually needs, and why
+
+Scoped as tightly as the code allows — these three are not interchangeable:
+
+| Path | Access | Why exactly |
 |---|---|---|
-| Vault, media | **`users` (GID 100)** | *Your documents.* A human edits them in Obsidian and over SMB. Locking them to a service group locks **you** out. |
-| State, cookies | **`docker_service_accounts` (GID 65536)** | Runtime internals and **credentials** (provecho login profile, platform cookies). Nothing human-facing reads these. |
+| `Remote Vault/` | **read + traverse** | `tag_index` does `os.walk(vault_root)` across the *entire* vault to build the tag autocomplete and the taxonomy hint fed to Claude. Without read it silently returns nothing: `/tag add` stops autocompleting and the analyzer starts inventing near-duplicate tags. |
+| `Remote Vault/0 - INBOX/SAVES/` | **read + write** | `remove_url_from_inbox()` is an *atomic rewrite*: `tempfile.mkstemp(dir=<same dir>)` then `os.replace()`. That needs **create file** *and* **delete child** on the directory — not merely write on `SAVES.md`. |
+| `Remote Vault/SAVES/` | **read + write** | `write_note()` does `os.makedirs(folder_abs)` then writes — it **creates nested folders** (`SAVES/COOKING/RECIPES/…`, per `preferences.json`). Notes land here, *not* in the inbox folder. |
 
-### Cross-tree note — the vault belongs to a *different* app
+> The write sandbox is `vault_root`, not `saves_root` — a hallucinated `folder_path` could
+> aim outside `SAVES/`. Under this ACL that fails with EACCES rather than scattering notes,
+> which is the safe outcome, but the error will look like a permissions bug. Worth knowing.
 
-The vault lives in the **APPS** tree and is owned by **`sa_obsidian` (1032)**, not by SAVES.
-SAVES writes into another app's directory, which works purely through group `users` + setgid.
-This is the worked example in **SOP §6**. Do not "fix" this by chowning the vault to
-`sa_saves` — Obsidian owns that tree.
+### Verify the ACL actually binds the container
 
-### The ownership map
+DSM's Permission Inspector shows how *DSM* evaluates the ACL. It does **not** prove the
+kernel applies it to a container process that never authenticated through DSM. Confirm
+directly — 30 seconds, no risk, and it is the exact operation SAVES performs:
+
+```bash
+V="/volume1/APPS/OBSIDIAN/Remote Vault"
+for p in "" "/0 - INBOX/SAVES" "/SAVES"; do
+  sudo docker run --rm -u 1031:65536 -v "$V$p:/t" alpine \
+    sh -c 'touch /t/.acltest 2>/dev/null && { echo "WRITE OK"; rm -f /t/.acltest; } || \
+           { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }' \
+    | sed "s|^|  ${p:-/ (vault root)} -> |"
+done
+```
+
+Wanted: vault root **READ ONLY**, both subfolders **WRITE OK**. Anything reading `NO ACCESS`
+is a blocker — SAVES will start cleanly and then fail with no useful error.
+
+### The ownership map — POSIX side (outside the APPS tree)
 
 | Path | Owner | Mode | Why |
 |---|---|---|---|
-| `/volume1/APPS/OBSIDIAN/Remote Vault` | **`sa_obsidian:users`** | **`2775`** | Obsidian's tree. setgid (the `2`) forces every note SAVES writes to inherit group `users`, so Obsidian and SMB can still edit it. |
-| `/volume1/MEDIA/SAVES` | `sa_saves:users` | **`2775`** | SAVES writes it, you browse it over SMB |
+| `/volume1/MEDIA/SAVES` | `sa_saves:docker_service_accounts` | **`2770`** | SAVES writes media here. Check whether this share also carries a DSM ACL (`synoacltool -get`) — if so it governs instead. |
 | `/volume1/docker/saves` | `root:root` | `755` | project root; nothing writes here at runtime |
 | `/volume1/docker/saves/app` (the clone) | `root:root` | `755` | source + build context, read-only at runtime |
 | `…/app/.env` | `root:sa_saves`† | **`640`** | **secrets** (API key, bot token). Container must read; nobody else should. |
@@ -206,10 +250,16 @@ This is the worked example in **SOP §6**. Do not "fix" this by chowning the vau
 † `640` with group `sa_saves` lets the container read `.env` without it being world-readable.
 `chown root:sa_saves` — owner root so the container cannot rewrite its own secrets.
 
-**Why setgid (`2xxx`) on the shared dirs:** it makes new files and subdirectories inherit the
-*directory's* group rather than the creating process's group. Without it, notes SAVES writes
-would land in group `docker_service_accounts` and you'd lose write access to your own vault. Paired
-with `os.umask(0o002)` in `src/main.py` (files `664`, dirs `775`), both sides stay writable.
+**Why setgid (`2xxx`) on the POSIX dirs:** new files and subdirectories inherit the
+*directory's* group rather than the creating process's. Paired with `os.umask(0o002)` in
+`src/main.py` (files `664`, dirs `775`), group members keep write access to everything SAVES
+creates. Inside the **APPS tree the DSM ACL's `fd--` inheritance flags do this job instead**,
+which is why the vault needs no setgid from us.
+
+**`group_add` in compose:** currently `["100"]` (`users`), which `sa_saves` genuinely has. It
+is **no longer what grants vault access** — the DSM ACL is. Keep it only if a group-`users`
+path (e.g. the media share) still needs it; it is harmless but not load-bearing. Never add a
+group the DSM account does not actually hold (SOP §4).
 
 ### ⚠️ The DSM ACL trap — applies to every path above
 
@@ -301,9 +351,9 @@ sudo chmod -R 2775     "$MEDIA"
 
 # The inbox file the watcher reads. SAVES must be able to REWRITE it (it removes URLs
 # after a save), so group-write matters here too.
-sudo touch "$VAULT/0 - INBOX/SAVES.md"
-sudo chown 1032:100 "$VAULT/0 - INBOX/SAVES.md"
-sudo chmod 664      "$VAULT/0 - INBOX/SAVES.md"
+sudo touch "$VAULT/0 - INBOX/SAVES/SAVES.md"
+sudo chown 1032:100 "$VAULT/0 - INBOX/SAVES/SAVES.md"
+sudo chmod 664      "$VAULT/0 - INBOX/SAVES/SAVES.md"
 ```
 
 > **Do not chown the vault to `sa_saves`.** It is Obsidian's tree. SAVES reaching it through
@@ -312,7 +362,7 @@ sudo chmod 664      "$VAULT/0 - INBOX/SAVES.md"
 **0c. Verify — this is the step people skip:**
 
 ```bash
-stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX" "$VAULT/0 - INBOX/SAVES.md"
+stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX" "$VAULT/0 - INBOX/SAVES/SAVES.md"
 ```
 
 | Path | Want |
@@ -320,7 +370,7 @@ stat -c '%n  %U:%G  %a' "$VAULT" "$MEDIA" "$VAULT/0 - INBOX" "$VAULT/0 - INBOX/S
 | `…/Remote Vault` | `sa_obsidian:users  2775` |
 | `/volume1/MEDIA/SAVES` | `sa_saves:users  2775` |
 | `…/Remote Vault/0 - INBOX` | `sa_obsidian:users  2775` |
-| `…/0 - INBOX/SAVES.md` | `sa_obsidian:users  664` |
+| `…/0 - INBOX/SAVES/SAVES.md` | `sa_obsidian:users  664` |
 
 The **group must read `users`** on all of them — that is what SAVES writes through. An owner
 of `sa_obsidian` on the vault is correct, not a mistake.
@@ -522,7 +572,7 @@ sudo docker compose -f docker/docker-compose.yml logs -f
 Look for: **no** `ConfigError`, the bot connecting, and `Slash commands synced to N guild(s)`. Then run the **acceptance tests (Part 3)**.
 
 ### Step 9 — [YOU] Verify the real-vault round trip
-Paste one URL into the **real** inbox `/volume1/APPS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES.md` (via Obsidian or `echo >>`), watch for the approval card in **#SAVES-approvals**, approve, and confirm the note lands in the real vault and the inbox line is removed.
+Paste one URL into the **real** inbox `/volume1/APPS/OBSIDIAN/Remote Vault/0 - INBOX/SAVES/SAVES.md` (via Obsidian or `echo >>`), watch for the approval card in **#SAVES-approvals**, approve, and confirm the note lands in the real vault and the inbox line is removed.
 
 ### Step 10 — [YOU] Phone: the one-tap Android share (webhook)
 Set up a single share-sheet target that POSTs to the webhook from step 6 — full instructions (HTTP Shortcuts app, or Tasker+AutoShare, or MacroDroid) are in **`docs/MOBILE_SHORTCUTS.md`**. Quick test from the workstation first:

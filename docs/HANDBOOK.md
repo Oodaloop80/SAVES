@@ -14,7 +14,7 @@ dependencies, architecture, or operations.
 ## 1. What SAVES Is
 
 A personal content-archiving pipeline. You share a URL (from a phone or desktop); it gets
-appended to one Obsidian inbox file (`0 - INBOX/SAVES.md`). SAVES watches that file, extracts the
+appended to one Obsidian inbox file (`0 - INBOX/SAVES/SAVES.md`). SAVES watches that file, extracts the
 content (social post / video / article), downloads the media, transcribes any audio, reads any
 on-screen text, asks Claude to organize + tag + summarize it, sends you a Discord approval card,
 and — once you approve — writes a structured Obsidian note into your vault and removes the URL
@@ -45,7 +45,7 @@ from the inbox.
 > URL state machine), plus command + config cheat sheets: **`docs/ARCHITECTURE.md`**.
 
 ```
-0 - INBOX/SAVES.md
+0 - INBOX/SAVES/SAVES.md
    │  watchdog (3s debounce) → call_soon_threadsafe
    ▼
 asyncio.Queue ──► processor (serial, one URL at a time)
@@ -146,7 +146,7 @@ CLAUDE.md            session orientation (auto-loaded by Claude Code)
 | `playwright` | headless Chromium for web articles + lazy-image scroll |
 | `trafilatura` | primary web-article → Markdown extractor (headings/links/images) |
 | `readability-lxml` | fallback article parser |
-| `watchdog` | watches the inbox file (`0 - INBOX/SAVES.md`) for new URLs |
+| `watchdog` | watches the inbox file (`0 - INBOX/SAVES/SAVES.md`) for new URLs |
 | `pyyaml` | config parsing |
 | `python-dotenv` | `.env` loading |
 | `aiofiles` | async file I/O |
@@ -255,7 +255,7 @@ deployment; never machine-specific.** Docker maps the host's real layout onto th
 ```yaml
 vault_root:   "/vault"
 saves_root:   "/vault/SAVES"
-inbox_file:   "/vault/0 - INBOX/SAVES.md"   # the watched file
+inbox_file:   "/vault/0 - INBOX/SAVES/SAVES.md"   # the watched file
 media_root:   "/media"
 cookies_dir:  "cookies"   ·   logs_dir: "logs"
 state_file:  "/app/state/processing_state.json"          # dedup / done-URLs
@@ -266,7 +266,7 @@ PROD host values (NAS) live in `docker/.env`: vault `/volume1/APPS/OBSIDIAN/Remo
 media `/volume1/MEDIA/SAVES`, state `/volume1/docker/saves/state`. DEV workstation values
 live in `config.local.yaml`: local test vault `C:/DEV/Apps/SAVES/OBSIDIAN`, media
 `C:/DEV/Apps/SAVES/MEDIA`, state JSONs at the repo root.
-> The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES.md` (docs updated 2026-07-04).
+> The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES/SAVES.md` (docs updated 2026-07-04).
 
 **watcher / processing** — the serial pipeline.
 ```yaml
@@ -494,7 +494,7 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
   `vineyard-root-ca.crt`; PAT names in use (workstation / NAS-deploy / Claude Code) = _TODO_;
   **is `/volume1/docker/forgejo` in the backup set** = _TODO_ (⚠️ now the only copy of the
   repo — GitHub retired).
-- **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `0 - INBOX/SAVES.md`.
+- **Vault layout:** SAVES folder tree under `Remote Vault/SAVES/` = _TODO_; inbox = `0 - INBOX/SAVES/SAVES.md`.
 - **Discord:** server = "Bora's AI Ops"; channel IDs = _TODO_; bot invite scopes/permissions = _TODO_.
 - **Cookies:** which account backs each of instagram/tiktok/facebook = _TODO_; refresh cadence = ~3–4 wks.
 - **Whisper:** full runbook now in **§9.1** (host/port, start, verify, config, firewall, restart, IP).

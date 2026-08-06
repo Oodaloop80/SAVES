@@ -42,7 +42,7 @@ flowchart LR
     end
 
     PHONE["Phone (Phase 4)<br/>share sheet → inbox file"] -.-> VAULT
-    OBS -- "paste URL into<br/>0 - INBOX/SAVES.md" --> VAULT
+    OBS -- "paste URL into<br/>0 - INBOX/SAVES/SAVES.md" --> VAULT
     APP -- "watches inbox +<br/>writes notes (atomic)" --> VAULT
     APP -- "downloads media" --> MEDIA
     APP -- "extract / yt-dlp / Playwright" --> PLATFORMS
@@ -285,7 +285,7 @@ inbox file modified                   │
 
 | Thing | Location | Notes |
 |---|---|---|
-| Inbox (the one file you write) | `{vault}/0 - INBOX/SAVES.md` | one URL per line; lines are removed only after approval or duplicate-notice |
+| Inbox (the one file you write) | `{vault}/0 - INBOX/SAVES/SAVES.md` | one URL per line; lines are removed only after approval or duplicate-notice |
 | Notes | `{vault}/SAVES/<AI-chosen folder>/<title>.md` | atomic write; never overwrites (name collision → `-2` suffix) |
 | Media | `{media_root}/{platform}/{author}/{slug}/` | videos, images, subtitles; notes embed via vault-relative paths |
 | Processing state | `/app/state/processing_state.json` (Docker) · repo root (bare-metal DEV) | §4 above |

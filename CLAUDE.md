@@ -3,7 +3,7 @@
 ## What This Is
 
 SAVES is a personal content archiving pipeline. It watches a single Obsidian file
-(`0 - INBOX/SAVES.md`) for URLs, extracts content from social/web platforms, downloads media
+(`0 - INBOX/SAVES/SAVES.md`) for URLs, extracts content from social/web platforms, downloads media
 to NAS, transcribes audio via remote Whisper, reads on-screen text via Claude vision,
 sends the result to a Discord bot for approval, then writes a structured Obsidian note
 to a Synology NAS vault.
@@ -126,7 +126,7 @@ SAVES/
 ## Data Flow
 
 ```
-0 - INBOX/SAVES.md ──(watchdog, 3s debounce)──┐
+0 - INBOX/SAVES/SAVES.md ──(watchdog, 3s debounce)──┐
 #SAVES-inbox paste / Discord webhook ─────────┤  (bot on_message → enqueue_url;
     (Android/Tasker POST; creator URL → /crawl)│   creator URL → crawl confirm)
                                                ▼
@@ -167,7 +167,7 @@ bot._finalize()  (✅ Approve)
 paths:                       # CANONICAL CONTAINER PATHS — identical everywhere, never edit
   vault_root: "/vault"       #   per-machine. Docker maps host dirs onto them via docker/.env
   saves_root: "/vault/SAVES" #   (VAULT_HOST/MEDIA_HOST/STATE_HOST); bare-metal dev overrides
-  inbox_file: "/vault/0 - INBOX/SAVES.md"   # them in gitignored config.local.yaml.
+  inbox_file: "/vault/0 - INBOX/SAVES/SAVES.md"   # them in gitignored config.local.yaml.
   media_root: "/media"       # State JSONs live in /app/state/ (one mounted directory).
 
 transcription:
@@ -664,7 +664,7 @@ account, so nothing inherits the right owner by default.
   The same finding is why `docker-compose.yml` has **no top-level `version:` key**: it makes
   Compose V2 reject the v2-style `mem_limit`.
 
-**Mobile capture:** iOS + Android share a URL into the local vault's `0 - INBOX/SAVES.md` via
+**Mobile capture:** iOS + Android share a URL into the local vault's `0 - INBOX/SAVES/SAVES.md` via
 the Obsidian **Advanced URI** plugin (`mode=append`); Obsidian Sync bridges it to the NAS copy
 the container watches, and syncs the finished note back. No SMB/VPN. Setup:
 `docs/MOBILE_SHORTCUTS.md`. (Depends on an Obsidian client keeping the NAS vault synced.)
@@ -780,7 +780,7 @@ loop's first user message. Back-to-back posts and JSON retries benefit automatic
 6. Run first real test: `python scripts\process_one.py "https://reddit.com/r/..."`
    — runs the full pipeline and **writes the note to vault_root**. Add `--dry-run` to
    print only without writing.
-7. Run full pipeline: `python src\main.py`, paste a URL into `0 - INBOX/SAVES.md`,
+7. Run full pipeline: `python src\main.py`, paste a URL into `0 - INBOX/SAVES/SAVES.md`,
    watch Discord, approve, verify note appears in vault
 8. Deploy to NAS: `cp docker/.env.example docker/.env` (host paths), create the state dir,
    then `docker-compose up --build -d` from `docker/`

@@ -7,10 +7,10 @@ never touch the NAS directly — no SMB, no VPN, no Tailscale, works on cellular
 ## The round trip (why this works off-network)
 
 ```
- Phone: Share → shortcut appends URL to  0 - INBOX/SAVES.md  (local vault copy)
+ Phone: Share → shortcut appends URL to  0 - INBOX/SAVES/SAVES.md  (local vault copy)
     │
     ▼  Obsidian Sync (cloud)
- NAS vault:  0 - INBOX/SAVES.md  gains the line   ← a running Obsidian client bridges Sync→NAS
+ NAS vault:  0 - INBOX/SAVES/SAVES.md  gains the line   ← a running Obsidian client bridges Sync→NAS
     │
     ▼  SAVES container (watchdog, 3 s)
  Pipeline runs → Discord card → you approve → note written to the NAS vault,
@@ -43,7 +43,7 @@ never touch the NAS directly — no SMB, no VPN, no Tailscale, works on cellular
      same way (Settings → Community plugins).
 3. **Know two values** (you'll paste them into the shortcut):
    - **Vault name** — exactly as Obsidian shows it in the vault switcher (e.g. `Remote Vault`).
-   - **Inbox path** — `0 - INBOX/SAVES.md` (already the case for this system).
+   - **Inbox path** — `0 - INBOX/SAVES/SAVES.md` (already the case for this system).
 
 The shortcut fires this URL (the only dynamic part is the shared link):
 
@@ -80,7 +80,7 @@ Create one shortcut, then it lives in the Share Sheet for Safari, YouTube, Insta
       then, with the cursor at the very end, insert the **URL Encoded** variable from step ii.
    4. **Open URLs** → input = the **Text** from step iii.
 4. **Test:** open a link in Safari → Share → "Save to SAVES". Obsidian flips open for a moment;
-   the URL is now the last line of `0 - INBOX/SAVES.md`. Switch back to your app.
+   the URL is now the last line of `0 - INBOX/SAVES/SAVES.md`. Switch back to your app.
 
 ---
 
@@ -188,5 +188,5 @@ Both can run at the same time — use whichever is in front of you.
 4. Obsidian Sync brings the **note** and the **cleared inbox** back to the phone.
 
 If a save never produces a card: confirm the line actually reached the **NAS** copy of
-`0 - INBOX/SAVES.md` (open it in the bridging client) — if it's only on the phone, the Sync
+`0 - INBOX/SAVES/SAVES.md` (open it in the bridging client) — if it's only on the phone, the Sync
 bridge is off (see the dependency note above).
