@@ -7,6 +7,16 @@
 
 ---
 
+## v3.1 revision log — service accounts + proven working (Bora, 2026-08-06)
+
+Integrated with NAS-wide SOP (`docs/NAS_SERVICE_ACCOUNTS.md`). PostgreSQL now runs under its own DSM service account (`sa_forgejo_postgres`, UID 1033) instead of an arbitrary UID inside the image.
+
+| # | v3 said | v3.1 says | Severity |
+|---|---|---|---|
+| NEW | Postgres runs as `70:70` (UID from image) | **Postgres runs as `1033:65536` (own DSM service account, `sa_forgejo_postgres`).** Follows the SOP: one account per container, each in `docker_service_accounts`. Tested end-to-end on real hardware 2026-08-06 — both forgejo and postgres-17-alpine start cleanly. | 🟢 Best practice |
+
+---
+
 ## v3 revision log — corrections found during the real build
 
 Everything below was discovered by deploying this on actual hardware, not from documentation.
@@ -570,16 +580,41 @@ Store the CA key in your password manager or OpenBao once it's up. **If this key
 
 ---
 
-## Phase 4 · Set ownership and permissions
+## Phase 4 · Create service accounts and set ownership
+
+Forgejo and PostgreSQL each run under their own DSM service account (SOP: `docs/NAS_SERVICE_ACCOUNTS.md`).
+
+### Step 4.1 — Create `sa_forgejo_postgres` (Bora, 2026-08-06)
+
+PostgreSQL needs its own account to follow least-privilege and the NAS-wide SOP. Create it in DSM:
+
+1. Control Panel → **User & Group → User → Create**
+2. Name: `sa_forgejo_postgres`
+3. **User Groups:** tick `docker_service_accounts`
+4. **Permissions:** Read/Write on `/volume1/docker/forgejo/db` only
+5. **Applications:** **Deny all** — it must not log in
+6. Apply
+
+Then read back the UID:
+
+```bash
+id sa_forgejo_postgres
+```
+
+Expect: `uid=1033(sa_forgejo_postgres) gid=100(users) groups=100(users),65536(docker_service_accounts)`
+
+Record the UID (usually 1033) for the next step.
+
+### Step 4.2 — Set ownership and permissions
 
 This is the #1 cause of first-boot failures. The Forgejo docs are blunt about it: *"Note that the volume should be owned by the user/group with the UID/GID specified in the config file. If you don't set the volume correct permissions, the container may not start."*
 
 ```bash
-# Forgejo data → 1030:65536
+# Forgejo data → 1030:65536 (sa_forgejo)
 chown -R 1030:65536 /volume1/docker/forgejo/data
 
-# Postgres data → 70:70 (the postgres user inside the alpine image)
-chown -R 70:70 /volume1/docker/forgejo/db
+# Postgres data → 1033:65536 (sa_forgejo_postgres — substitute your UID)
+chown -R 1033:65536 /volume1/docker/forgejo/db
 
 # Private key readable only by the owner (step-ca filenames)
 chmod 600 /volume1/docker/forgejo/data/custom/https/server.key
@@ -587,7 +622,7 @@ chmod 644 /volume1/docker/forgejo/data/custom/https/server.crt
 
 # Directory modes
 chmod 750 /volume1/docker/forgejo/data
-chmod 700 /volume1/docker/forgejo/db
+chmod 750 /volume1/docker/forgejo/db
 ```
 
 Verify:
@@ -597,7 +632,7 @@ ls -la /volume1/docker/forgejo/
 ls -la /volume1/docker/forgejo/data/custom/https/
 ```
 
-Expect `1030 65536` on `data`, `70 70` on `db`, and `-rw-------` on `key.pem`.
+Expect `1030 65536` on `data`, `1033 65536` on `db`, and `-rw-------` on `key.pem`.
 
 ### ⚠️ The DSM ACL trap
 
@@ -666,6 +701,23 @@ wc -l /volume1/docker/forgejo/passwd /volume1/docker/forgejo/group
 | Line counts | **~20 lines each** |
 
 ⚠️ **If either file is 1 line long, it was clobbered — regenerate from Step 4B.1.** A single-line `/etc/passwd` mounted over the image's real one hides `root`, `nobody` and every other system account. It appears to work at first and produces strange failures later.
+
+### Step 4B.6 — Ensure the compose mounts the passwd/group files
+
+Your `docker-compose.yml` must include these volume mounts on the `server` service:
+
+```yaml
+services:
+  server:
+    # ... other config ...
+    volumes:
+      - /volume1/docker/forgejo/data:/var/lib/gitea
+      - /etc/localtime:/etc/localtime:ro
+      - /volume1/docker/forgejo/passwd:/etc/passwd:ro      # ← REQUIRED
+      - /volume1/docker/forgejo/group:/etc/group:ro        # ← REQUIRED
+```
+
+If these mounts are missing, add them and restart the container. Without them, `os/user.Current()` inside the container returns an empty string for UID 1030 and the installer will fail with the `'user to run as' username is not the current username: git -> ` error (the dead end that prompted this entire phase).
 
 ### Step 4B.4 — Ownership and permissions
 
