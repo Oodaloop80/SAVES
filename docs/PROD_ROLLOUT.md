@@ -394,7 +394,12 @@ inherited). If it sorts below the deny, SAVES is blocked.
 **0d. Verify from inside a container — the only test that proves it.**
 
 `synoacltool -get` and DSM's Permission Inspector show how *DSM* evaluates the ACL. Neither
-proves the kernel applies it to a container process, which never authenticated through DSM:
+proves the kernel applies it to a container process, which never authenticated through DSM.
+
+> ✅ **Confirmed on this NAS (2026-08-06):** a container run as `-u 1031:65536` wrote
+> successfully to `/volume1/MEDIA/SAVES`, whose only grant is `user:sa_saves:allow` at
+> `level:0`. DSM ACLs **are** enforced for containerized processes, matched on UID. Run the
+> same test on the vault paths once the vault is in place:
 
 ```bash
 for p in "" "/0 - INBOX/SAVES" "/SAVES"; do

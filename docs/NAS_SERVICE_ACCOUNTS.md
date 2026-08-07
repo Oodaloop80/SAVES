@@ -162,7 +162,7 @@ As actually built (verified 2026-08-06):
 |---|---|---|
 | `/volume1/APPS` | `OodaAdmin`, `administrators`, **`app_service_accounts`** | `docker_service_accounts`, `sa_forgejo`, `Bora`, `http`, `guest`, `admin`, `Malana` |
 | `/volume1/docker` | `OodaAdmin`, `administrators`, `ContainerManager`, owner | `app_service_accounts`, `sa_obsidian` |
-| `/volume1/MEDIA` | `administrators` | `sa_forgejo`, `Bora`, `guest`, `admin`, `Malana` |
+| `/volume1/MEDIA` | `administrators` | **`docker_service_accounts`**, `sa_forgejo`, `Bora`, `guest`, `admin`, `Malana` |
 
 **The asymmetry is intentional and worth understanding.** `/volume1/APPS` grants its service
 group (`app_service_accounts`) RW at the tree level, so any APPS app can operate in the tree.
@@ -174,9 +174,14 @@ The `/volume1/docker` model is the tighter of the two: it means `sa_forgejo` can
 new trees. Where a tree-level group grant already exists, treat it as a *classification*
 grant, never as a licence to reach another tree.
 
-> **Open item:** `/volume1/MEDIA` has no `docker_service_accounts` deny while `/volume1/APPS`
-> does. Harmless today (default-deny, and nothing grants that group on MEDIA), but adding the
-> deny would make the three trees consistent and defend against a future over-broad allow.
+> **Closed 2026-08-06:** `/volume1/MEDIA` now carries the `docker_service_accounts` deny too,
+> so all three trees deny the other tree's service group consistently.
+>
+> ⚠️ **Consequence worth noting:** `sa_saves` is *in* `docker_service_accounts`, so MEDIA is
+> now a second place where the scheme depends on ACE **ordering** — the `level:0`
+> `user:sa_saves:allow` on `/volume1/MEDIA/SAVES` must keep sorting ahead of the inherited
+> tree deny. Adding a deny tightens the default but makes one more path order-sensitive.
+> Both are on the re-verify list after any GUI permission change (§5.1, §7).
 
 ### Rule 4 — Everything else is denied; cross-tree access is a NAMED exception
 
@@ -204,13 +209,45 @@ convenience.
 
 `synoacltool -get <path>` lists the ACEs; DSM's **Permission Inspector** shows how DSM
 evaluates them for one account. Neither proves the kernel applies the ACL to a *container*
-process, which never authenticated through DSM. Test that directly:
+process, which never authenticated through DSM.
+
+> ✅ **VERIFIED 2026-08-06 — DSM ACLs are enforced for containerized processes.**
+> `docker run -u 1031:65536 -v /volume1/MEDIA/SAVES:/t alpine touch /t/.acltest` → **WRITE OK**,
+> against a path whose only grant is `user:sa_saves:allow` at `level:0`. The container carries
+> no DSM session and is not in any group that is granted there, so the write can only have
+> succeeded by the kernel matching the ACE on **UID**.
+>
+> **This is the assumption the whole scheme rests on.** Everything else — named exceptions,
+> `fd--` inheritance, default-deny trees — is only meaningful if the kernel honours an ACL for
+> a container. It does. Re-verify after a DSM major upgrade.
+
+Re-run this whenever you add a grant, and **always** after any permission change made through
+the GUI (§7):
 
 ```bash
 sudo docker run --rm -u <uid>:<gid> -v "<host path>:/t" alpine \
   sh -c 'touch /t/.acltest 2>/dev/null && { echo "WRITE OK"; rm -f /t/.acltest; } || \
          { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }'
 ```
+
+#### The other half: prove the DENIES bind too
+
+The test above proves **allows** are honoured. The security posture depends equally on
+**denies** and on default-deny actually holding for containers — an untested assumption in the
+opposite direction, and the more dangerous one to get wrong. Run both negatives:
+
+```bash
+# 1. EXPLICIT DENY — sa_forgejo (1030) is denied on MEDIA. Expect BLOCKED.
+sudo docker run --rm -u 1030:65536 -v /volume1/MEDIA/SAVES:/t alpine \
+  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** WRITE OK — DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
+
+# 2. DEFAULT DENY — an unused UID with no ACE anywhere. Expect BLOCKED.
+sudo docker run --rm -u 9999:9999 -v /volume1/docker/saves:/t alpine \
+  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** WRITE OK — DEFAULT-DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
+```
+
+Anything other than `BLOCKED` means container isolation on this NAS is weaker than the ACLs
+suggest, and every "denied" principal in §2 needs re-thinking.
 
 ### 5.2 — Which regime governs a path, and the `chmod` trap
 
