@@ -718,6 +718,26 @@ provecho **creator** URL pasted there triggers `/crawl`. See "Discord-native sav
 > and `pending_approvals.json` retired to `.bak` — fresh dedup for PROD, so nothing is blocked
 > by DEV's test-vault history.
 >
+> ### ▶️ NEXT ACTIONS — in order (keep this list current as items complete)
+>
+> | # | Do | Verify it worked | Blocking? |
+> |---|---|---|---|
+> | 1 | `python scripts\test_connection.py` | Anthropic + Discord + Reddit all OK | yes — cheap smoke test before spending tokens |
+> | 2 | `python scripts\whisper_server.py --model large-v3-turbo` (own terminal) | responds on `127.0.0.1:5000` | no — a save proceeds without it, just untranscribed |
+> | 3 | `python src\main.py` — **first PROD run**, 2 URLs | 2 cards in `#SAVES-approvals` | **yes — this is the milestone** |
+> | 4 | Approve both cards | notes in `REMOTE VAULT\SAVES\…`; media in `\\192.168.1.201\SAVES_MEDIA\instagram\…`; URLs gone from the inbox | yes |
+> | 5 | Grep the log for `TIMING` | per-stage seconds — the data for the NAS-vs-workstation call (ROADMAP Phase 5) | no |
+> | 6 | Backup **restore test** — `docs/BACKUP_AND_RECOVERY.md` §6 | a file recovered 3 ways: File Recovery, Drive version, NAS snapshot | do before feeding more content |
+> | 7 | Feed backlog **batch 1** — cut 10–20 lines from `SAVES-BACKLOG.md` into `SAVES.md` | they queue; ~$6–10 per 20 | no |
+> | 8 | Test the **Forgejo origin cutover** — `git remote -v` still says GitHub | push succeeds to `192.168.1.201:3443` over HTTPS+PAT | no — GitHub works fine meanwhile |
+> | 9 | Staged **`/crawl`** run — `docs/PROD_ROLLOUT.md` Part 4 | never been exercised end to end; largest token spend one click can trigger | no |
+> | 10 | `Remove-Item "C:\DEV\Apps\SAVES\SAVES_app"` | the emptied source dir, 8 KB of stubs | no |
+>
+> **If step 3 or 4 fails, likely causes in order:** Instagram cookies expired
+> (`cookies/instagram.txt` — check the mtime); NAS unreachable so media download fails
+> (non-fatal, note still writes); Discord channels missing or the bot lacks
+> `applications.commands`; Whisper not running (non-fatal).
+
 > **Open items:** (1) the backup restore test — `docs/BACKUP_AND_RECOVERY.md` §6, not yet done;
 > (2) the Forgejo origin cutover — `git remote -v` still says GitHub, and Bora wants that
 > treated as something to *test*, not assumed.
