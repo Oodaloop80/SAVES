@@ -709,7 +709,17 @@ provecho **creator** URL pasted there triggers `/crawl`. See "Discord-native sav
 > | Media | `//192.168.1.201/SAVES_MEDIA` — its own NAS shared folder |
 > | Whisper | `127.0.0.1:5000` — same machine now |
 >
-> **⚠️ SAVES HAS NOT YET RUN AGAINST THE REAL VAULT.** The first PROD run is still pending.
+> **✅ FIRST PROD SAVE SUCCEEDED — 2026-08-07.** The pipeline is proven end to end on the
+> real vault: note written to `REMOTE VAULT\SAVES\COOKING\RECIPES\ASIAN\RICE PAPER\Day
+> 56100 Crispy Pork Rice Paper Dumplings.md`, media downloaded to
+> `\\192.168.1.201\SAVES_MEDIA\instagram\`, URL removed from the inbox, folder preference
+> learned. `test_connection.py` passes 5/5 from the new location.
+>
+> **⚠️ OPEN — the second queued URL did not start after the first was approved.** Expected:
+> approving releases the serial gate (`queue_manager.resolve`) and the next URL processes
+> immediately. It did not. Not yet investigated. Start at `queue_state.json` (is `active`
+> still set?) and `_await_active_clear` in `queue_manager.py`. One URL remains in the inbox,
+> so this reproduces on the next run.
 > The inbox holds exactly **2 URLs** (Instagram reels) deliberately — **590 more are parked in
 > `0 - INBOX/SAVES-BACKLOG.md`**, which nothing watches. Processing all of them at once would
 > be ~$180–300. Feed batches of 10–20 back into `SAVES.md` when ready.
@@ -724,8 +734,8 @@ provecho **creator** URL pasted there triggers `/crawl`. See "Discord-native sav
 > |---|---|---|---|
 > | 1 | `python scripts\test_connection.py` | Anthropic + Discord + Reddit all OK | yes — cheap smoke test before spending tokens |
 > | 2 | `python scripts\whisper_server.py --model large-v3-turbo` (own terminal) | responds on `127.0.0.1:5000` | no — a save proceeds without it, just untranscribed |
-> | 3 | `python src\main.py` — **first PROD run**, 2 URLs | 2 cards in `#SAVES-approvals` | **yes — this is the milestone** |
-> | 4 | Approve both cards | notes in `REMOTE VAULT\SAVES\…`; media in `\\192.168.1.201\SAVES_MEDIA\instagram\…`; URLs gone from the inbox | yes |
+> | 3 | ~~first PROD run~~ | ✅ **DONE 2026-08-07** — note + media + inbox all correct | — |
+> | 4 | **Investigate: 2nd URL never started** after the 1st was approved | the gate releases and the next card appears | **yes — blocks batch feeding** |
 > | 5 | Grep the log for `TIMING` | per-stage seconds — the data for the NAS-vs-workstation call (ROADMAP Phase 5) | no |
 > | 6 | Backup **restore test** — `docs/BACKUP_AND_RECOVERY.md` §6 | a file recovered 3 ways: File Recovery, Drive version, NAS snapshot | do before feeding more content |
 > | 7 | Feed backlog **batch 1** — cut 10–20 lines from `SAVES-BACKLOG.md` into `SAVES.md` | they queue; ~$6–10 per 20 | no |
