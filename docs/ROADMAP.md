@@ -55,7 +55,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   keep the NAS vault synced (the Sync↔NAS bridge). Runbook: `docs/MOBILE_SHORTCUTS.md`.
 - **Git lives on self-hosted Forgejo; GitHub is retired (Bora, 2026-08-05).** `origin` is
   `https://192.168.1.201:3443/<user>/SAVES.git` — Forgejo 15 LTS + PostgreSQL 17, hardened
-  non-root, on the same NAS SAVES deploys to. Build + locked infra decisions: `docs/FORGEJO.md`.
+  non-root, on the same NAS SAVES deploys to. Build + locked infra decisions: `OKAYNET/SELF HOST/forgejo.md` (vault).
   Consequences that constrain future work:
   (a) **HTTPS + PAT only** — SSH is disabled on the forge; clients must trust the step-ca
       **root**. Never paper over a TLS failure with `http.sslVerify=false`.
@@ -95,7 +95,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
   what didn't work, fix, and the generalisable lesson. When a standard changes, grep for every
   place it applies and fix them all in the same commit, including earlier guidance that may
   now be wrong. Enforced per-commit via `CLAUDE.md` → "Documentation discipline".
-- **NAS service-account SOP (Bora, 2026-08-06) — `docs/NAS_SERVICE_ACCOUNTS.md`.** Every app
+- **NAS service-account SOP (Bora, 2026-08-06) — `OKAYNET/SOP/sop_synology_service_accounts.md` (vault).** Every app
   and container on the NAS runs under its own `sa_<appname>` account; the supplementary group
   follows the tree (`/volume1/APPS` → 65537 `app_service_accounts`, `/volume1/docker` → 65536
   `docker_service_accounts`). Confirmed: `sa_forgejo` 1030, `sa_saves` **1031**,
@@ -253,7 +253,7 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
 - [x] **Self-hosted git forge stood up (Bora, 2026-08-05):** Forgejo 15 LTS + PostgreSQL 17 on
       the NAS (`https://192.168.1.201:3443`), hardened non-root (`cap_drop: ALL`,
       `no-new-privileges`, `read_only`, internal-only DB network), step-ca TLS, HTTPS+PAT only.
-      **GitHub retired.** Build + locked infra decisions: `docs/FORGEJO.md`; SAVES-side
+      **GitHub retired.** Build + locked infra decisions: `OKAYNET/SELF HOST/forgejo.md` (vault); SAVES-side
       consequences: `CLAUDE.md` → Git Workflow, "Decisions locked" above.
       Follow-on SAVES changes shipped in the same commit: `docker-compose.yml` drops the
       top-level `version:` key and adds `mem_limit: ${SAVES_MEM_LIMIT:-3g}` (the NAS is no

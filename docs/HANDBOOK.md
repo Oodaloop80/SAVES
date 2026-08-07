@@ -167,7 +167,7 @@ access to the NAS vault + media shares.
 ### Local dev (Windows workstation)
 ```bash
 # Remote = self-hosted Forgejo on the NAS (LAN-only). Requires the step-ca root CA
-# trusted by Git-for-Windows and a PAT as the password — see docs/FORGEJO.md Phase 11-12.
+# trusted by Git-for-Windows and a PAT as the password — see OKAYNET/SELF HOST/forgejo.md Phase 11-12.
 git clone https://192.168.1.201:3443/<user>/SAVES.git C:\APPS\AI\SAVES
 cd C:\APPS\AI\SAVES
 python -m venv .venv && .venv\Scripts\activate
@@ -455,8 +455,8 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
 | Transcript missing on a video | Whisper server down/unreachable from the container |
 | Repeated "model rejects temperature" | stale build before the temp-cache fix |
 | Fact-check looks frozen | normal: web-search rounds are slow; progress is logged |
-| `git` TLS error against the forge | step-ca root not in the trust store — `FORGEJO.md` Phase 11. **Never** `http.sslVerify=false` |
-| `git` 401 against the forge | PAT expired/wrong scope — regenerate (`FORGEJO.md` §12.1); password = the token, not your account password |
+| `git` TLS error against the forge | step-ca root not in the trust store — `OKAYNET/SELF HOST/forgejo.md` (vault) Phase 11. **Never** `http.sslVerify=false` |
+| `git` 401 against the forge | PAT expired/wrong scope — regenerate (`OKAYNET/SELF HOST/forgejo.md` (vault) §12.1); password = the token, not your account password |
 | Can't reach the forge at all | LAN-only, no port-forward by design — you must be on `192.168.1.0/24` |
 
 ---
@@ -469,7 +469,7 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
   Container Manager 24.0.2-1606; SMB hostname = _TODO_; **RAM = 32 GB** (measured
   2026-08-06: 32071 MB total / ~29.8 GB available → `SAVES_MEM_LIMIT=4g`);
   `/volume1` = 37 TB, 24 TB free; SAVES app dir = `/volume1/docker/saves/app`.
-- **Service accounts (SOP: `docs/NAS_SERVICE_ACCOUNTS.md`)** — one per app/container,
+- **Service accounts (SOP: `OKAYNET/SOP/sop_synology_service_accounts.md` (vault))** — one per app/container,
   `sa_<appname>`; group by tree (`/volume1/APPS` → 65537 `app_service_accounts`,
   `/volume1/docker` → 65536 `docker_service_accounts`). Confirmed 2026-08-06:
 
@@ -485,11 +485,11 @@ workstation a **static/reserved IP** on the router, or update `remote_url` when 
   ownership stays with `OodaAdmin`/`administrators` and `sa_saves` is a named exception with
   three separate grants (read-only on the vault root, read+write on `0 - INBOX/SAVES/` and
   `SAVES/`). The `users` group is granted nothing anywhere. Compose carries no `group_add`.
-  Created in rollout step 0b-0d; scheme `NAS_SERVICE_ACCOUNTS.md` §5, worked example §6.
+  Created in rollout step 0b-0d; scheme `OKAYNET/SOP/sop_synology_service_accounts.md` (vault) §5, worked example §6.
 - **Git forge (Forgejo, on the same NAS):** `https://192.168.1.201:3443/`; project dir
   `/volume1/docker/forgejo`; runs as UID 1030 (`sa_forgejo`) : GID 65536. Full build =
-  `docs/FORGEJO.md`. Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +
-  renewal mechanism** = _TODO_ (a 24 h default would expire the forge daily — `FORGEJO.md`
+  `OKAYNET/SELF HOST/forgejo.md` (vault). Owner TODOs: Forgejo username = _TODO_; **step-ca cert expiry date +
+  renewal mechanism** = _TODO_ (a 24 h default would expire the forge daily — `OKAYNET/SELF HOST/forgejo.md` (vault)
   §3A.1/3A.3) — **✅ resolved: issued 2026-07-31, expires 2027-09-01 (~397 days, just under
   the 398-day Apple ceiling). Set a renewal reminder for ~Aug 2027.** Root CA file =
   `vineyard-root-ca.crt`; PAT names in use (workstation / NAS-deploy / Claude Code) = _TODO_;

@@ -65,7 +65,7 @@ unavailable. The Docker/ACL work is complete and verified; it would be re-enable
 | ~~Orchestration~~ | 🕐 **Deferred with the NAS** | Was "Docker Compose only". Not applicable to a bare-metal workstation run. |
 | Scope | **Everything built** | Core pipeline + serial approval queue + `#SAVES-inbox` + `/crawl`. The provecho profile is already native here — no cross-OS risk. |
 | State/history | **Fresh dedup, keep prefs, CARRY pending** (extended 2026-08-07) | Start with EMPTY `processing_state.json` (so real-vault saves aren't blocked by DEV's test-vault history); keep **`preferences.json`** so learned folder routing carries over; **carry `pending_approvals.json`** — the 16 live approval cards re-send on startup and their media paths are already media-root-relative, so they stay valid. |
-| Code source | **GitHub for now; Forgejo cutover is a test item** (revised 2026-08-07) | Forgejo is up and working, but the origin switch is treated as something to *test*, not assume. `git remote -v` is the authority. Build details: `docs/FORGEJO.md`. |
+| Code source | **GitHub for now; Forgejo cutover is a test item** (revised 2026-08-07) | Forgejo is up and working, but the origin switch is treated as something to *test*, not assume. `git remote -v` is the authority. Build details: `OKAYNET/SELF HOST/forgejo.md` (vault). |
 | ~~Resource limits~~ | 🕐 **Deferred with the NAS** | `mem_limit` yes / `cpus:` never still applies *if* the container is ever used — a CPU quota is a hard deploy failure on Synology (§1.5). Irrelevant bare-metal. |
 | ~~Container identity~~ | 🕐 **Deferred with the NAS** | The non-root `sa_saves` model and its DSM ACL grants (§1.6) are complete and were verified on hardware 2026-08-06. Bare-metal runs as you, against your own files — no identity work needed. |
 
@@ -170,7 +170,7 @@ reserve, and warns on over-commit — trust it over the table.
 (`NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler`) — the deploy
 fails outright rather than warning. This is also why `docker/docker-compose.yml` has no
 top-level `version:` key (it makes Compose V2 silently discard `mem_limit`). Preflight `[6]`
-fails on either. Full writeup: `docs/FORGEJO.md` §6.
+fails on either. Full writeup: `OKAYNET/SELF HOST/forgejo.md` (vault) §6.
 
 **Ports + firewall.** Forgejo binds `192.168.1.201:3443`. SAVES publishes **no ports at all**
 (it dials out to Discord and to Whisper), so there is no conflict and the DSM firewall's
@@ -193,7 +193,7 @@ clobber the POSIX owner, breaking the container at its next restart.
 ### The identity
 
 `saves_app` runs as a **non-root DSM service account, `sa_saves`** — per the NAS-wide SOP in
-**`docs/NAS_SERVICE_ACCOUNTS.md`**, which is the authority on naming and group assignment.
+**`OKAYNET/SOP/sop_synology_service_accounts.md` (vault)**, which is the authority on naming and group assignment.
 Before 2026-08-06 the container ran as **root**, which is why this section did not exist and
 why the vault directories were never created: root in a container writing to a bind-mounted
 vault produces `root:root` notes that **Obsidian and SMB cannot edit or delete**.
@@ -341,9 +341,9 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 | Risk | Impact | Mitigation |
 |---|---|---|
 | DEV bot still running at cutover | Both bots fight the one token; double-processing | **Stop DEV** before `up` (step 5). One token, one bot. |
-| NAS trust store lacks the step-ca root | `git clone` from Forgejo fails TLS verification | Install the root per `FORGEJO.md` Phase 11. **Never** work around it with `http.sslVerify=false`. |
+| NAS trust store lacks the step-ca root | `git clone` from Forgejo fails TLS verification | Install the root per `OKAYNET/SELF HOST/forgejo.md` (vault) Phase 11. **Never** work around it with `http.sslVerify=false`. |
 | SAVES memory cap over-committed vs Forgejo | OOM kills the forge or SAVES mid-save | `SAVES_MEM_LIMIT` sized per §1.5; preflight `[6]` warns before you deploy. |
-| A `cpus:` key gets added to compose | **Hard deploy failure** on Synology | Never set one; preflight `[6]` fails on it. `docs/FORGEJO.md` §6. |
+| A `cpus:` key gets added to compose | **Hard deploy failure** on Synology | Never set one; preflight `[6]` fails on it. `OKAYNET/SELF HOST/forgejo.md` (vault) §6. |
 | DSM firewall deny-all added during the Forgejo build | SMB / Obsidian-Sync to the vault blocked (SAVES itself unaffected — no inbound ports) | Verify vault access after the firewall change; §1.5. |
 | Whisper workstation off/unreachable | Video/audio saves get **empty transcripts** (non-fatal) | Preflight `[5]`; DHCP-reserve + auto-start the Whisper server. |
 | Cookies mounted read-only | `/crawl` + login sites fail to launch browser | **Fixed:** compose now mounts `cookies :rw`; preflight `[4]` checks writability. |
@@ -370,7 +370,7 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 ### Step 0 — [YOU] Verify the service accounts, then create the data directories
 
 Service-account convention (naming, which group, how to create one):
-**`docs/NAS_SERVICE_ACCOUNTS.md`**. Both accounts this rollout needs already exist.
+**`OKAYNET/SOP/sop_synology_service_accounts.md` (vault)**. Both accounts this rollout needs already exist.
 
 **0a. Confirm the accounts — these UIDs go into `docker/.env` and every ACL grant below:**
 
@@ -392,7 +392,7 @@ uid=1032(sa_obsidian) gid=100(users) groups=100(users),65537(app_service_account
 **Why two accounts:** the vault lives in the **APPS** tree, which belongs to **Obsidian**
 (`sa_obsidian`). SAVES reaches it as a **named ACL exception** — never by taking ownership and
 never through a shared group. The media store and SAVES's own state belong to `sa_saves`.
-Scheme: **`NAS_SERVICE_ACCOUNTS.md` §5**; worked example §6.
+Scheme: **`OKAYNET/SOP/sop_synology_service_accounts.md` (vault) §5**; worked example §6.
 
 **0b. Create the directories.** Ownership stays with `OodaAdmin` / `administrators`
 (SOP Rule 2) — a service account is **granted** access by an ACE, never given ownership.
@@ -450,7 +450,7 @@ proves the kernel applies it to a container process, which never authenticated t
 > (1031) **wrote** to `/volume1/MEDIA/SAVES`; `sa_forgejo` (1030) was **blocked** on the same
 > path with the same GID; an unused UID 9999 was **blocked** by default-deny. So DSM ACLs bind
 > containers, they match on **UID** (not group), denies and default-deny both hold, and a
-> `level:0` allow beats an inherited group deny. Full matrix: `NAS_SERVICE_ACCOUNTS.md` §5.1.
+> `level:0` allow beats an inherited group deny. Full matrix: `OKAYNET/SOP/sop_synology_service_accounts.md` (vault) §5.1.
 > Run the same tests on the vault paths once the vault is in place:
 
 ```bash

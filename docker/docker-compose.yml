@@ -5,7 +5,7 @@
 #
 # NO top-level `version:` key. Compose V2 deprecates it, and its presence makes Compose
 # reject the v2-style service-level `mem_limit` below. (Same finding as the Forgejo
-# stack on this NAS — docs/FORGEJO.md §6.)
+# stack on this NAS — OKAYNET/SELF HOST/forgejo.md §6.)
 services:
   saves-automation:
     build:
@@ -24,13 +24,13 @@ services:
     # account instead of root:root — root-owned notes in the vault cannot be edited or
     # deleted by Obsidian or over SMB. Changing this WITHOUT re-chowning the host
     # directories makes every write fail with EACCES.
-    # SOP: docs/NAS_SERVICE_ACCOUNTS.md · ownership map: docs/PROD_ROLLOUT.md §1.6.
+    # SOP: OKAYNET/SOP/sop_synology_service_accounts.md · ownership map: docs/PROD_ROLLOUT.md §1.6.
     user: "${SAVES_UID:-1031}:${SAVES_GID:-65536}"
 
     # NO `group_add`. Vault access is granted by a DSM ACL naming sa_saves, which matches on
     # UID — group membership is irrelevant to it. Adding the container to a broad group
     # (`users` = every DSM account) to solve a permission problem is explicitly forbidden:
-    # NAS_SERVICE_ACCOUNTS.md Rule 1. If a POSIX-only path ever needs a group the DSM account
+    # sop_synology_service_accounts.md (vault) Rule 1. If a POSIX-only path ever needs a group the DSM account
     # genuinely holds, add it here then — and never `users`.
 
     env_file: ../.env            # secrets: ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN
@@ -66,7 +66,7 @@ services:
     # daemon — "NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler"
     # — and the deploy FAILS OUTRIGHT. Memory limits work; CPU limits do not. Use Container
     # Manager's CPU-priority setting (cpu_shares) if you need relative weighting.
-    # Confirmed on DSM 7.3.2 / Container Manager 24.0.2-1606 — docs/FORGEJO.md §6.
+    # Confirmed on DSM 7.3.2 / Container Manager 24.0.2-1606 — OKAYNET/SELF HOST/forgejo.md §6.
 
     logging:
       driver: json-file

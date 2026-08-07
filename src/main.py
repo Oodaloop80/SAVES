@@ -26,7 +26,7 @@ from src.watcher import FileWatcher
 # deferred NAS/Docker deployment, and any future move to a Linux host. Do not "clean it up"
 # as dead code: it is dormant, not wrong. Subprocesses (yt-dlp, ffmpeg) inherit it.
 # Deliberately NOT 002 — group-writable output would widen access on a broad-group path.
-# Scheme: docs/NAS_SERVICE_ACCOUNTS.md §5.
+# Scheme: OKAYNET/SOP/sop_synology_service_accounts.md §5.
 os.umask(0o027)
 
 os.makedirs("logs", exist_ok=True)

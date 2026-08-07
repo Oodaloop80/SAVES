@@ -105,7 +105,7 @@ else warn "could not parse transcription.remote_url from config.yaml"; fi
 # --- 6. NAS co-tenancy: memory headroom + Synology compose traps -------------
 # Since 2026-08-05 this NAS also hosts the Forgejo forge (Forgejo 2g + PostgreSQL 1g).
 # SAVES is no longer alone, so an uncapped Chromium can OOM a neighbour. Two Synology
-# specifics are hard deploy failures rather than warnings — see docs/FORGEJO.md §6.
+# specifics are hard deploy failures rather than warnings — see OKAYNET/SELF HOST/forgejo.md §6.
 echo "[6] NAS resources + Synology compose traps"
 
 # 6a. A CPU quota is REJECTED BY THE DAEMON on Synology (no CFS bandwidth control):
@@ -156,7 +156,7 @@ if [ -n "$mem_kb" ]; then
     ok "memory headroom looks sane"
   fi
 else
-  warn "could not read /proc/meminfo — check RAM headroom manually (docs/FORGEJO.md §6)"
+  warn "could not read /proc/meminfo — check RAM headroom manually (OKAYNET/SELF HOST/forgejo.md §6)"
 fi
 
 # 6d. Compose file must actually parse with the host's compose binary.
@@ -192,10 +192,10 @@ if [ -f docker/.env ]; then
 
     # No group_add: vault access comes from a DSM ACL naming sa_saves (matched by UID),
     # not group membership. Granting the everyone-group `users` anything is forbidden
-    # (NAS_SERVICE_ACCOUNTS.md Rule 1), so flag it if it reappears in compose.
+    # (sop_synology_service_accounts.md (vault) Rule 1), so flag it if it reappears in compose.
     if grep -qE '^[[:space:]]*-[[:space:]]*"?100"?[[:space:]]*$' docker/docker-compose.yml 2>/dev/null \
        && grep -q 'group_add' docker/docker-compose.yml 2>/dev/null; then
-      bad "docker-compose.yml group_add includes GID 100 (users) — that is the everyone-group and is forbidden. Grant sa_saves via a DSM ACL instead (NAS_SERVICE_ACCOUNTS.md Rule 1/4)."
+      bad "docker-compose.yml group_add includes GID 100 (users) — that is the everyone-group and is forbidden. Grant sa_saves via a DSM ACL instead (sop_synology_service_accounts.md (vault) Rule 1/4)."
     else
       ok "compose grants no 'users' membership"
     fi

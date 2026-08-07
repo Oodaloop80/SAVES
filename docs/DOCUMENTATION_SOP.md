@@ -96,8 +96,8 @@ load-bearing.
 | `docs/PROD_ROLLOUT.md` | The guided deploy + acceptance tests + rollback | a deploy step, path, or prerequisite changes |
 | `docs/USER_GUIDE.md` | User-facing behavior, gotchas, recovery paths | any user-visible behavior changes |
 | `docs/COMMANDS.md` | One-line-per-entry index of commands / buttons / scripts | a command, button, or script is added / renamed / removed |
-| `docs/NAS_SERVICE_ACCOUNTS.md` | **Infrastructure SOP** — accounts, groups, the ACL permission scheme | an account is added, or a permission convention changes |
-| `docs/FORGEJO.md` | **Infrastructure** — the git forge: build, identity, TLS, backup, troubleshooting | the forge's config, versions, or procedures change |
+| `OKAYNET/SOP/sop_synology_service_accounts.md` (vault) | **Infrastructure SOP** — accounts, groups, the ACL permission scheme | an account is added, or a permission convention changes |
+| `OKAYNET/SELF HOST/forgejo.md` (vault) | **Infrastructure** — the git forge: build, identity, TLS, backup, troubleshooting | the forge's config, versions, or procedures change |
 | `docs/DOCUMENTATION_SOP.md` | **This file** — how we document | the documentation contract itself changes |
 | Code comments / docstrings | The point-of-use record of any non-obvious contract | always, alongside the code |
 
@@ -119,10 +119,10 @@ diagnoses a failure has produced knowledge worth more than the fix. Capture:
 5. **Why it broke** — what changed, or what was always wrong and only now surfaced
 6. **The generalisable lesson** — the part that applies beyond this one bug
 
-Worked example: `FORGEJO.md` → "The 2026-08-06 outage". Three causes in sequence, each
+Worked example: `OKAYNET/SELF HOST/forgejo.md` (vault) → "The 2026-08-06 outage". Three causes in sequence, each
 masking the next, with an ordered debug sequence. The generalisable lesson from it — *an ACL
 grants access, not ownership; some daemons check ownership independently* — is now SOP §5.2
-in `NAS_SERVICE_ACCOUNTS.md`, where it protects every future container, not just that one.
+in `OKAYNET/SOP/sop_synology_service_accounts.md` (vault), where it protects every future container, not just that one.
 
 ---
 
@@ -185,6 +185,6 @@ A one-line commit message for a decision-bearing change loses the decision perma
 ## 9 · Related
 
 - `CLAUDE.md` → "Documentation discipline" — the per-commit enforcement hook
-- `docs/NAS_SERVICE_ACCOUNTS.md` — the model for an infrastructure SOP written to this standard
-- `docs/FORGEJO.md` → "Troubleshooting" — the model for a debugging writeup (§5)
+- `OKAYNET/SOP/sop_synology_service_accounts.md` (vault) — the model for an infrastructure SOP written to this standard
+- `OKAYNET/SELF HOST/forgejo.md` (vault) → "Troubleshooting" — the model for a debugging writeup (§5)
 - `docs/ROADMAP.md` → "Decisions locked" — the decision register

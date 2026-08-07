@@ -59,8 +59,18 @@ Device-to-device (phone ↔ workstation). Also carries its own version history.
 > reproduces exactly the failure that drove the vault off the network drive in the first place.
 
 Also: **version control is OFF by default** on the destination. Enable it in **Synology Drive
-Admin Console** or you will have a copy with no history and believe you have backups. Ceiling
-is **32 versions** per file — which is why Layer 4 exists.
+Admin Console** or you will have a copy with no history and believe you have backups.
+
+**As configured (Bora, 2026-08-07):**
+
+| Setting | Value | Reason |
+|---|---|---|
+| Maximum versions | **32** (the ceiling) | A note is a few KB, so 32 versions cost ~160 KB — under a GB across a 5,000-note vault. There is no reason to keep fewer, and versions you chose not to keep cannot be recovered later. |
+| Delete versions older than | **120 days** | The *version cap* is what actually bites on notes you edit often — 32 versions go in weeks. The day limit only matters for rarely-touched notes; 120 days keeps a few months of their history. Snapshots (Layer 4) cover the year beyond it. |
+
+> `.obsidian/workspace.json` rewrites on every pane move and will burn all 32 versions in a
+> day. Harmless — you would never restore it — but excluding `.obsidian/workspace*.json` from
+> the Backup Task keeps version history focused on real notes. Optional.
 
 > **Do not run Obsidian Sync and a Drive Client *Sync* Task on the same vault** — two sync
 > services on one vault is a documented data-loss path. Obsidian Sync alongside a one-way
@@ -165,34 +175,50 @@ DSM would otherwise keep every snapshot forever. The retention policy thins them
 on one principle: **fine detail recently, coarse detail further back.** Broke something this
 afternoon? You want 2pm exactly. Last year? "Sometime in March" is plenty.
 
-#### `OBSIDIAN_BACKUP`
+#### Where these live in DSM
 
-| Setting | Value | Meaning |
+`Snapshot Replication → Snapshots → <shared folder> → Settings`, which has three tabs:
+**Schedule**, **Retention**, **Advanced** (immutability lives on **Advanced**).
+
+On the **Retention** tab choose **Smart Retention policy → Set Rules**. The other two options
+are worse for this: *"Numbers of latest snapshots to keep: 64"* is only ~2.6 days of history at
+an hourly schedule, and *"Keep all snapshots for 7 days"* is exactly 7 days. Smart Retention
+buys a **year** in ~78 snapshots by thinning them as they age.
+
+#### `OBSIDIAN_BACKUP` — Schedule: **every hour**
+
+| Row in the Set Rules dialog | Check | Value |
 |---|---|---|
-| Schedule | **every hour** | a snapshot each hour |
-| Keep hourly | **24** | the last day, hour by hour |
-| Keep daily | **30** | one per day, last month |
-| Keep weekly | **12** | one per week, ~3 months |
-| Keep monthly | **12** | one per month, last year |
-| ☑ Immutable — protection period | **7 days** | undeletable by anyone for its first week |
+| Keep all snapshots for | ☑ | **1** days |
+| Keep the latest snapshot of the hour for | ☑ | **24** hours |
+| Keep the latest snapshot of the day for | ☑ | **30** days |
+| Keep the latest snapshot of the week for | ☑ | **12** weeks |
+| Keep the latest snapshot of the month for | ☑ | **12** months |
+| Keep the latest snapshot of the year for | ☐ | — |
+| Numbers of latest snapshots to keep | | **5** (default) |
+| **Advanced → immutable protection period** | | **7 days** |
 
-≈ **78 snapshots.** Hourly because notes are edited all day: mangle something at 2pm and notice
-at 5pm, and you need a 1pm snapshot to go back to.
+≈ **78 snapshots**, covering a full year. Hourly because notes are edited all day: mangle
+something at 2pm and notice at 5pm, and only a 1pm snapshot gets you back.
 
-#### `SAVES_MEDIA`
+#### `SAVES_MEDIA` — Schedule: **once a day**
 
-| Setting | Value | Meaning |
+| Row in the Set Rules dialog | Check | Value |
 |---|---|---|
-| Schedule | **once a day** | one snapshot per day |
-| Keep daily | **30** | one per day, last month |
-| Keep weekly | **12** | ~3 months |
-| Keep monthly | **12** | last year |
-| ☑ Immutable — protection period | **30 days** | undeletable for its first month |
+| Keep all snapshots for | ☑ | **1** days |
+| Keep the latest snapshot of the hour for | ☐ | **unchecked** — meaningless at a daily schedule |
+| Keep the latest snapshot of the day for | ☑ | **30** days |
+| Keep the latest snapshot of the week for | ☑ | **12** weeks |
+| Keep the latest snapshot of the month for | ☑ | **12** months |
+| Keep the latest snapshot of the year for | ☐ | — |
+| Numbers of latest snapshots to keep | | **5** |
+| **Advanced → immutable protection period** | | **30 days** |
 
-≈ **54 snapshots.** Daily, not hourly, because media is only ever *added* — hourly would produce
-24 identical snapshots a day capturing nothing. The 30-day lock is affordable here precisely
-because append-only data makes each snapshot nearly free; on the vault the same lock would pin
-real disk space, which is why it's 7 days there.
+≈ **54 snapshots**. Daily rather than hourly because media is only ever *added* — SAVES never
+edits or deletes an existing file, so 24 hourly snapshots a day would be 24 identical views.
+The longer 30-day lock is affordable for exactly that reason: copy-on-write snapshots only
+consume space when data *changes*, so append-only snapshots are nearly free. The same lock on
+the churning vault would pin real disk space, which is why that one is 7 days.
 
 > ⚠️ **Do not set hourly + "keep 30 days" on the vault** — that is 720 snapshots, well past the
 > cap. The stepped policy above buys a year of coverage while staying inside it.

@@ -60,7 +60,7 @@ cd app
 > **The remote is the self-hosted Forgejo forge on this same NAS** (GitHub retired
 > 2026-08-05). Two prerequisites the clone will fail without: the **step-ca root CA** in the
 > NAS trust store, and a **PAT** (`repository: Read`) as the password. Full sequence with the
-> `curl` verification step: `PROD_ROLLOUT.md` step 1. Forge build: `docs/FORGEJO.md`.
+> `curl` verification step: `PROD_ROLLOUT.md` step 1. Forge build: `OKAYNET/SELF HOST/forgejo.md` (vault).
 
 - No `git` on the NAS? Either install **Git Server** from Package Center, or copy the repo
   over SMB from the workstation into `/volume1/docker/saves/app` (skip `.git` if you do).
@@ -208,7 +208,7 @@ That's PROD live. DEV can stay stopped, or come back later on its own token/chan
 | `os.replace` / EBUSY errors on state | `STATE_HOST` was bound as a file, not a directory (step 4) |
 | Notes never appear, no errors | vault not writable **by the container's UID**. The container runs non-root as `sa_saves`; if the vault is owned by anyone else every write fails with EACCES. Preflight `[7]`; fix per `PROD_ROLLOUT.md` §1.6 |
 | `PermissionError` / EACCES on state or logs | those dirs were created as admin (or by compose as root) and never chowned to `SAVES_UID` — `PROD_ROLLOUT.md` steps 4 / 4b |
-| Notes appear but Obsidian can't edit them | the vault ACE lacks `fd--` inheritance, so new notes did not inherit the folder's ACL — re-add the grant with `:fd--` (`NAS_SERVICE_ACCOUNTS.md` §6) |
+| Notes appear but Obsidian can't edit them | the vault ACE lacks `fd--` inheritance, so new notes did not inherit the folder's ACL — re-add the grant with `:fd--` (`OKAYNET/SOP/sop_synology_service_accounts.md` (vault) §6) |
 | `Executable doesn't exist` from Playwright | image built before the non-root change; rebuild so Chromium lands in `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` |
 | Instagram/TikTok/Facebook fail immediately | cookies missing/expired — preflight [4]; re-export and copy into `cookies/` |
 | Build OOM / disk full on NAS | free space on the volume; if arm64, expect a heavier Chromium build |

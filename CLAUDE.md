@@ -11,7 +11,7 @@ to a Synology NAS vault.
 **Owner:** Bora (Oodaloop80)
 **Runtime:** bare-metal Python on the Windows workstation (NAS/Docker path built but 🕐 DEFERRED — see `docs/PROD_ROLLOUT.md` §0)
 **Runs on:** Windows workstation, bare-metal, at `C:\APPS\AI\SAVES` (PROD as of 2026-08-07)
-**Git remote:** self-hosted **Forgejo** on the NAS — `https://192.168.1.201:3443/<user>/SAVES.git` (GitHub retired 2026-08-05; see "Git Workflow" and `docs/FORGEJO.md`)
+**Git remote:** self-hosted **Forgejo** on the NAS — `https://192.168.1.201:3443/<user>/SAVES.git` (GitHub retired 2026-08-05; see "Git Workflow" and `OKAYNET/SELF HOST/forgejo.md` (vault))
 **Workstation IP (Whisper server):** `192.168.1.90`
 
 ---
@@ -626,7 +626,7 @@ account **`sa_saves`** (`user: "${SAVES_UID}:${SAVES_GID}"` in compose, plus a m
 in-image account created from the same build args). Root-in-container wrote `root:root` notes
 into the bind-mounted vault that **Obsidian and SMB could not edit or delete** — that is the
 bug this fixes. Consequences to respect when touching deploy files:
-- **NAS-wide SOP: `docs/NAS_SERVICE_ACCOUNTS.md`** — one service account per app/container,
+- **NAS-wide SOP: `OKAYNET/SOP/sop_synology_service_accounts.md` (vault)** — one service account per app/container,
   named `sa_<appname>`, grouped by tree (`/volume1/APPS` → 65537 `app_service_accounts`,
   `/volume1/docker` → 65536 `docker_service_accounts`). Confirmed UIDs: `sa_forgejo` 1030,
   **`sa_saves` 1031**, `sa_obsidian` 1032. That doc is the authority on identity; the
@@ -670,7 +670,7 @@ account, so nothing inherits the right owner by default.
 - **Never add a `cpus:` key to `docker/docker-compose.yml`.** Synology kernels are built
   without CFS bandwidth control, so *any* CPU quota is a **hard deploy failure**
   (`NanoCPUs can not be set…`), not a warning. Memory limits work; CPU limits do not.
-  Discovered during the Forgejo build — full writeup in `docs/FORGEJO.md` §6.
+  Discovered during the Forgejo build — full writeup in `OKAYNET/SELF HOST/forgejo.md` (vault) §6.
   The same finding is why `docker-compose.yml` has **no top-level `version:` key**: it makes
   Compose V2 reject the v2-style `mem_limit`.
 
@@ -724,7 +724,7 @@ alters behavior, or changes architecture MUST update the relevant docs **in the 
   revisits it). **Never dress an assumption as a measurement, and downgrade a ✅ the moment it
   turns out to rest on inference.**
 - **Debugging sessions produce docs too** — symptom (verbatim error), real cause, what didn't
-  work, fix, why it broke, and the *generalisable* lesson. Model: `FORGEJO.md` →
+  work, fix, why it broke, and the *generalisable* lesson. Model: `OKAYNET/SELF HOST/forgejo.md` (vault) →
   "The 2026-08-06 outage".
 - **When a standard changes, grep for every place it applies and fix them all in that commit**
   — including previously-committed guidance of mine, which may now be wrong. Never leave two
@@ -752,18 +752,24 @@ The doc surfaces and what lives where:
   File Recovery 5min/30d · Obsidian Sync · Synology Drive **Backup Task** · immutable WORM
   snapshots), the Backup-vs-Sync-Task trap, the restore test, and what SAVES can/cannot do to
   a vault. Update it when a backup layer changes.
+- **Vault mirror** — `scripts/sync_docs_to_vault.py` copies `CLAUDE.md` + `docs/*.md` into
+  `OKAYNET/AI APPS/SAVES/` in the Obsidian vault, each with a "generated — do not edit"
+  banner. **The repo is canonical**; the vault copy is read-only and overwritten on every
+  run. `--check` reports drift. Two docs are NOT mirrored because the vault is their
+  canonical home (moved 2026-08-07, they are infrastructure and apply to every project):
+  `OKAYNET/SOP/sop_synology_service_accounts.md` and `OKAYNET/SELF HOST/forgejo.md`.
 - `docs/DOCUMENTATION_SOP.md` — **the documentation contract itself**: the Six Questions
   every doc section must answer, the evidence labels (✅/⚠️/❌/🕐), where each kind of
   knowledge goes, the rule that debugging sessions produce docs too, and the pre-commit
   checklist. Update it when the way we document changes.
-- `docs/NAS_SERVICE_ACCOUNTS.md` — **NAS-wide SOP**: one service account per app/container,
+- `OKAYNET/SOP/sop_synology_service_accounts.md` (vault) — **NAS-wide SOP**: one service account per app/container,
   naming (`sa_<appname>`), group-by-tree, the account registry with confirmed UIDs, the
   and **the permission scheme (§5)**: `users` is granted nothing anywhere; only
   `OodaAdmin`/`administrators` hold Full Control; cross-app access is a named ACL exception
   on the narrowest folder — never a group.
   Infrastructure, not application. Update it when an account is added or a convention
   changes; anything SAVES-specific belongs in `PROD_ROLLOUT.md` §1.6 instead.
-- `docs/FORGEJO.md` — the self-hosted **git forge** this repo lives on (Forgejo 15 LTS +
+- `OKAYNET/SELF HOST/forgejo.md` (vault) — the self-hosted **git forge** this repo lives on (Forgejo 15 LTS +
   PostgreSQL 17, hardened non-root, on the same NAS). Infrastructure, not application: update
   it when the forge's version pins, identity model, TLS/cert path, firewall, or backup
   procedure changes. SAVES-side consequences (remote URL, PAT auth, CA trust) belong in
@@ -838,7 +844,7 @@ origin  https://192.168.1.201:3443/<user>/SAVES.git   (Forgejo 15 LTS, LAN-only)
 ```
 
 Build, hardening rationale, cert/CA model, PAT creation, and backup/upgrade procedures:
-**`docs/FORGEJO.md`** (v3, verified against the real hardware 2026-08-05). That doc is the
+**`OKAYNET/SELF HOST/forgejo.md` (vault)** (v3, verified against the real hardware 2026-08-05). That doc is the
 authority on the forge itself; this section covers only how *this repo* uses it.
 
 ### The loop
@@ -859,13 +865,13 @@ working preference, not a transport limitation.)
 ### Things that are different now that the forge is LAN-only
 
 1. **Auth is HTTPS + a Personal Access Token.** SSH is disabled on the forge by design
-   (`DISABLE_SSH=true`, no port published — `FORGEJO.md` Locked Decision 6). Username = your
+   (`DISABLE_SSH=true`, no port published — `OKAYNET/SELF HOST/forgejo.md` (vault) Locked Decision 6). Username = your
    Forgejo username, password = **the token**, cached by `credential.helper manager` on
    Windows. Use a **dedicated, repository-scoped PAT for Claude Code** so it can be revoked
-   without rotating your primary credential (`FORGEJO.md` §13).
+   without rotating your primary credential (`OKAYNET/SELF HOST/forgejo.md` (vault) §13).
 
 2. **Clients must trust the step-ca root**, not the intermediate. Without it every `git`
-   operation fails TLS verification. Installed per `FORGEJO.md` Phase 11 — and on Windows,
+   operation fails TLS verification. Installed per `OKAYNET/SELF HOST/forgejo.md` (vault) Phase 11 — and on Windows,
    Git needs the *extra* step there (Git for Windows ships its own OpenSSL CA bundle and does
    not read the Windows store unless told to). **Never "fix" a TLS error with
    `http.sslVerify=false`** — that silently disables the protection the whole build exists to
@@ -876,7 +882,7 @@ working preference, not a transport limitation.)
    needs a PR, use the Forgejo web UI at `https://192.168.1.201:3443/`.
 
 4. **Claude Code on the web can no longer reach this repo.** The forge is LAN-only with no
-   port-forward (`FORGEJO.md` Locked Decision 11), so cloud sessions have no remote to pull
+   port-forward (`OKAYNET/SELF HOST/forgejo.md` (vault) Locked Decision 11), so cloud sessions have no remote to pull
    from. **Local Claude Code is now the only development path.** The old patch-delivery and
    Anti-Stale Protocol that this section used to describe existed solely to work around the
    web sandbox's lack of push credentials — both are **obsolete and have been removed**. If
@@ -884,7 +890,7 @@ working preference, not a transport limitation.)
 
 5. **⚠️ The repo's only copies are the NAS forge and your local clones.** Retiring GitHub
    removed the off-site copy. `/volume1/docker/forgejo` (repo tree + a `pg_dump` of the
-   database) **must** be in your backup set — see `FORGEJO.md` → Backups. A NAS loss without
+   database) **must** be in your backup set — see `OKAYNET/SELF HOST/forgejo.md` (vault) → Backups. A NAS loss without
    that backup loses the history; the working tree on the workstation would be all that
    survives.
 
