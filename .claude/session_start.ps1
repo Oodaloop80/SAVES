@@ -1,11 +1,18 @@
 # SessionStart hook — print the current ROADMAP phase and its open checklist items.
 #
 # WHY THIS IS A FILE AND NOT AN INLINE COMMAND (Bora, 2026-08-07):
-#   This logic used to live as a one-liner inside .claude/settings.json. Embedding PowerShell
-#   in a JSON string means every backslash and quote is escaped twice, and a single wrong
-#   escape breaks the hook in a way that only shows up as an opaque "SessionStart hook error"
-#   at launch. That happened during the C:\APPS\AI\SAVES move. A script file has no escaping
-#   layer at all, and can be run directly to test it.
+#   This logic used to live as a 603-character one-liner inside .claude/settings.json. It
+#   carried 6 backslash-escaped quotes, a backtick (`n), and a literal em-dash. Passed through
+#   a shell it lost its quoting and failed with `exit 255 / "The system cannot find the path
+#   specified"` - reproduced from the correct working directory, so this was NOT a cwd problem.
+#   The em-dash also arrived as mojibake.
+#
+#   The failure surfaces only as an opaque "SessionStart hook error" at launch, which says
+#   nothing about the cause. A script file has no escaping layer at all and can be run
+#   directly to test:  powershell -NoProfile -ExecutionPolicy Bypass -File .claude\session_start.ps1
+#
+#   Measured, same invocation, same directory:  old = exit 255, stderr set
+#                                               new = exit 0, phase printed
 #
 # Test with:  powershell -NoProfile -ExecutionPolicy Bypass -File .claude\session_start.ps1
 
