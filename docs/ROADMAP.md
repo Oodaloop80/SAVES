@@ -84,6 +84,17 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       because no doc said what to give them. `PROD_ROLLOUT.md` §1.6 is the ownership map;
       preflight `[7]` verifies the DSM ACL grants and their ordering.
   Corollary: **never assume the UID.** `id sa_saves` is the authority.
+- **Documentation contract (Bora, 2026-08-07) — `docs/DOCUMENTATION_SOP.md`.** *"Document
+  EVERYTHING as you go. Nothing can be lost because I will not remember."* Every documented
+  thing answers the **Six Questions** (what is true now / why, *including what was rejected* /
+  how we got here, dated and attributed / how to rebuild / how to verify / what would break
+  it), and every non-obvious claim carries an **evidence label** (✅ VERIFIED with the command
+  and result · ⚠️ ASSUMED · ❌ REJECTED with the reason · 🕐 DEFERRED with the trigger). An
+  assumption must never be dressed as a measurement, and a ✅ is downgraded the moment it turns
+  out to rest on inference. **Debugging sessions produce documentation too** — symptom, cause,
+  what didn't work, fix, and the generalisable lesson. When a standard changes, grep for every
+  place it applies and fix them all in the same commit, including earlier guidance that may
+  now be wrong. Enforced per-commit via `CLAUDE.md` → "Documentation discipline".
 - **NAS service-account SOP (Bora, 2026-08-06) — `docs/NAS_SERVICE_ACCOUNTS.md`.** Every app
   and container on the NAS runs under its own `sa_<appname>` account; the supplementary group
   follows the tree (`/volume1/APPS` → 65537 `app_service_accounts`, `/volume1/docker` → 65536

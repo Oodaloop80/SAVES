@@ -708,9 +708,31 @@ folder/tags just approved. See "Serial approval queue" above.
 **Decision notation discipline:** when a decision constrains future behavior, record it at the
 point of use (code comment) *and* in ROADMAP "Decisions locked", in the same commit.
 
-**Documentation discipline (MANDATORY):** docs are part of the change, not a follow-up. Any
-commit that adds a feature, alters behavior, or changes architecture MUST update the relevant
-docs **in the same commit** — never "later". The doc surfaces and what lives where:
+**Documentation discipline (MANDATORY) — full contract: `docs/DOCUMENTATION_SOP.md`.**
+*"Document EVERYTHING as you go. Nothing can be lost because I will not remember."* (Bora,
+2026-08-07.) Docs are part of the change, not a follow-up. Any commit that adds a feature,
+alters behavior, or changes architecture MUST update the relevant docs **in the same commit**
+— never "later". The short version of the SOP:
+
+- **The Six Questions.** Every documented thing answers: (1) WHAT is true now — exact values,
+  no "should be"; (2) **WHY**, *including what was rejected and why*; (3) **HOW WE GOT HERE** —
+  the failure/decision that produced it, **dated and attributed**; (4) HOW to rebuild it from
+  nothing; (5) HOW to **verify** it (the command + expected output); (6) WHAT would break it,
+  and what *looks* like a fix but isn't.
+- **Evidence labels.** ✅ VERIFIED (command + date + observed result) · ⚠️ ASSUMED (say what
+  would test it) · ❌ REJECTED (say why, so it isn't re-proposed) · 🕐 DEFERRED (say what
+  revisits it). **Never dress an assumption as a measurement, and downgrade a ✅ the moment it
+  turns out to rest on inference.**
+- **Debugging sessions produce docs too** — symptom (verbatim error), real cause, what didn't
+  work, fix, why it broke, and the *generalisable* lesson. Model: `FORGEJO.md` →
+  "The 2026-08-06 outage".
+- **When a standard changes, grep for every place it applies and fix them all in that commit**
+  — including previously-committed guidance of mine, which may now be wrong. Never leave two
+  docs disagreeing.
+- **Commit messages are documentation**: what changed, why, what was rejected, what was
+  verified and how, what is still unproven.
+
+The doc surfaces and what lives where:
 - `CLAUDE.md` (this file) — the canonical map: repo tree, data flow, note types, button/slash
   behavior, platform notes, hard constraints, config. If a new file, note type, button, slash
   command, config key, or flow appears (or one is renamed/removed), fix it here.
@@ -726,6 +748,10 @@ docs **in the same commit** — never "later". The doc surfaces and what lives w
   component's responsibility, threading model, or a scaling characteristic changes.
 - `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;
   record constraining decisions under "Decisions locked".
+- `docs/DOCUMENTATION_SOP.md` — **the documentation contract itself**: the Six Questions
+  every doc section must answer, the evidence labels (✅/⚠️/❌/🕐), where each kind of
+  knowledge goes, the rule that debugging sessions produce docs too, and the pre-commit
+  checklist. Update it when the way we document changes.
 - `docs/NAS_SERVICE_ACCOUNTS.md` — **NAS-wide SOP**: one service account per app/container,
   naming (`sa_<appname>`), group-by-tree, the account registry with confirmed UIDs, the
   and **the permission scheme (§5)**: `users` is granted nothing anywhere; only

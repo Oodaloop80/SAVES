@@ -409,6 +409,10 @@ Change permissions here **only** with `chown`/`chmod` over SSH.
 
 ## 9 · Related
 
+- `docs/DOCUMENTATION_SOP.md` — the documentation contract this SOP is written to: the Six
+  Questions, evidence labels, and the rule that a debugging session must produce docs. §5.2
+  of this file exists because that rule was applied to the 2026-08-06 Forgejo outage.
+
 - `docs/FORGEJO.md` — the reference hardened-container build (non-root UID, `cap_drop: ALL`,
   `read_only`, `no-new-privileges`, the `/etc/passwd` mount). §1 covers the identity model
   in depth; §3 defines rootless vs unprivileged vs non-root.
