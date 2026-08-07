@@ -690,6 +690,38 @@ provecho **creator** URL pasted there triggers `/crawl`. See "Discord-native sav
 
 ## Current State
 
+> ### 📍 WHERE THINGS STAND — 2026-08-07 (read this first)
+>
+> **PROD is now the Windows workstation, bare-metal, at `C:\APPS\AI\SAVES`.** The app was
+> moved here today from `C:\DEV\Apps\SAVES\SAVES_app` (which is now empty). There is no
+> longer a separate DEV install — this is both the repo and the running app.
+>
+> **The NAS/Docker deployment is 🕐 DEFERRED, not cancelled.** It was built and largely
+> verified on hardware. It was abandoned because Obsidian cannot use a vault on a network
+> drive, which would have forced a filesystem sync layer between the workstation and the NAS.
+> Full reasoning and the re-entry trigger: `docs/PROD_ROLLOUT.md` §0.0.
+>
+> **Live configuration** (`config.local.yaml`, gitignored):
+> | | |
+> |---|---|
+> | Vault | `C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT` — local disk, **never** a network or cloud-synced folder |
+> | Inbox | `0 - INBOX/SAVES.md` — note: **not** the `SAVES/` subfolder the NAS plan used |
+> | Media | `//192.168.1.201/SAVES_MEDIA` — its own NAS shared folder |
+> | Whisper | `127.0.0.1:5000` — same machine now |
+>
+> **⚠️ SAVES HAS NOT YET RUN AGAINST THE REAL VAULT.** The first PROD run is still pending.
+> The inbox holds exactly **2 URLs** (Instagram reels) deliberately — **590 more are parked in
+> `0 - INBOX/SAVES-BACKLOG.md`**, which nothing watches. Processing all of them at once would
+> be ~$180–300. Feed batches of 10–20 back into `SAVES.md` when ready.
+>
+> **State carried over:** `preferences.json` kept (learned folder routing). `processing_state.json`
+> and `pending_approvals.json` retired to `.bak` — fresh dedup for PROD, so nothing is blocked
+> by DEV's test-vault history.
+>
+> **Open items:** (1) the backup restore test — `docs/BACKUP_AND_RECOVERY.md` §6, not yet done;
+> (2) the Forgejo origin cutover — `git remote -v` still says GitHub, and Bora wants that
+> treated as something to *test*, not assumed.
+
 **Operating decision — everything is IMMEDIATE (Bora, 2026-07-04).** Extraction, AI analysis,
 and Discord approval cards all fire the moment a URL arrives; nothing is batched or deferred,
 and `auto_approve_on_timeout` stays `false`. Rationale: instant bug/quality feedback during

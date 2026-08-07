@@ -1,0 +1,105 @@
+{
+  "https://www.reddit.com/r/smoking/s/LA8UMFHiqH": {
+    "status": "failed",
+    "reason": "crash orphan: pipeline never reached Discord card \u2014 re-queued",
+    "timestamp": 1783210149.9193206
+  },
+  "https://www.instagram.com/reels/DYanV1SATPM/": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\TIPS\\You're Probably Using Rice Paper WRONG \u2013 Vietnamese Spring Roll Tips.md",
+    "timestamp": 1783210622.5160623
+  },
+  "https://www.tiktok.com/t/ZP8sfdbFJ/": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\TECH\\AI\\RANKINGS\\AI Tools Tier Ranking Claude, ChatGPT, Cursor & More.md",
+    "timestamp": 1783262105.4513814
+  },
+  "https://www.instagram.com/p/DYo4bTTDA--/?img_index=2": {
+    "status": "pending",
+    "timestamp": 1783283083.1203678
+  },
+  "https://www.instagram.com/p/DYo4bTTDA--/": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\TRAVEL\\EUROPE\\PORTUGAL\\TEST\\6 Coffees in Portugal You Probably Don't Know.md",
+    "timestamp": 1783285149.7986805
+  },
+  "https://www.instagram.com/reels/DYUDn1xoEgL/": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\ASIAN\\DUMPLINGS\\Day 56100 Crispy Pork Rice Paper Dumplings.md",
+    "timestamp": 1783285841.7102075
+  },
+  "https://www.instagram.com/reels/DYZ9pf_tCYm/": {
+    "status": "pending",
+    "timestamp": 1783288878.905151
+  },
+  "https://www.tiktok.com/t/ZP8sS9KfA/": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\TECH\\AI\\RANKINGS\\Finance Influencer Tier List \u2013 Dave Ramsey, Caleb Hammer, Braden Shaw & More.md",
+    "timestamp": 1783289414.913743
+  },
+  "https://www.provecho.co/platform/recipe/7li59oPLx0yGxxVpRxEK": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\Turkey BLT Chopped Wraps.md",
+    "timestamp": 1785344249.0968797
+  },
+  "https://www.provecho.co/platform/recipe/qsT4d9pYA2B4TispTT3i": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\Flying Dutchman Chopped Wrap.md",
+    "timestamp": 1785350873.6037772
+  },
+  "https://www.provecho.co/platform/recipe/OfxjvReo3yyDPAz8dlJx": {
+    "status": "pending",
+    "timestamp": 1785350581.7773528
+  },
+  "https://www.provecho.co/platform/recipe/eaOSSV3rkjbsSvE28lEm": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\Crispy McChicken Chopped Wrap.md",
+    "timestamp": 1785350974.3797166
+  },
+  "https://www.provecho.co/platform/recipe/plJziTe3aOSNSRjT9c6w": {
+    "status": "pending",
+    "timestamp": 1785350717.3245149
+  },
+  "https://www.provecho.co/platform/recipe/tg5IaJTwKklYDYvySmuQ": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\Chicken Caesar Chopped Wraps.md",
+    "timestamp": 1785351178.851169
+  },
+  "https://www.provecho.co/platform/recipe/jxB7cf2UCHK2lDfd3bZS": {
+    "status": "pending",
+    "timestamp": 1785350941.0111132
+  },
+  "https://www.provecho.co/platform/recipe/AbD3srH5NBYPAWiass5Y": {
+    "status": "pending",
+    "timestamp": 1785351095.9012756
+  },
+  "https://www.provecho.co/platform/recipe/yOlLv9Jg1UNOy2yA2mqk": {
+    "status": "pending",
+    "timestamp": 1785351174.2214088
+  },
+  "https://www.provecho.co/platform/recipe/4wAFSSqExwVGeM4DQvHK": {
+    "status": "pending",
+    "timestamp": 1785351248.3506508
+  },
+  "https://www.provecho.co/platform/recipe/Po4JkFnXOeONJyxIOLTP": {
+    "status": "pending",
+    "timestamp": 1785351321.1258125
+  },
+  "https://www.provecho.co/platform/recipe/FFtjKZQyYHEKmnqyQc8n": {
+    "status": "pending",
+    "timestamp": 1785351393.9298353
+  },
+  "https://www.provecho.co/platform/recipe/1JhW8oVqHmtZRiAu90sy": {
+    "status": "pending",
+    "timestamp": 1785351470.3713841
+  },
+  "https://www.provecho.co/platform/recipe/r5mSV3TVXunvTNZtsmkb": {
+    "status": "pending",
+    "timestamp": 1785351553.9501503
+  },
+  "https://www.provecho.co/platform/recipe/V0OtYaacFfeW03ahJrzb": {
+    "status": "done",
+    "path": "C:\\DEV\\Apps\\SAVES\\OBSIDIAN\\SAVES\\COOKING\\RECIPES\\PIZZA\\Gluten Free Mini Detroit Pizzas.md",
+    "timestamp": 1785360551.1283715
+  }
+}
