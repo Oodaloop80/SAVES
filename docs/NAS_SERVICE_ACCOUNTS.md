@@ -211,18 +211,36 @@ convenience.
 evaluates them for one account. Neither proves the kernel applies the ACL to a *container*
 process, which never authenticated through DSM.
 
-> ✅ **VERIFIED 2026-08-06 — DSM ACLs are enforced for containerized processes.**
-> `docker run -u 1031:65536 -v /volume1/MEDIA/SAVES:/t alpine touch /t/.acltest` → **WRITE OK**,
-> against a path whose only grant is `user:sa_saves:allow` at `level:0`. The container carries
-> no DSM session and is not in any group that is granted there, so the write can only have
-> succeeded by the kernel matching the ACE on **UID**.
+> ## ✅ VERIFIED 2026-08-06 — the model is proven end to end
 >
-> **This is the assumption the whole scheme rests on.** Everything else — named exceptions,
-> `fd--` inheritance, default-deny trees — is only meaningful if the kernel honours an ACL for
-> a container. It does. Re-verify after a DSM major upgrade.
+> Three container tests, run on this NAS. **All passed.**
+>
+> | # | Principal | Path | Expected | Result |
+> |---|---|---|---|---|
+> | 1 | `sa_saves` `-u 1031:65536` | `/volume1/MEDIA/SAVES` | write succeeds | **WRITE OK** |
+> | 2 | `sa_forgejo` `-u 1030:65536` | `/volume1/MEDIA/SAVES` | blocked | **BLOCKED** |
+> | 3 | unused UID `-u 9999:9999` | `/volume1/docker/saves` | blocked | **BLOCKED** |
+>
+> **What each one establishes:**
+>
+> 1. **DSM ACLs bind containerized processes at all**, matched on **UID** — the container
+>    holds no DSM session and is in no group granted on that path.
+> 2. **Denies bind too, and evaluation is genuinely per-UID.** Tests 1 and 2 ran against the
+>    *same path* with the *same GID* (65536) and produced opposite outcomes. Group membership
+>    is not what decides; the named ACE is.
+> 3. **Default-deny holds.** A principal with no ACE anywhere gets nothing — so "not granted"
+>    really does mean "no access", and the trees are safe by omission.
+>
+> **And the ordering, which is the scheme's one fragility:** `/volume1/MEDIA` carries a
+> `docker_service_accounts` deny, and `sa_saves` **is in** `docker_service_accounts`. Test 1
+> still wrote successfully — so an explicitly-set (`level:0`) `user:` allow **provably beats
+> an inherited group deny for a containerized process**. That is exactly the mechanism every
+> named exception in this SOP depends on.
+>
+> Re-verify after a DSM major upgrade, and after any permission change made through the GUI
+> (§7) — a rebuilt ACL can drop the `level:0` exception and only these tests will show it.
 
-Re-run this whenever you add a grant, and **always** after any permission change made through
-the GUI (§7):
+Re-run whenever you add a grant. Positive test:
 
 ```bash
 sudo docker run --rm -u <uid>:<gid> -v "<host path>:/t" alpine \
@@ -230,24 +248,17 @@ sudo docker run --rm -u <uid>:<gid> -v "<host path>:/t" alpine \
          { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }'
 ```
 
-#### The other half: prove the DENIES bind too
-
-The test above proves **allows** are honoured. The security posture depends equally on
-**denies** and on default-deny actually holding for containers — an untested assumption in the
-opposite direction, and the more dangerous one to get wrong. Run both negatives:
+Negative tests — run these too whenever a tree's denies change:
 
 ```bash
-# 1. EXPLICIT DENY — sa_forgejo (1030) is denied on MEDIA. Expect BLOCKED.
+# An explicitly-denied account must be BLOCKED:
 sudo docker run --rm -u 1030:65536 -v /volume1/MEDIA/SAVES:/t alpine \
-  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** WRITE OK — DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
+  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
 
-# 2. DEFAULT DENY — an unused UID with no ACE anywhere. Expect BLOCKED.
+# A principal with no ACE must be BLOCKED (default-deny):
 sudo docker run --rm -u 9999:9999 -v /volume1/docker/saves:/t alpine \
-  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** WRITE OK — DEFAULT-DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
+  sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** DEFAULT-DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
 ```
-
-Anything other than `BLOCKED` means container isolation on this NAS is weaker than the ACLs
-suggest, and every "denied" principal in §2 needs re-thinking.
 
 ### 5.2 — Which regime governs a path, and the `chmod` trap
 
