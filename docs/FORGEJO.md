@@ -640,7 +640,9 @@ Containers honour **POSIX** ownership. DSM layers its own **ACLs** on top, and t
 
 > **Once you have run the `chown` above, do not open this folder's permissions in File Station or Control Panel → Shared Folder → Edit → Permissions.** Doing so can cause DSM to rewrite ACLs across the subtree and clobber your POSIX owner, which will break the container at the next restart with a permission-denied error.
 
-If you ever need to change permissions here, do it over SSH with `chown`/`chmod`, not the GUI.
+Change permissions over SSH, never in the GUI. Use **`synoacltool`** to grant *access*, and
+`chown` only where an app validates *ownership* (PostgreSQL does — see Phase 4.2 and
+`NAS_SERVICE_ACCOUNTS.md` §5.2). The two are complementary.
 
 ---
 
@@ -1731,6 +1733,57 @@ Re-enable it only when you need it. Everything routine (rebuild, logs, restart) 
 
 ## Troubleshooting
 
+### ⭐ The 2026-08-06 outage — a worked example of the whole failure class
+
+Worth reading in full before debugging anything else: it hit **three** distinct causes in
+sequence, and each one masked the next.
+
+**Symptoms, in the order they appeared:**
+
+```
+initdb: error: could not access directory "/var/lib/postgresql/data": Permission denied
+FATAL:  data directory "/var/lib/postgresql/data" has wrong ownership
+HINT:   The server must be started by the user that owns the data directory
+chmod: /var/lib/gitea/git: Operation not permitted
+[F] mustCurrentRunUserMatch() Expect user 'git' but current user is:
+```
+
+**What had actually happened:** the NAS-wide service-account SOP
+(`docs/NAS_SERVICE_ACCOUNTS.md`) was applied to `/volume1/docker/forgejo`, which changed the
+directory group off `users` and moved the containers onto named accounts. Three things then
+had to be true at once, and only one of them was:
+
+| # | Cause | Fix |
+|---|---|---|
+| 1 | PostgreSQL had **no account of its own**. The compose ran it as `70:70` — a UID that exists inside the `postgres:17-alpine` image but **not on the NAS**, so `synoacltool -add "user:70:..."` fails with `No such user` and no grant is possible | Create `sa_forgejo_postgres` (§Phase 4.1), run the db as `1033:65536` |
+| 2 | The ACE for `sa_forgejo_postgres` was correct and present — **and PostgreSQL still refused.** It validates that it *owns* the data directory, independently of whether it can write to it | `sudo chown -R 1033:65536 /volume1/docker/forgejo/db` — **in addition to** the ACE (SOP §5.2) |
+| 3 | The `/etc/passwd` + `/etc/group` mounts were absent from the compose, so UID 1030 had no name inside the container and `os/user.Current()` returned `""` | Add both `:ro` mounts (§Phase 4B.6) |
+
+**The generalisable lesson** — now codified in `NAS_SERVICE_ACCOUNTS.md` §5.2:
+
+> An ACL answers *"may this UID write here?"*. It does **not** answer *"does this UID own
+> this?"*. PostgreSQL asks the second question and hard-fails on it; Forgejo's rootless
+> entrypoint asks it too and merely warns (`chmod: … Operation not permitted`). For those
+> apps you need the ACE **and** the `chown`.
+
+**Order to debug in** — each step's failure hides the ones after it:
+
+```bash
+sudo docker inspect --format '{{.Config.User}}' forgejo forgejo-db  # 1. who does it run as?
+id sa_forgejo ; id sa_forgejo_postgres                              # 2. does that UID exist on the NAS?
+sudo synoacltool -get /volume1/docker/forgejo/db | grep allow       # 3. is there an ACE?
+sudo ls -ld /volume1/docker/forgejo/db                              # 4. does it OWN the dir?
+grep -c '' /volume1/docker/forgejo/passwd                           # 5. passwd mount intact? (~18 lines)
+```
+
+**Verified working after all three fixes** (2026-08-06): `Listen: https://0.0.0.0:3000`,
+`AppURL(ROOT_URL): https://192.168.1.201:3443/`, ORM engine initialised, indexers started.
+The residual `chmod: /var/lib/gitea/{git,custom}: Operation not permitted` lines at startup
+are **expected and harmless** — the rootless entrypoint tries to normalise directories it
+does not own, and proceeds regardless.
+
+---
+
 ### `mkdir: can't create directory '/var/lib/gitea/...': Permission denied`
 
 **Cause:** host directory ownership doesn't match `user:`. This is the failure mode documented in Forgejo issue #10215 and seen constantly in rootless deployments.
@@ -2147,8 +2200,10 @@ already reserve.
 **non-root** as `sa_saves`, the direct analogue of `sa_forgejo` — same reasoning, same
 GID 65536, same DSM-ACL caveat. It is not yet hardened to the *full* standard here
 (`cap_drop: ALL`, `read_only`, `no-new-privileges` are still Forgejo-only); that remains a
-sensible follow-on, not a rollout prerequisite. SAVES's ownership map, which extends this
-model to a human-shared vault via setgid + group `users`, is `docs/PROD_ROLLOUT.md` §1.6.
+sensible follow-on, not a rollout prerequisite. SAVES's ownership map — which extends this
+model to a **cross-tree** case, writing into Obsidian's vault via named ACL exceptions rather
+than any shared group — is `docs/PROD_ROLLOUT.md` §1.6. Unlike PostgreSQL here, SAVES does
+**not** validate ownership, so it needs the ACEs only, no `chown` (SOP §5.2).
 
 **The NAS pulls SAVES from the NAS.** `git pull` in `/volume1/docker/saves/app` talks to this
 forge over the LAN address, so the forge must be up to *update* SAVES. A running `saves_app`

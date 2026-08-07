@@ -51,6 +51,7 @@ Keep this table current. **The UID is assigned by DSM — always read it back, n
 | `sa_forgejo` | **1030** | 100 (`users`) | 65536 `docker_service_accounts` | `/volume1/docker/forgejo` | Forgejo git forge + PostgreSQL |
 | `sa_saves` | **1031** | 100 (`users`) | 65536 `docker_service_accounts` | `/volume1/docker/saves` | SAVES archiving pipeline |
 | `sa_obsidian` | **1032** | 100 (`users`) | 65537 `app_service_accounts` | `/volume1/APPS/OBSIDIAN` | Obsidian vault / sync |
+| `sa_forgejo_postgres` | **1033** | 100 (`users`) | 65536 `docker_service_accounts` | `/volume1/docker/forgejo/db` | PostgreSQL 17 behind Forgejo |
 
 Verified `id` output:
 
@@ -58,7 +59,14 @@ Verified `id` output:
 uid=1030(sa_forgejo)  gid=100(users) groups=100(users),65536(docker_service_accounts)
 uid=1031(sa_saves)    gid=100(users) groups=100(users),65536(docker_service_accounts)
 uid=1032(sa_obsidian) gid=100(users) groups=100(users),65537(app_service_accounts)
+uid=1033(sa_forgejo_postgres) gid=100(users) groups=100(users),65536(docker_service_accounts)
 ```
+
+> **Two accounts for one stack (added 2026-08-06).** Forgejo and its PostgreSQL are separate
+> containers, so they get separate accounts — `sa_forgejo` owns the git data, 
+> `sa_forgejo_postgres` owns the database. The forge talks to the DB **over the network**, not
+> through the filesystem, so neither needs access to the other's directory. A compromise of
+> the web front end cannot reach the database files directly.
 
 > **Group renamed 2026-08-06:** `service accounts` → `docker_service_accounts`. **A DSM group
 > rename does not change its GID** — it stays 65536, so no container config, `chown`, or mount
@@ -260,26 +268,59 @@ sudo docker run --rm -u 9999:9999 -v /volume1/docker/saves:/t alpine \
   sh -c 'touch /t/.denytest 2>/dev/null && { echo "*** DEFAULT-DENY NOT ENFORCED ***"; rm -f /t/.denytest; } || echo "BLOCKED (correct)"'
 ```
 
-### 5.2 — Which regime governs a path, and the `chmod` trap
+### 5.2 — Access and ownership are two different questions
 
-**Every `/volume1` share on this NAS is ACL-managed.** Confirmed 2026-08-06 — `/volume1/APPS`,
-`/volume1/MEDIA` and `/volume1/docker` all report `has_ACL,is_support_ACL`. Check before
+**Every `/volume1` share on this NAS is ACL-managed** (verified 2026-08-06: `/volume1/APPS`,
+`/volume1/MEDIA` and `/volume1/docker` all report `has_ACL,is_support_ACL`). Check before
 assuming:
 
 ```bash
 sudo synoacltool -get <path> | head -3
-#   Archive: has_ACL,is_support_ACL   -> the ACL is authoritative; use synoacltool
-#   (no has_ACL)                      -> plain POSIX; chown/chmod applies
+#   Archive: has_ACL,is_support_ACL   -> an ACL is present and governs access
 ```
 
-> ⚠️ **Do not `chmod`/`chown` inside an ACL-managed share.** On DSM the POSIX mode shown by
-> `ls -l` is a *synthesized approximation* of the ACL (which is why these folders read
-> `drwxrwxrwx+` — the `+` means "there is an ACL, this mode is not the real story"). Running
-> `chmod` against such a path can rewrite or drop the ACL, silently removing the named
-> exceptions the whole scheme depends on. Manage permissions with **`synoacltool` only**.
->
-> The one exception is setting a share's top-level owner before any ACEs exist, e.g.
-> `sudo chown -R OodaAdmin:administrators /volume1/MEDIA/`.
+Two mechanisms exist and they answer **different questions**:
+
+| | Question it answers | Managed with |
+|---|---|---|
+| **DSM ACL** | *May this UID read/write here?* | `synoacltool` |
+| **POSIX ownership** | *Whose file is this?* | `chown` |
+
+For most software only the first matters. SAVES is in that category — it never inspects
+`st_uid`, so the ACL alone is sufficient and its directories keep `OodaAdmin` as owner.
+
+#### ⚠️ But some daemons refuse to start unless they OWN their data directory
+
+Proven on this NAS 2026-08-06, while bringing Forgejo back up:
+
+| App | Behaviour | Evidence |
+|---|---|---|
+| **PostgreSQL** | **Hard fail** — `FATAL: data directory "/var/lib/postgresql/data" has wrong ownership`, `HINT: The server must be started by the user that owns the data directory`. Raised **despite a correct, present `user:sa_forgejo_postgres:allow` ACE at `level:0`** | the db container would not start until `chown 1033` |
+| **Forgejo (rootless)** | **Warns** — `chmod: /var/lib/gitea/git: Operation not permitted` at entrypoint; it tries to normalise its own directories. Non-fatal, the service starts anyway | forgejo container log |
+
+> **The rule:** grant access with the **ACL**; *additionally* `chown` the data directory to the
+> container's UID **when the application validates ownership**. They are complementary, not
+> alternatives — the ACE alone did not satisfy PostgreSQL, and ownership alone would not
+> survive the tree's default-deny.
+
+Decide per app, once, at deploy time:
+
+```bash
+# Does it self-check ownership? Try it with the ACE only. If the log says
+# "wrong ownership" or "Operation not permitted", it does — then also:
+sudo chown -R <uid>:<gid> /volume1/docker/<app>/<its data dir>
+```
+
+#### What still should NOT be done
+
+- **Don't `chmod` to grant access.** Access is the ACL's job. On DSM the mode in `ls -l` is a
+  *synthesized* view of the ACL — that is why these folders read `drwxrwxrwx+`, the `+`
+  meaning "an ACL exists and this mode is not the real story." A `chmod` there is at best
+  redundant and its effect on the ACEs is not something to rely on.
+- **Don't chown a *shared* tree to one app.** The vault is Obsidian's; SAVES has no ownership
+  check and taking it would break the owner (SOP Rule 2, and §6).
+- **Don't touch permissions in File Station** (§7) — that is the one action known to rebuild
+  the ACL and drop `level:0` exceptions.
 
 ### 5.3 — Inheritance does the work; do not grant per file
 

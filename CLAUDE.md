@@ -651,8 +651,8 @@ bug this fixes. Consequences to respect when touching deploy files:
   POSIX ownership; the container write test in **SOP §5.1** is the only proof that an ACL
   actually binds a container.
 - **Never hardcode a UID without checking.** `id sa_saves` is the authority.
-- `src/main.py` sets `os.umask(0o002)` (files 664 / dirs 775) so the **setgid** bit on the
-  vault keeps notes editable by the human. Don't remove it.
+- `src/main.py` sets `os.umask(0o027)` (files 640 / dirs 750) — **not** what grants access
+  (the ACL is), only a guarantee that nothing SAVES writes is world-readable. Not `002`.
 - Playwright browsers live at `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` (world-readable),
   **not** `~/.cache` — a non-root user can't read root's cache, and Playwright fails with
   "Executable doesn't exist". The instaloader/whisper volumes moved to `/home/saves/…`.

@@ -75,14 +75,14 @@ is hardening, deployment, mobile sharing, runtime cost tuning, and a frictionles
       (`user:` + a matching in-image account via build args). The vault and media dirs are
       a DSM ACL naming `sa_saves` (ownership stays with `OodaAdmin`/`administrators`);
       state and cookies are `sa_saves:docker_service_accounts` (2770/2700 — the latter holds
-      credentials). `src/main.py` sets `os.umask(0o002)` so new files are 664/775 rather
-      than 644/755, which is what makes the setgid bit actually useful.
+      credentials). `src/main.py` sets `os.umask(0o027)` so new files are 640/750 rather
+      than world-readable; the DSM ACL's `fd--` inheritance, not setgid, propagates access.
   (b) **Runbook discipline.** *Every* step that creates, copies or moves a file MUST state
       its owner and mode and give the `chown`/`chmod`. Bora works from an admin account over
       SSH, so everything he touches is created owned by the wrong account. This is not a
       style preference — it blocked the rollout: he would not create the vault directories
       because no doc said what to give them. `PROD_ROLLOUT.md` §1.6 is the ownership map;
-      preflight `[7]` enforces UID/owner agreement and warns on a missing setgid bit.
+      preflight `[7]` verifies the DSM ACL grants and their ordering.
   Corollary: **never assume the UID.** `id sa_saves` is the authority.
 - **NAS service-account SOP (Bora, 2026-08-06) — `docs/NAS_SERVICE_ACCOUNTS.md`.** Every app
   and container on the NAS runs under its own `sa_<appname>` account; the supplementary group

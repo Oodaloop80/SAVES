@@ -234,41 +234,41 @@ is a blocker — SAVES will start cleanly and then fail with no useful error.
 
 ### The rest of the layout
 
-**`/volume1/docker` is ACL-managed too** (verified 2026-08-06). `/volume1/docker/saves`
-carries `user:sa_saves:allow:rwxpdDaARWc--:fd--` at `level:0`, and `fd--` inheritance pushes
-it down to `app/`, `app/cookies/`, `app/logs/` and `state/` — so **those need no grants and no
-`chown`/`chmod` of their own**. `docker_service_accounts` is granted nothing on this tree, so
-`sa_forgejo` has no access to SAVES's secrets at all.
+**`/volume1/docker` is ACL-managed too** (verified 2026-08-06). `/volume1/docker/saves` carries
+`user:sa_saves:allow:rwxpdDaARWc--:fd--` at `level:0`, and `fd--` inheritance pushes it down to
+`app/`, `app/cookies/`, `app/logs/` and `state/`. **Those need no grants, no `chown` and no
+`chmod` of their own** — one ACE covers the subtree.
 
-The table below is what each path is *for*; permissions come from the inherited ACL.
+Ownership stays `OodaAdmin` throughout (SOP Rule 2). **SAVES never checks who owns its files**,
+so unlike PostgreSQL it needs no `chown` to start — the ACE alone is sufficient. (The
+distinction, and the apps that *do* self-check, are in SOP §5.2.)
 
-| Path | Owner | Mode | Why |
-|---|---|---|---|
-| `/volume1/docker/saves` | `root:root` | `755` | project root; nothing writes here at runtime |
-| `/volume1/docker/saves/app` (the clone) | `root:root` | `755` | source + build context, read-only at runtime |
-| `…/app/.env` | `sa_saves:root` | **`600`** | **secrets** (API key, bot token) — only `sa_saves` and root. † |
-| `…/app/docker/.env` | `root:root` | `644` | host paths only — no secrets |
-| `…/app/config.yaml` | `root:root` | `644` | mounted `:ro` |
-| `…/app/cookies` + contents | `sa_saves:root` | **`700`** dir / `600` files | **credentials** (provecho profile, platform cookies). Container writes here. † |
-| `…/app/logs` | `sa_saves:administrators` | `2750` | container writes; admins read |
-| `/volume1/docker/saves/state` | `sa_saves:administrators` | **`2750`** | runtime JSONs; container writes, admins inspect |
-| `/volume1/docker/certs/vineyard-root-ca.crt` | `root:root` | `644` | public certificate — world-readable by design |
+| Path | What it holds | Reachable by |
+|---|---|---|
+| `/volume1/docker/saves` | project root — carries the `sa_saves` ACE that covers everything below | `sa_saves`, `administrators`, `ContainerManager`, `OodaAdmin` |
+| `…/saves/app` | the git clone: source + build context, read-only at runtime | inherited |
+| `…/app/.env` | **secrets** — `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN` | inherited — and **not** `sa_forgejo`, which has no ACE on this tree † |
+| `…/app/docker/.env` | host paths + `SAVES_UID`/`SAVES_GID` — no secrets | inherited |
+| `…/app/config.yaml` | configuration, mounted `:ro` | inherited |
+| `…/app/cookies` | **credentials** — platform cookies + the provecho browser profile the container *writes* | inherited |
+| `…/app/logs` | container logs | inherited |
+| `/volume1/docker/saves/state` | `processing_state.json`, `pending_approvals.json`, `preferences.json`, `queue_state.json` | inherited |
+| `/volume1/docker/certs/vineyard-root-ca.crt` | public CA certificate for the Forgejo clone | inherited |
 
-† **Not group `docker_service_accounts`.** `sa_forgejo` is in that group — making secrets or
-cookies group-readable would let the git forge read SAVES's Anthropic key and session
-cookies. Same tree does not mean same trust (SOP §5.2). Group `administrators` on state/logs
-lets you inspect them without sudo; credentials get no group at all.
+† **This is what protects the secrets, not a file mode.** `/volume1/docker` grants
+`docker_service_accounts` nothing, and `sa_forgejo` has no ACE — so the forge cannot read
+SAVES's API key or session cookies even though both stacks live in the same tree. Same tree
+does not mean same trust. Preflight `[7]` asserts `sa_forgejo` is absent from this tree's ACL.
 
-**Why setgid (`2xxx`) on the POSIX dirs:** new files and subdirectories inherit the
-*directory's* group rather than the creating process's. Paired with `os.umask(0o002)` in
-`src/main.py` (files `664`, dirs `775`), group members keep write access to everything SAVES
-creates. Inside the **APPS tree the DSM ACL's `fd--` inheritance flags do this job instead**,
-which is why the vault needs no setgid from us.
+**On `umask`:** `src/main.py` sets `os.umask(0o027)` — files `640`, dirs `750`, never
+world-readable. It is **not** what grants anyone access (the ACL is, and its `fd--` flags
+propagate to everything SAVES creates); its only job is to make sure nothing SAVES writes is
+world-readable if it ever lands on a non-ACL path. Deliberately not `002`.
 
 **`group_add` in compose: removed.** Vault and media access come from DSM ACL entries naming
 `sa_saves`, which match on **UID** — group membership is irrelevant to them. Adding the
-container to `users` (the everyone-group) to solve a permission problem is forbidden by
-**SOP Rule 1**. Preflight `[7]` fails if GID 100 reappears in a `group_add`.
+container to `users` (the everyone-group) is forbidden by **SOP Rule 1**. Preflight `[7]`
+fails if GID 100 reappears in a `group_add`.
 
 ### ⚠️ The DSM ACL trap — applies to every path above
 
