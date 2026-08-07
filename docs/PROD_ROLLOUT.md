@@ -57,6 +57,27 @@ so this is a demotion of the Discord channel to a convenience, not a loss of fun
 🕐 **What would revisit the NAS:** wanting genuine 24/7 capture, or the workstation becoming
 unavailable. The Docker/ACL work is complete and verified; it would be re-enabled, not rebuilt.
 
+### ⚠️ 0.0.1 — The inbox backlog is PARKED (2026-08-07)
+
+The real vault's inbox held **592 unique URLs** — accumulated over months of saving links
+without SAVES pointed at it. `scan_inbox()` queues **everything** in that file at startup, so a
+first PROD run against it would have meant roughly **$180–300** in tokens and 592 sequential
+approval cards.
+
+**What was done:** 590 URLs moved to `0 - INBOX/SAVES-BACKLOG.md`; **2 left in the inbox** (the
+Instagram reels carried over from the pending-16). A timestamped `.bak` of the original inbox
+sits beside it.
+
+**Why that file is safe:** the watcher binds to `0 - INBOX/SAVES.md` **only** — `watcher.py:27`
+compares the exact normalised path — so URLs in the backlog are inert. Not queued, not deduped,
+zero cost.
+
+**Feeding it back:** cut 10–20 lines into `SAVES.md`, let them drain, repeat. At ~$0.30–0.50
+per save a batch of 20 is ~$6–10. Same staged-escalation logic as Part 4's first `/crawl`.
+
+> This is why the first PROD run has exactly **2 URLs**: enough to prove the pipeline end to
+> end, small enough that a mistake costs pennies.
+
 ### 0.1 — Rollout decisions (Bora, 2026-07-30, still in force)
 
 | Decision | Choice | Consequence |
