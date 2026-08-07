@@ -80,9 +80,69 @@ DSM **Snapshot Replication** on the destination shared folder. Requires **Btrfs*
 something destructive could propagate. Snapshots sit *outside* it: they restore the **whole
 vault** to a moment in time, and nothing flowing through the sync can touch them.
 
+### ⚠️ Immutable *snapshots* — NOT a WORM *shared folder*
+
+DSM offers two features whose names both suggest "can't be changed." They are different, and
+picking the wrong one breaks things (Bora, 2026-08-07 — asked while in the WORM dialog):
+
+| | **Immutable snapshots** ← use this | **WORM shared folder** |
+|---|---|---|
+| What is frozen | the *snapshots* | the *live files* |
+| Live folder | stays normal and writable | files become unwritable after the auto-lock timer |
+| Configured in | Snapshot Replication | Shared folder → WORM (Mode / Auto Lock / Lock State / Retention) |
+
+**A WORM shared folder breaks both of our destinations:**
+
+- **Media.** `download_media()` builds `save_dir` from `_source_subdir(author, title, source_url)`
+  — **deterministic per URL** (`downloader.py:66`). A **🔁 Re-save re-downloads to the same
+  path**, and the HEIC→JPG conversion writes derived files into the same directory. Against
+  WORM-locked files, yt-dlp fails with permission denied and the media download fails. Re-save
+  is a normal workflow, not an edge case.
+- **Vault backup.** Notes change constantly, so Synology Drive's Backup Task must overwrite the
+  destination copy. Immutable files mean it cannot write, and the backup silently stops working.
+
+**If WORM is used anyway** (it fits a *finalized* archive nothing ever rewrites — a possible
+future split of "approved media" from "working store"):
+
+| Setting | Choice | Reason |
+|---|---|---|
+| **Mode** | **Enterprise** — ❌ never Compliance | Compliance means **nobody** can delete the share or its data before retention expires — not you, not an admin, no override. A misconfiguration is permanent and may require destroying the volume. It exists for regulated industries under audit. |
+| **Auto Lock** | Enabled, timer **≥ 24 h** | Must comfortably exceed the longest download + conversion, or files lock mid-write |
+| **Lock State** | **Immutable** | Append-only permits appending but not modifying — that is for logs. Media files are complete when written. |
+| **Retention** | Start **7 days**, extend later | Extending is possible; shortening generally is not |
+
 ---
 
-## 3 · Scope — *all* vaults, not just Remote Vault
+## 3 · Share layout — group by retention need, not by content type
+
+**Snapshots are configured per *shared folder*.** That is the unit of policy, so the split is
+driven by how each dataset behaves — not by what it contains.
+
+The fact that decides it: **copy-on-write snapshots only consume space when data changes or is
+deleted.** SAVES media is effectively append-only (zero delete calls; existing files are never
+rewritten except by a deliberate re-save), so dozens of snapshots of it cost almost nothing.
+Mixed into a folder that churns, those same snapshots capture every change and cost real space.
+
+| Shared folder | Holds | Churn | Snapshots | Immutable lock |
+|---|---|---|---|---|
+| **`OBSIDIAN_BACKUP`** (new) | backup of **all** vaults | high churn, tiny files | hourly · 24h/30d/12w/12m ≈ 78 | **7 days** to start |
+| **`ARCHIVE`** (new) | SAVES media (`media_root`) | append-only | daily · 30d/12w/12m ≈ 54 | **30 days** — cheap here |
+| **`MEDIA`** (existing) | general media | churns | your call | none |
+
+Cap is **256** snapshots per shared folder, so both policies sit well inside it.
+
+> ⚠️ **Start the lock short and lengthen it.** A locked snapshot **cannot be deleted by anyone,
+> including you, until it expires.** If something writes 500 GB and gets snapshotted, that space
+> is unreclaimable for the whole lock period. Run 7 days, watch the space behaviour for a
+> fortnight, then extend. The reverse is not possible.
+
+**Prerequisite:** the volume must be **Btrfs** — Storage Manager → Volume → File System.
+
+**Retire `/volume1/APPS/OBSIDIAN/Remote Vault`** once the backup is verified. With SAVES on the
+workstation it has no reader and no writer; leaving it invites mistaking a stale copy for the
+real one.
+
+## 4 · Scope — *all* vaults, not just Remote Vault
 
 The requirement is every vault. Point the Backup Task at the parent
 (`C:\Users\Bora\Documents\OBSIDIAN\`) rather than one vault, so a new vault is covered the day
@@ -90,7 +150,7 @@ it is created instead of being silently unprotected until someone remembers.
 
 ---
 
-## 4 · What SAVES itself can and cannot do to a vault
+## 5 · What SAVES itself can and cannot do to a vault
 
 Relevant to the threat model, and **verified 2026-08-07**, not assumed:
 
@@ -113,7 +173,7 @@ misconfiguration, and ordinary human error — which is what Layers 1 and 4 are 
 
 ---
 
-## 5 · Verify it — a backup you have never restored from is not a backup
+## 6 · Verify it — a backup you have never restored from is not a backup
 
 Do this **once, now**, and again after any change to the stack.
 
@@ -132,7 +192,7 @@ is. Find out now, not during an incident.
 
 ---
 
-## 6 · Off-site — the remaining gap
+## 7 · Off-site — the remaining gap
 
 Everything above lives in **one building**. Fire, theft, or flood takes the workstation and the
 NAS together. Standard practice is **3-2-1**: three copies, two media types, one off-site.
@@ -143,7 +203,7 @@ verified.
 
 ---
 
-## 7 · Recovery quick reference
+## 8 · Recovery quick reference
 
 | Situation | Go to |
 |---|---|
@@ -156,7 +216,7 @@ verified.
 
 ---
 
-## 8 · Related
+## 9 · Related
 
 - `docs/PROD_ROLLOUT.md` — the workstation deployment this protects
 - `CLAUDE.md` → Hard Constraints — the zero-delete rule verified in §4
