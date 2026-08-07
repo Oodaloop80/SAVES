@@ -82,14 +82,39 @@ vault** to a moment in time, and nothing flowing through the sync can touch them
 
 ### ⚠️ Immutable *snapshots* — NOT a WORM *shared folder*
 
-DSM offers two features whose names both suggest "can't be changed." They are different, and
-picking the wrong one breaks things (Bora, 2026-08-07 — asked while in the WORM dialog):
+DSM offers two features whose names both suggest "can't be changed." They live in **different
+places**, and picking the wrong one breaks things (Bora, 2026-08-07 — found the WORM dialog
+while looking for the snapshot settings, which is an easy mistake to make).
 
 | | **Immutable snapshots** ← use this | **WORM shared folder** |
 |---|---|---|
 | What is frozen | the *snapshots* | the *live files* |
 | Live folder | stays normal and writable | files become unwritable after the auto-lock timer |
-| Configured in | Snapshot Replication | Shared folder → WORM (Mode / Auto Lock / Lock State / Retention) |
+| **Where** | **Snapshot Replication** package | **Control Panel → Shared Folder → WORM** |
+| Give-away settings | Schedule / Retention / ☑ *Enable immutable snapshots* | Mode: Enterprise\|Compliance · Auto Lock · Lock State: Append-only\|Immutable |
+
+#### Where to actually click
+
+Install **Snapshot Replication** from Package Center if it isn't there, then:
+
+```
+Snapshot Replication → Snapshots → <select the shared folder> → Settings
+    ├─ Schedule    : hourly (vault) / daily (media)
+    ├─ Retention   : e.g. 24 hourly · 30 daily · 12 weekly · 12 monthly
+    └─ ☑ Enable immutable snapshots  →  Protection period
+```
+
+Two similarly-named options that are **not** the same thing:
+
+| Option | Effect |
+|---|---|
+| **Lock** (on one snapshot) | Stops the *retention policy* auto-pruning it — but **an admin can still delete it manually.** Weaker. |
+| **☑ Enable immutable snapshots** | Blocks **all** deletion, admin included, until the protection period expires. **This is the one.** |
+
+> **Immutability overrides retention.** Retention decides when DSM *tries* to prune;
+> immutability decides when DSM is *allowed* to. A snapshot past its retention window still
+> survives until its protection period ends — which is exactly why the lock is set short at
+> first. Synology's recommended range is **7–14 days**.
 
 **A WORM shared folder breaks both of our destinations:**
 
@@ -123,11 +148,11 @@ deleted.** SAVES media is effectively append-only (zero delete calls; existing f
 rewritten except by a deliberate re-save), so dozens of snapshots of it cost almost nothing.
 Mixed into a folder that churns, those same snapshots capture every change and cost real space.
 
-| Shared folder | Holds | Churn | Snapshots | Immutable lock |
-|---|---|---|---|---|
-| **`OBSIDIAN_BACKUP`** (new) | backup of **all** vaults | high churn, tiny files | hourly · 24h/30d/12w/12m ≈ 78 | **7 days** to start |
-| **`ARCHIVE`** (new) | SAVES media (`media_root`) | append-only | daily · 30d/12w/12m ≈ 54 | **30 days** — cheap here |
-| **`MEDIA`** (existing) | general media | churns | your call | none |
+| Shared folder | Holds | Churn | Snapshot schedule | ☑ Immutable, protection period | Shared-folder WORM |
+|---|---|---|---|---|---|
+| **`OBSIDIAN_BACKUP`** (new) | backup of **all** vaults | high churn, tiny files | hourly · 24h/30d/12w/12m ≈ 78 | **7 days** to start | ❌ **off** — would block Drive's backup writes |
+| **`ARCHIVE`** (new) | SAVES media (`media_root`) | append-only | daily · 30d/12w/12m ≈ 54 | **30 days** — cheap here | ❌ **off** — would block re-save downloads |
+| **`MEDIA`** (existing) | general media | churns | your call | — | ❌ off |
 
 Cap is **256** snapshots per shared folder, so both policies sit well inside it.
 
