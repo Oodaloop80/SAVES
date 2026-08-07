@@ -1,4 +1,7 @@
-# SAVES → Production Rollout (Synology NAS, Docker Compose)
+# SAVES → Production Rollout (Windows workstation, bare-metal)
+
+> ⚠️ **Target changed 2026-08-07** — this was a NAS/Docker rollout. See §0.0 for why it moved
+> to the workstation and what is now 🕐 deferred. NAS material is kept, not deleted.
 
 The full guided rollout: the **plan**, the **step-by-step**, the **acceptance tests** (including
 everything added recently — serial queue, `#SAVES-inbox`, the Android/Tasker webhook, `/crawl`),
@@ -11,17 +14,60 @@ follow it top to bottom.
 
 ---
 
-## 0. Decisions locked for this rollout (Bora, 2026-07-30)
+## 0. Decisions locked for this rollout
+
+### ⚠️ 0.0 — The target changed on 2026-08-07: **workstation, not NAS**
+
+Everything below that describes Docker, the NAS, service accounts and DSM ACLs is
+🕐 **DEFERRED**, not deleted. It was built, and much of it was verified on real hardware. It
+is simply not the deployment being done now.
+
+**What forced the change.** The plan put the vault on the NAS and Obsidian on the workstation
+over a mapped network drive. That failed immediately with folder-modification errors — and it
+was never going to work: **Obsidian does not support vaults on network drives**, because it
+depends on native file watchers, fast full-vault indexing, and file locking, none of which SMB
+provides reliably. Keeping the vault on the NAS therefore required a filesystem-level sync
+layer (Syncthing, or Obsidian-in-Docker + CouchDB) purely to bridge one machine to another.
+
+**Why the workstation is the better answer, not merely the easier one.** Running SAVES where
+the vault already lives removes four risks at once:
+
+| Risk removed | Detail |
+|---|---|
+| The sync layer | No Syncthing, no CouchDB, no bridge, no conflict class |
+| **The provecho profile** | §1.4 called this *"the one item with real risk"* — the Chromium profile was captured on Windows and its cookie SQLite is DPAPI-encrypted, which **does not decrypt on Linux**. Running on Windows makes it a non-issue |
+| Untested Dockerfile changes | Non-root `USER`, `PLAYWRIGHT_BROWSERS_PATH`, volume ownership — all unproven, all moot |
+| NAS permission complexity | ACL grants, UID mapping, preflight `[7]` — not needed when nothing runs on the NAS |
+
+And there was **no new deployment to build**: `config.local.yaml` is the existing, working
+bare-metal mechanism — the same one DEV has used all along. This is a config change, not a
+migration.
+
+**The cost, stated honestly.** SAVES is no longer 24/7. It processes when the workstation is
+awake. One specific consequence:
+
+| Capture path | Survives downtime? |
+|---|---|
+| Obsidian inbox **file** | ✅ **Yes** — `scan_inbox()` runs at startup and queues everything waiting |
+| Discord **`#SAVES-inbox`** | ❌ **No** — `on_message` is live-only; there is no history backfill, so a URL pasted while the workstation sleeps is silently lost |
+
+With Obsidian Sync on mobile, the phone captures into the inbox *file* — the resilient path —
+so this is a demotion of the Discord channel to a convenience, not a loss of function.
+
+🕐 **What would revisit the NAS:** wanting genuine 24/7 capture, or the workstation becoming
+unavailable. The Docker/ACL work is complete and verified; it would be re-enabled, not rebuilt.
+
+### 0.1 — Rollout decisions (Bora, 2026-07-30, still in force)
 
 | Decision | Choice | Consequence |
 |---|---|---|
 | Cutover | **Direct, one bot token** | Stop the DEV bot, start PROD on the **real** vault + **existing** `#SAVES` channels. One token = one live bot; they never run at once. |
-| Orchestration | **Docker Compose only** | No Komodo/Dozzle/DOCO-CD in this plan — compose is the whole deployment. (Optional-later note at the end, no steps.) |
-| Scope | **Everything built** | Core pipeline + serial approval queue + `#SAVES-inbox` + Android/Tasker webhook + `/crawl` (needs the provecho login profile on the NAS). |
-| State/history | **Fresh dedup, keep prefs** | Start with EMPTY `processing_state.json` (so real-vault saves aren't blocked by DEV's test-vault history); copy **`preferences.json`** so learned folder routing carries over. |
-| Code source | **Self-hosted Forgejo** (added 2026-08-05) | The NAS clones SAVES from its *own* Forgejo at `https://192.168.1.201:3443/`, not GitHub (retired). Needs the step-ca root CA in the NAS trust store + a PAT. Build details: `docs/FORGEJO.md`. |
-| Resource limits | **`mem_limit` yes, `cpus:` never** | The NAS is now shared with the forge (Forgejo 2 GB + Postgres 1 GB), so `saves_app` declares `SAVES_MEM_LIMIT` (`4g` — the NAS measured 32 GB on 2026-08-06). A CPU quota is a **hard deploy failure** on Synology — see §1.5. |
-| Container identity | **Non-root `sa_saves`** (added 2026-08-06) | `saves_app` no longer runs as root. Every file it writes is owned by the service account, not `root:root` — root-owned notes cannot be edited or deleted by Obsidian or over SMB. Requires `SAVES_UID`/`SAVES_GID` in `docker/.env` and matching directory ownership: **§1.6**. |
+| ~~Orchestration~~ | 🕐 **Deferred with the NAS** | Was "Docker Compose only". Not applicable to a bare-metal workstation run. |
+| Scope | **Everything built** | Core pipeline + serial approval queue + `#SAVES-inbox` + `/crawl`. The provecho profile is already native here — no cross-OS risk. |
+| State/history | **Fresh dedup, keep prefs, CARRY pending** (extended 2026-08-07) | Start with EMPTY `processing_state.json` (so real-vault saves aren't blocked by DEV's test-vault history); keep **`preferences.json`** so learned folder routing carries over; **carry `pending_approvals.json`** — the 16 live approval cards re-send on startup and their media paths are already media-root-relative, so they stay valid. |
+| Code source | **GitHub for now; Forgejo cutover is a test item** (revised 2026-08-07) | Forgejo is up and working, but the origin switch is treated as something to *test*, not assume. `git remote -v` is the authority. Build details: `docs/FORGEJO.md`. |
+| ~~Resource limits~~ | 🕐 **Deferred with the NAS** | `mem_limit` yes / `cpus:` never still applies *if* the container is ever used — a CPU quota is a hard deploy failure on Synology (§1.5). Irrelevant bare-metal. |
+| ~~Container identity~~ | 🕐 **Deferred with the NAS** | The non-root `sa_saves` model and its DSM ACL grants (§1.6) are complete and were verified on hardware 2026-08-06. Bare-metal runs as you, against your own files — no identity work needed. |
 
 ---
 
@@ -29,45 +75,49 @@ follow it top to bottom.
 
 ## 1.1 What we're standing up
 
-The SAVES pipeline moves from **DEV** (bare Python on the Windows workstation, against a *test*
-vault) to **PROD** (a Docker container on the Synology NAS, against the **real** Obsidian vault).
-Nothing about the code changes per host — `config.yaml` uses canonical container paths
-(`/vault`, `/media`, `/app/state`); the NAS's real locations are supplied only through
-`docker/.env`. (See `ARCHITECTURE.md` §1b.)
+SAVES runs **bare-metal Python on the Windows workstation**, against the **real** Obsidian
+vault on local disk. `config.yaml` holds canonical container paths; `config.local.yaml`
+(gitignored) overrides them with the real Windows locations — the same mechanism DEV has always
+used. (Portability model: `ARCHITECTURE.md` §1b.)
 
 ```
-                          ┌─────────────────── Synology NAS ───────────────────┐
- Inputs (3 ways):         │                                                     │
-  • Obsidian inbox file ──┼─▶ 0 - INBOX/SAVES/SAVES.md (real vault, host mount)       │
-  • #SAVES-inbox paste ───┼─▶ Discord ─▶ bot on_message ─┐                      │
-  • Android/Tasker share ─┼─▶ Discord webhook ─▶ #SAVES-inbox ─┘                │
-                          │                               ▼                      │
-                          │   saves_app container:  watcher + processor + bot   │
-                          │     extract → media(/media) → Whisper(LAN) → Claude │
-                          │     → serial approval card in #SAVES-approvals       │
-                          │        approve ▶ note written into /vault            │
-                          │   state: /app/state (host: /volume1/docker/saves/state)
-                          └──────────────┬──────────────────────────────────────┘
-                                         │ Whisper POST (LAN)
-                         Workstation: whisper_server.py @ 192.168.1.90:5000
+                    ┌────────── Windows workstation ──────────┐
+ Inputs:            │                                              │
+  • Obsidian inbox ─┼─▶ 0 - INBOX/SAVES.md  (local disk)          │
+    (+ phone via     │        │ watchdog, 3s debounce                │
+     Obsidian Sync)  │        ▼                                     │
+  • #SAVES-inbox ───┼─▶ python src\main.py                        │
+    (live-only)      │     watcher + processor + Discord bot        │
+                     │     extract → media → Whisper(localhost)      │
+                     │     → Claude → serial approval card          │
+                     │        approve ▶ note → REMOTE VAULT          │
+                     │     state: JSONs beside the app              │
+                     └─────────────┬──────────────────────┘
+                                   │ SMB (bulk media only)
+                        NAS \\192.168.1.201\MEDIA\SAVES
 ```
 
-## 1.2 Host layout (confirm these against your NAS)
+Whisper runs on the same machine (`127.0.0.1:5000`), still over HTTP so it stays a separate
+restartable process and the code path matches the deferred NAS deployment.
 
-| Canonical (container) | Host (`docker/.env`) | Holds |
+## 1.2 Layout (all in `config.local.yaml`)
+
+| Canonical (`config.yaml`) | Real path (`config.local.yaml`) | Holds |
 |---|---|---|
-| `/vault` | `VAULT_HOST=/volume1/APPS/OBSIDIAN/Remote Vault` | real vault; inbox `0 - INBOX/SAVES/SAVES.md`; notes written here |
-| `/media` | `MEDIA_HOST=/volume1/MEDIA/SAVES` | downloaded videos/images |
-| `/app/state` | `STATE_HOST=/volume1/docker/saves/state` | `processing_state.json`, `pending_approvals.json`, `preferences.json`, `queue_state.json` |
-| `/app/cookies` (**:rw**) | `../cookies` in the repo clone | `*.txt` cookies **and** `provecho.co_profile/` (browser profile — needs write) |
-| `/app/config.yaml` (:ro) | `../config.yaml` | configuration (edit + restart to change) |
-| repo `.env` | `../.env` | secrets: `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN` |
+| `/vault` | `C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT` | real vault; inbox `0 - INBOX/SAVES.md`; notes written here |
+| `/media` | `//192.168.1.201/MEDIA/SAVES` | downloaded videos/images — stays on the NAS (bulk storage, already backed up) |
+| `/app/state` | beside the app | `processing_state.json`, `pending_approvals.json`, `preferences.json`, `queue_state.json` |
+| `/app/cookies` | `cookies/` in the app dir | `*.txt` cookies **and** `provecho.co_profile/` (163 MB, Windows-native — no DPAPI problem) |
+| repo `.env` | `.env` in the app dir | secrets: `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN` |
 
-Repo clone on the NAS: **`/volume1/docker/saves/app`**.
+**App location: `C:\APPS\AI\SAVES`.** No spaces (avoids a whole class of quoting bugs in
+future scripts and scheduled tasks), mirrors the NAS's `/volume1/APPS/` convention, and shorter
+— which matters because `file_manager.py` budgets note paths against Windows' 260-char limit.
 
-The NAS (`192.168.1.201`) also hosts the **Forgejo forge** under `/volume1/docker/forgejo`
-(host port `3443`). The two stacks are independent — separate Compose projects, separate
-volumes, no shared network — but they share RAM and disk. See §1.5.
+> ⚠️ **The vault must stay on local disk.** Not a mapped drive, not a cloud-synced folder.
+> Verified 2026-08-07 that `C:\Users\Bora\Documents` is **not** OneDrive-redirected. If OneDrive
+> Known Folder Move is ever enabled, this vault becomes cloud-synced and breaks exactly the way
+> the network drive did. Backup design: `docs/BACKUP_AND_RECOVERY.md`.
 
 ## 1.3 Prerequisites (have these before you start)
 

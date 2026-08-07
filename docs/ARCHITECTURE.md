@@ -24,7 +24,7 @@ flowchart LR
     subgraph WS["Windows Workstation (192.168.1.90)"]
         OBS["Obsidian (vault via SMB N:)"]
         WHISPER["whisper_server.py :5000<br/>(faster-whisper large-v3-turbo)"]
-        DEV["Dev repo C:\DEV\Apps\SAVES\SAVES_app<br/>(git, Claude Code CLI)"]
+        DEV["Workstation C:\APPS\AI\SAVES<br/>(git, PROD runtime, Claude Code CLI)"]
     end
 
     subgraph NAS["Synology NAS"]
@@ -70,8 +70,8 @@ matter of filling in one small file:
 |---|---|---|---|
 | Pipeline app | Workstation, bare Python (`python src\main.py`) | NAS, Docker container | same code, same tracked config |
 | Path mapping | `config.local.yaml` overlay (gitignored; deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts | host paths live outside git |
-| Vault | local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | real vault `/volume1/APPS/OBSIDIAN/Remote Vault` | notes reference media via `media://` relative paths — device-independent |
-| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/MEDIA/SAVES` | same |
+| Vault | real vault `C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT` — **local disk, never a network drive** | 🕐 deferred `/volume1/APPS/OBSIDIAN/Remote Vault` | notes reference media via `media://` relative paths — device-independent |
+| Media | `//192.168.1.201/MEDIA/SAVES` (NAS over SMB — fine for bulk I/O) | `/volume1/MEDIA/SAVES` | same |
 | State JSONs | repo root | `/volume1/docker/saves/state` (one mounted **directory**) | schema identical; single-file binds are forbidden (os.replace breaks) |
 | Whisper | workstation `192.168.1.90:5000` | workstation — possibly a dedicated server later | app only knows `transcription.remote_url`; relocating = one line |
 | Secrets | repo-root `.env` | same file, on the NAS | only 2 keys ever |
@@ -346,7 +346,7 @@ cards self-approve after `auto_approve_timeout_hours` (48).
 
 ## 8. Command reference (the cheat sheet)
 
-All run from the repo root, `C:\DEV\Apps\SAVES\SAVES_app`, with `.env` present
+All run from the repo root, `C:\APPS\AI\SAVES`, with `.env` present
 (`ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN` — the only two secrets in the whole system).
 
 ### Daily driving

@@ -9,8 +9,8 @@ sends the result to a Discord bot for approval, then writes a structured Obsidia
 to a Synology NAS vault.
 
 **Owner:** Bora (Oodaloop80)
-**Runtime:** Docker on Synology NAS (python:3.11-slim)
-**Dev machine:** Windows workstation. Repo at `C:\DEV\Apps\SAVES\SAVES_app`
+**Runtime:** bare-metal Python on the Windows workstation (NAS/Docker path built but 🕐 DEFERRED — see `docs/PROD_ROLLOUT.md` §0)
+**Runs on:** Windows workstation, bare-metal, at `C:\APPS\AI\SAVES` (PROD as of 2026-08-07)
 **Git remote:** self-hosted **Forgejo** on the NAS — `https://192.168.1.201:3443/<user>/SAVES.git` (GitHub retired 2026-08-05; see "Git Workflow" and `docs/FORGEJO.md`)
 **Workstation IP (Whisper server):** `192.168.1.90`
 
@@ -594,8 +594,8 @@ reality is supplied per-host, never committed:
 |---|---|---|
 | Pipeline app | Workstation, **bare Python** (`python src\main.py`) | NAS, **Docker** (`docker-compose up`) |
 | Path mapping | `config.local.yaml` (gitignored overlay, deep-merged by `src/config.py`) | `docker/.env` → compose `${VAULT_HOST}`/`${MEDIA_HOST}`/`${STATE_HOST}` mounts |
-| Vault | Local **test vault** `C:/DEV/Apps/SAVES/OBSIDIAN` | Real vault `/volume1/APPS/OBSIDIAN/Remote Vault` |
-| Media | `C:/DEV/Apps/SAVES/MEDIA` | `/volume1/MEDIA/SAVES` |
+| Vault | Real vault `C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT` (local disk) | 🕐 deferred: `/volume1/APPS/OBSIDIAN/Remote Vault` |
+| Media | `//192.168.1.201/MEDIA/SAVES` (NAS over SMB) | `/volume1/MEDIA/SAVES` |
 | State JSONs | Repo root | `/volume1/docker/saves/state` (one mounted dir — never single-file binds) |
 | Whisper server | Workstation `192.168.1.90:5000` | Workstation (same box; possibly a dedicated server later — one config line, `transcription.remote_url`) |
 
@@ -607,7 +607,7 @@ Rules that keep it portable:
 - Repo-root `.env` = secrets only (ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN);
   `docker/.env` = host paths + TZ only. Both gitignored, both have `.example` templates.
 
-**Workstation (Windows, `C:\DEV\Apps\SAVES\SAVES_app`):** git repo, development, and the
+**Workstation (Windows, `C:\APPS\AI\SAVES`):** git repo, PROD runtime, and the
 Whisper server (`python scripts\whisper_server.py --model large-v3-turbo`). `N:\` is the SMB
 view of the NAS when needed.
 
@@ -748,6 +748,10 @@ The doc surfaces and what lives where:
   component's responsibility, threading model, or a scaling characteristic changes.
 - `docs/ROADMAP.md` — tick items `[x]` when shipped; add new phases/items when scope grows;
   record constraining decisions under "Decisions locked".
+- `docs/BACKUP_AND_RECOVERY.md` — **how the vaults are protected**: the four layers (Obsidian
+  File Recovery 5min/30d · Obsidian Sync · Synology Drive **Backup Task** · immutable WORM
+  snapshots), the Backup-vs-Sync-Task trap, the restore test, and what SAVES can/cannot do to
+  a vault. Update it when a backup layer changes.
 - `docs/DOCUMENTATION_SOP.md` — **the documentation contract itself**: the Six Questions
   every doc section must answer, the evidence labels (✅/⚠️/❌/🕐), where each kind of
   knowledge goes, the rule that debugging sessions produce docs too, and the pre-commit
@@ -804,7 +808,7 @@ loop's first user message. Back-to-back posts and JSON retries benefit automatic
 
 ## First Run Checklist
 
-1. Fill in `C:\DEV\Apps\SAVES\SAVES_app\.env` — only 2 keys needed:
+1. Fill in `C:\APPS\AI\SAVES\.env` — only 2 keys needed:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
    DISCORD_BOT_TOKEN=...

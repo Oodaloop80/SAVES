@@ -22,7 +22,7 @@ from the inbox.
 
 - **Owner:** Bora (Oodaloop80)
 - **Runtime:** Docker on a Synology NAS (`python:3.11-slim`)
-- **Dev machine:** Windows workstation; repo at `C:\DEV\Apps\SAVES\SAVES_app`
+- **Runs on:** Windows workstation, bare-metal; repo at `C:\APPS\AI\SAVES`
 - **Whisper host:** the workstation, `192.168.1.90:5000`
 
 ---
@@ -168,8 +168,8 @@ access to the NAS vault + media shares.
 ```bash
 # Remote = self-hosted Forgejo on the NAS (LAN-only). Requires the step-ca root CA
 # trusted by Git-for-Windows and a PAT as the password — see docs/FORGEJO.md Phase 11-12.
-git clone https://192.168.1.201:3443/<user>/SAVES.git C:\DEV\Apps\SAVES\SAVES_app
-cd C:\DEV\Apps\SAVES\SAVES_app
+git clone https://192.168.1.201:3443/<user>/SAVES.git C:\APPS\AI\SAVES
+cd C:\APPS\AI\SAVES
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium
@@ -180,7 +180,7 @@ copy config.local.yaml.example config.local.yaml   # then edit: YOUR Windows pat
 (`/vault`, `/media`, `/app/state`) shared by every deployment. Bare-metal machines override
 them in the gitignored `config.local.yaml` (deep-merged over `config.yaml` at load;
 `src/config.py`). The current DEV workstation uses a fully local test vault
-(`C:/DEV/Apps/SAVES/OBSIDIAN`) and local media dir (`C:/DEV/Apps/SAVES/MEDIA`), with state
+(`C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT`) and NAS media (`//192.168.1.201/MEDIA/SAVES`), with state
 JSONs at the repo root.
 Cookies: export with the "Get cookies.txt LOCALLY" browser extension into
 `cookies/instagram.txt`, `cookies/tiktok.txt`, `cookies/facebook.txt`.
@@ -264,8 +264,8 @@ pending_approvals_file: "/app/state/pending_approvals.json"   # restart-safe Dis
 ```
 PROD host values (NAS) live in `docker/.env`: vault `/volume1/APPS/OBSIDIAN/Remote Vault`,
 media `/volume1/MEDIA/SAVES`, state `/volume1/docker/saves/state`. DEV workstation values
-live in `config.local.yaml`: local test vault `C:/DEV/Apps/SAVES/OBSIDIAN`, media
-`C:/DEV/Apps/SAVES/MEDIA`, state JSONs at the repo root.
+live in `config.local.yaml`: real vault `C:/Users/Bora/Documents/OBSIDIAN/REMOTE VAULT`, media
+`//192.168.1.201/MEDIA/SAVES`, state JSONs at the repo root.
 > The inbox moved from `SAVES/00 - FILE.md` to `0 - INBOX/SAVES/SAVES.md` (docs updated 2026-07-04).
 
 **watcher / processing** — the serial pipeline.

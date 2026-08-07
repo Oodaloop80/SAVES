@@ -18,13 +18,14 @@ from src.utils.preferences import PreferencesStore
 from src.utils.validation import validate_startup
 from src.watcher import FileWatcher
 
-# Output permissions (Bora, 2026-08-06). 0o027 = files 0640, dirs 0750: owner + group only,
-# never world. Access control for the vault and media lives in the DSM ACLs (which carry
-# their own `fd--` inheritance, so notes SAVES creates inherit the folder's ACL and stay
-# editable by Obsidian and by you over SMB) — this umask only governs the POSIX bits, and
-# its job is to make sure nothing SAVES writes is ever world-readable. Deliberately NOT 002:
-# group-writable output would widen access on any path whose POSIX group is broad.
-# Subprocesses (yt-dlp, ffmpeg) inherit it, so downloaded media gets the same treatment.
+# Output permissions (Bora, 2026-08-06; scope narrowed 2026-08-07).
+# 0o027 = files 0640, dirs 0750 — owner + group only, never world.
+#
+# NOTE: this is a NO-OP on Windows, which is where PROD now runs (Windows uses ACLs, not
+# POSIX mode bits). It is kept because it is correct and load-bearing on Linux — the
+# deferred NAS/Docker deployment, and any future move to a Linux host. Do not "clean it up"
+# as dead code: it is dormant, not wrong. Subprocesses (yt-dlp, ffmpeg) inherit it.
+# Deliberately NOT 002 — group-writable output would widen access on a broad-group path.
 # Scheme: docs/NAS_SERVICE_ACCOUNTS.md §5.
 os.umask(0o027)
 
