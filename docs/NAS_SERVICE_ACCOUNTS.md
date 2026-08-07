@@ -154,15 +154,29 @@ It must never appear in an ACL as an allow, and must never be the group on a `ch
 Full Control = read + write + **take ownership** + **modify permissions**. No service account
 ever gets it. A service account that can rewrite its own ACL can undo every other rule here.
 
-### Rule 3 — The tree's service group gets Read + Write at the tree level
+### Rule 3 — Tree-level grants are deliberate, and the two trees differ
 
-| Tree | Group with RW | GID |
+As actually built (verified 2026-08-06):
+
+| Tree | Tree-level allows | Tree-level denies |
 |---|---|---|
-| `/volume1/APPS` | `app_service_accounts` | 65537 |
-| `/volume1/docker` | `docker_service_accounts` | 65536 |
+| `/volume1/APPS` | `OodaAdmin`, `administrators`, **`app_service_accounts`** | `docker_service_accounts`, `sa_forgejo`, `Bora`, `http`, `guest`, `admin`, `Malana` |
+| `/volume1/docker` | `OodaAdmin`, `administrators`, `ContainerManager`, owner | `app_service_accounts`, `sa_obsidian` |
+| `/volume1/MEDIA` | `administrators` | `sa_forgejo`, `Bora`, `guest`, `admin`, `Malana` |
 
-A *classification* grant: it lets each app operate inside its own tree. It is **not** a licence
-to reach another tree — the other tree's group is explicitly denied (Rule 4).
+**The asymmetry is intentional and worth understanding.** `/volume1/APPS` grants its service
+group (`app_service_accounts`) RW at the tree level, so any APPS app can operate in the tree.
+`/volume1/docker` grants its service group **nothing** — each container is instead named
+individually on its own project folder (`user:sa_saves:allow` on `/volume1/docker/saves`).
+
+The `/volume1/docker` model is the tighter of the two: it means `sa_forgejo` cannot read
+`/volume1/docker/saves` — no shared-group path exists between two containers. Prefer it for
+new trees. Where a tree-level group grant already exists, treat it as a *classification*
+grant, never as a licence to reach another tree.
+
+> **Open item:** `/volume1/MEDIA` has no `docker_service_accounts` deny while `/volume1/APPS`
+> does. Harmless today (default-deny, and nothing grants that group on MEDIA), but adding the
+> deny would make the three trees consistent and defend against a future over-broad allow.
 
 ### Rule 4 — Everything else is denied; cross-tree access is a NAMED exception
 
@@ -198,22 +212,41 @@ sudo docker run --rm -u <uid>:<gid> -v "<host path>:/t" alpine \
          { ls /t >/dev/null 2>&1 && echo "READ ONLY" || echo "NO ACCESS"; }'
 ```
 
-### 5.2 — POSIX paths (where no share ACL applies)
+### 5.2 — Which regime governs a path, and the `chmod` trap
 
-The `/volume1/docker/<app>` project trees. Same principles in plain POSIX. **Still no `users`.**
+**Every `/volume1` share on this NAS is ACL-managed.** Confirmed 2026-08-06 — `/volume1/APPS`,
+`/volume1/MEDIA` and `/volume1/docker` all report `has_ACL,is_support_ACL`. Check before
+assuming:
 
-| Data | Owner | Group | Mode |
-|---|---|---|---|
-| Credentials — cookies, browser profiles, `.env` | `sa_<app>` | `root` | **`600`** files / **`700`** dirs |
-| Runtime state the app owns | `sa_<app>` | `administrators` | **`2750`** — app writes, admins inspect |
-| Logs | `sa_<app>` | `administrators` | `2750` |
-| Source, build context, config mounted `:ro` | `root` | `root` | `755` / `644` |
+```bash
+sudo synoacltool -get <path> | head -3
+#   Archive: has_ACL,is_support_ACL   -> the ACL is authoritative; use synoacltool
+#   (no has_ACL)                      -> plain POSIX; chown/chmod applies
+```
 
-> **Why not group `docker_service_accounts` on state and credentials?** Because `sa_forgejo` is
-> in it. Group-readable state would let the git forge read SAVES's API key and session cookies.
-> Same tree does not mean same trust — Rule 4 applies between service accounts too.
+> ⚠️ **Do not `chmod`/`chown` inside an ACL-managed share.** On DSM the POSIX mode shown by
+> `ls -l` is a *synthesized approximation* of the ACL (which is why these folders read
+> `drwxrwxrwx+` — the `+` means "there is an ACL, this mode is not the real story"). Running
+> `chmod` against such a path can rewrite or drop the ACL, silently removing the named
+> exceptions the whole scheme depends on. Manage permissions with **`synoacltool` only**.
+>
+> The one exception is setting a share's top-level owner before any ACEs exist, e.g.
+> `sudo chown -R OodaAdmin:administrators /volume1/MEDIA/`.
 
----
+### 5.3 — Inheritance does the work; do not grant per file
+
+The `fd--` flags on an ACE mean **f**ile + **d**irectory inheritance: the grant propagates to
+everything created beneath it. One ACE on a project root covers the whole subtree.
+
+`/volume1/docker/saves` carries `user:sa_saves:allow:rwxpdDaARWc--:fd--` at `level:0`, so
+`app/`, `app/cookies/`, `app/logs/` and `state/` are **already covered**. Adding per-file
+`chown`/`chmod` there is not tightening anything — it is the `chmod` trap above.
+
+**Are secrets safe under a subtree grant?** On `/volume1/docker`, `docker_service_accounts` is
+granted nothing, so `sa_forgejo` has **no** access to `/volume1/docker/saves` at all — the
+concern about the forge reading SAVES's API key is handled by the tree ACL, not by file modes.
+Everyone who *can* read it (`sa_saves`, `administrators`, `OodaAdmin`, `ContainerManager`) is
+trusted by design.
 
 ## 6 · Worked example: SAVES reaching the Obsidian vault
 

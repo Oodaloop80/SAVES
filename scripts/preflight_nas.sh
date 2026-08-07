@@ -200,80 +200,65 @@ if [ -f docker/.env ]; then
       ok "compose grants no 'users' membership"
     fi
 
-    # --- POSIX-governed paths: the container must OWN them outright ------------
-    # State, cookies and logs live under /volume1/docker/saves (no share ACL). Group is
-    # `administrators`, NOT docker_service_accounts: sa_forgejo is in that group and must
-    # not be able to read SAVES's API key or session cookies. See SOP 5.2.
-    check_owned() {
-      d="$2"
-      [ -d "$d" ] || return 0                     # missing dirs already reported by [3]
-      o=$(stat -c '%u' "$d" 2>/dev/null); g=$(stat -c '%g' "$d" 2>/dev/null)
-      m=$(stat -c '%a' "$d" 2>/dev/null)
-      if [ "$o" = "$S_UID" ]; then ok "$1 owned by $S_UID (mode $m)"
-      else bad "$1 owned by UID $o, but the container runs as $S_UID -> writes will fail (EACCES). Fix: sudo chown -R $S_UID \"$d\""; fi
-      # Credentials and state must not be world-readable, and must not be readable by the
-      # shared service group (sa_forgejo is in it).
-      case "$1" in
-        cookies)
-          [ "$m" = "700" ] || warn "$1 mode $m — credentials should be 700 (browser profile + platform cookies); SOP 5.2" ;;
-        STATE_HOST|logs)
-          ow=$(printf '%s' "$m" | sed 's/.*\(.\)$/\1/')
-          [ "$ow" = "0" ] || warn "$1 mode $m grants 'other' access — state/logs should be 2750; SOP 5.2" ;;
-      esac
-    }
-
-    # --- ACL-governed paths: the vault, in the APPS tree -----------------------
-    # sa_saves is granted by an explicitly-set (level:0) ACL ACE that must sort BEFORE the
-    # inherited docker_service_accounts deny. POSIX ownership tells us nothing here, so
-    # check the ACL itself. synoacltool exists only on DSM.
+    # --- Every /volume1 share on this NAS is ACL-managed --------------------
+    # Verified 2026-08-06: APPS, MEDIA and docker all report has_ACL. So ownership is
+    # DELIBERATELY OodaAdmin:administrators everywhere (SOP Rule 2) and the container is
+    # granted by a named ACE instead. Checking POSIX owner here would produce false FAILs.
+    # `fd--` inheritance means one ACE on /volume1/docker/saves covers app/, cookies/,
+    # logs/ and state/ — we check the project root rather than each leaf.
     check_acl() {
       label="$1"; d="$2"; want="$3"     # want = read | write
-      [ -d "$d" ] || return 0
+      [ -e "$d" ] || return 0            # missing paths already reported by [3]
       if ! command -v synoacltool >/dev/null 2>&1; then
-        warn "$label: synoacltool not available — cannot verify the ACL here. Run the container write test in SOP 5.1 on the NAS."
+        warn "$label: synoacltool unavailable (not DSM?) — verify with the container write test, SOP 5.1"
         return 0
       fi
       acl=$(synoacltool -get "$d" 2>/dev/null)
       if [ -z "$acl" ]; then
-        warn "$label: no ACL readable (needs sudo?) — verify manually per SOP 5.1"
+        warn "$label: could not read the ACL (try sudo) — verify manually per SOP 5.1"
         return 0
       fi
       allow=$(printf '%s\n' "$acl" | grep -n "user:${SA_NAME}:allow" | head -1 | cut -d: -f1)
       deny=$(printf '%s\n' "$acl" | grep -n 'group:docker_service_accounts:deny' | head -1 | cut -d: -f1)
       if [ -z "$allow" ]; then
-        bad "$label: no 'user:${SA_NAME}:allow' ACE — the inherited docker_service_accounts deny will block SAVES. Add one (SOP Rule 4 / 6)."
+        bad "$label: no 'user:${SA_NAME}:allow' ACE. Every tree here is default-deny, so SAVES gets nothing. Add one (SOP Rule 4 / 6)."
         return 0
       fi
       if [ -n "$deny" ] && [ "$deny" -lt "$allow" ]; then
-        bad "$label: the docker_service_accounts DENY sorts BEFORE the ${SA_NAME} allow -> access is blocked. The allow must be an explicitly-set (level:0) ACE on this folder (SOP Rule 4)."
+        bad "$label: a docker_service_accounts DENY sorts BEFORE the ${SA_NAME} allow -> blocked. The allow must be explicitly set (level:0) on this folder, not inherited (SOP Rule 4)."
         return 0
       fi
       if [ "$want" = "write" ]; then
         line=$(printf '%s\n' "$acl" | grep "user:${SA_NAME}:allow" | head -1)
         case "$line" in
-          *rw*) ok "$label: ${SA_NAME} has an allow ACE with write" ;;
-          *) bad "$label: ${SA_NAME}'s ACE is read-only but SAVES must WRITE here (inbox rewrite / note creation). Regrant with rwxpdDaARWc--" ;;
+          *rw*) ok "$label: ${SA_NAME} allow ACE with write" ;;
+          *) bad "$label: ${SA_NAME}'s ACE is read-only but SAVES must WRITE here. Regrant with rwxpdDaARWc--" ;;
         esac
       else
-        ok "$label: ${SA_NAME} has an allow ACE (read)"
+        ok "$label: ${SA_NAME} allow ACE (read)"
       fi
-      # `users` must never appear as an allow anywhere (SOP Rule 1).
-      if printf '%s\n' "$acl" | grep -q 'group:users:allow'; then
-        bad "$label: the ACL grants group 'users' — that is the everyone-group and is forbidden (SOP Rule 1)."
-      fi
+      # Rule 1: the everyone-group must never be granted.
+      printf '%s\n' "$acl" | grep -q 'group:users:allow' && \
+        bad "$label: the ACL grants group 'users' — the everyone-group is forbidden (SOP Rule 1)."
+      # Secrets must not be reachable by the other container's account.
+      case "$label" in
+        "saves project tree")
+          printf '%s\n' "$acl" | grep -q 'user:sa_forgejo:allow' && \
+            bad "$label: sa_forgejo is ALLOWED here — it would be able to read SAVES's .env and cookies." ;;
+      esac
+      return 0
     }
 
     SA_NAME=${nm:-sa_saves}
-    # Three distinct grants — see SOP 6. The vault ROOT is read-only on purpose (tag_index
-    # walks the whole vault); the two subfolders are where SAVES actually writes.
-    check_acl VAULT_HOST         "$VAULT_HOST"                        read
-    check_acl "vault inbox"      "$VAULT_HOST/0 - INBOX/SAVES"        write
-    check_acl "vault notes root" "$VAULT_HOST/SAVES"                  write
-    check_acl MEDIA_HOST         "$MEDIA_HOST"                        write
-
-    check_owned STATE_HOST "$STATE_HOST"
-    check_owned cookies    "$ROOT/cookies"
-    check_owned logs       "$ROOT/logs"
+    # Three distinct vault grants (SOP 6). The vault ROOT is read-only ON PURPOSE — tag_index
+    # walks the whole vault but never writes there; write lands in the two subfolders only.
+    check_acl "vault root"         "$VAULT_HOST"                   read
+    check_acl "vault inbox"        "$VAULT_HOST/0 - INBOX/SAVES"   write
+    check_acl "vault notes root"   "$VAULT_HOST/SAVES"             write
+    check_acl "media"              "$MEDIA_HOST"                   write
+    # One ACE on the project root covers state/, cookies/ and logs/ via fd-- inheritance.
+    check_acl "saves project tree" "/volume1/docker/saves"         write
+    check_acl "state"              "$STATE_HOST"                   write
   fi
 else
   bad "docker/.env missing — cannot verify container identity"

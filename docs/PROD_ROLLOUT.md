@@ -232,7 +232,15 @@ done
 Wanted: vault root **READ ONLY**, both subfolders **WRITE OK**. Anything reading `NO ACCESS`
 is a blocker — SAVES will start cleanly and then fail with no useful error.
 
-### The ownership map — POSIX side (outside the APPS tree)
+### The rest of the layout
+
+**`/volume1/docker` is ACL-managed too** (verified 2026-08-06). `/volume1/docker/saves`
+carries `user:sa_saves:allow:rwxpdDaARWc--:fd--` at `level:0`, and `fd--` inheritance pushes
+it down to `app/`, `app/cookies/`, `app/logs/` and `state/` — so **those need no grants and no
+`chown`/`chmod` of their own**. `docker_service_accounts` is granted nothing on this tree, so
+`sa_forgejo` has no access to SAVES's secrets at all.
+
+The table below is what each path is *for*; permissions come from the inherited ACL.
 
 | Path | Owner | Mode | Why |
 |---|---|---|---|
@@ -265,10 +273,11 @@ container to `users` (the everyone-group) to solve a permission problem is forbi
 ### ⚠️ The DSM ACL trap — applies to every path above
 
 Containers honour **POSIX** ownership; DSM layers its own **ACLs** on top, invisible from
-inside a container. **Once you have run the `chown`s below, never open these folders'
+inside a container. **Never open these folders'
 permissions in File Station or Control Panel → Shared Folder → Edit → Permissions.** DSM
 rewrites ACLs across the subtree and clobbers the POSIX owner, breaking the container at its
-next restart. If you need to change something here, do it over SSH with `chown`/`chmod`.
+next restart. If you need to change something here, use **`synoacltool`** over SSH — not
+`chown`/`chmod`, which on an ACL-managed share can rewrite or drop the ACL (SOP §5.2).
 
 ### Verify, always
 
@@ -290,9 +299,10 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 | Cookies mounted read-only | `/crawl` + login sites fail to launch browser | **Fixed:** compose now mounts `cookies :rw`; preflight `[4]` checks writability. |
 | Windows provecho profile won't decrypt on Linux | `/crawl` provecho shows locked | §1.4 fallback: re-capture under WSL2/WSLg. |
 | `SAVES_UID` ≠ real `id sa_saves` | Container starts, then **every write fails with EACCES** — looks like "notes never appear, no errors" | Read the UID from `id sa_saves` (step 0b), never assume `1031`; preflight **`[7]`** compares it against every directory's owner. |
-| Directories created as admin, never chowned | Same EACCES failure — the default outcome if you skip the `chown`s | Every step in Part 2 states owner + mode; verify with `stat -c '%n %U:%G %a'`. |
-| Vault dirs lack the setgid bit | Notes land in the wrong group; **you** lose write access to your own vault in Obsidian | `chmod 2775` on vault + media (§1.6); preflight `[7]` warns. |
-| Permissions "fixed" in File Station afterwards | DSM rewrites ACLs across the subtree, clobbering the POSIX owner; container breaks at next restart | The DSM ACL trap (§1.6) — POSIX `chown`/`chmod` over SSH only, never the GUI. |
+| Folder created but never granted | Same EACCES failure — the default outcome, since every tree is default-deny | Every step in Part 2 states the grant; verify with `synoacltool -get` **and** the container write test (step 0d). |
+| ACL rebuilt from a parent in File Station | The `level:0` `sa_saves` exception is dropped or re-sorted behind the `docker_service_accounts` deny — SAVES silently loses the vault | Never re-apply permissions from a parent (§1.6); preflight `[7]` fails on the ordering; re-run step 0d after any GUI change. |
+| `chmod`/`chown` run inside an ACL-managed share | Can strip the ACL, removing the named exceptions entirely | Use `synoacltool` only (SOP §5.2). |
+| Permissions "fixed" in File Station afterwards | DSM re-applies the parent ACL across the subtree, dropping the `level:0` named exceptions; container breaks at next restart | The DSM ACL trap (§1.6) — `synoacltool` over SSH only, never the GUI. Re-run step 0d after any GUI change. |
 | DEV `processing_state.json` copied by mistake | PROD thinks real-vault URLs are already saved | **Don't copy it.** Only copy `preferences.json` (step 4). |
 | Obsidian Sync bridge down | Phone saves + note sync-back stall | Keep the bridging Obsidian client up; the `#SAVES-inbox`/webhook path is independent of it. |
 | Synology is arm64 | Heavier/longer first build | Supported (Chromium arm64); ensure ~4 GB free; expect a longer build. |
@@ -312,7 +322,7 @@ stat -c '%n  %U:%G  %a' "$VAULT_HOST" "$MEDIA_HOST" /volume1/docker/saves/state
 Service-account convention (naming, which group, how to create one):
 **`docs/NAS_SERVICE_ACCOUNTS.md`**. Both accounts this rollout needs already exist.
 
-**0a. Confirm the accounts — the UIDs below are used by every `chown` that follows:**
+**0a. Confirm the accounts — these UIDs go into `docker/.env` and every ACL grant below:**
 
 ```bash
 ssh <you>@192.168.1.201
@@ -335,7 +345,7 @@ never through a shared group. The media store and SAVES's own state belong to `s
 Scheme: **`NAS_SERVICE_ACCOUNTS.md` §5**; worked example §6.
 
 **0b. Create the directories.** Ownership stays with `OodaAdmin` / `administrators`
-(SOP Rule 2) — you do **not** chown these to a service account.
+(SOP Rule 2) — a service account is **granted** access by an ACE, never given ownership.
 
 ```bash
 VAULT="/volume1/APPS/OBSIDIAN/Remote Vault"
@@ -428,8 +438,7 @@ scp vineyard-root-ca.crt <you>@192.168.1.201:~/
 # on the NAS — move it to its permanent home and set ownership explicitly:
 sudo mkdir -p /volume1/docker/certs
 sudo mv ~/vineyard-root-ca.crt /volume1/docker/certs/
-sudo chown root:root /volume1/docker/certs/vineyard-root-ca.crt
-sudo chmod 644       /volume1/docker/certs/vineyard-root-ca.crt   # public cert — 644 is correct
+# /volume1/docker is ACL-managed — the new dir inherits the tree ACL; nothing to chmod.
 sudo git config --system http.sslCAInfo /volume1/docker/certs/vineyard-root-ca.crt
 ```
 
@@ -469,10 +478,8 @@ Use a **PAT** (Forgejo → Settings → Applications → *Manage Access Tokens*,
 
 ```bash
 sudo mkdir -p /volume1/docker/saves
-sudo chown root:root /volume1/docker/saves && sudo chmod 755 /volume1/docker/saves
-cd /volume1/docker/saves
+cd /volume1/docker/saves      # already ACL-managed; do NOT chown/chmod it (SOP §5.2)
 sudo git clone https://192.168.1.201:3443/<user>/SAVES.git app
-sudo chown -R root:root app && sudo chmod -R u=rwX,go=rX app   # 755 dirs / 644 files
 uname -m          # expect x86_64 (aarch64 also works, heavier build)
 ```
 
@@ -494,20 +501,20 @@ cd /volume1/docker/saves/app          # ← all paths below are relative to HERE
 
 sudo cp .env.example .env
 sudo vi .env                          # ANTHROPIC_API_KEY=... DISCORD_BOT_TOKEN=... (same as DEV)
-sudo chown 1031:root .env             # ONLY sa_saves (and root) — no group; sa_forgejo must not read it
-sudo chmod 600 .env                   # live credentials
+# NO chown/chmod: /volume1/docker/saves carries an inherited sa_saves ACL (fd-- flags), and
+# chmod on an ACL-managed path can strip it. sa_forgejo has no access to this tree at all.
 
 sudo cp docker/.env.example docker/.env
 sudo vi docker/.env                   # set SAVES_UID from step 0b; confirm VAULT_HOST/MEDIA_HOST
-sudo chown root:root docker/.env && sudo chmod 644 docker/.env
+# (no chown/chmod — inherited ACL, see above)
 ```
 
 Leave `Remote Vault` **unquoted** despite the space — the compose file quotes the mount.
 
 Verify:
 ```bash
-stat -c '%n  %U:%G  %a' .env docker/.env
-# want:  .env  sa_saves:root  600      docker/.env  root:root  644
+sudo synoacltool -get .env | grep -E 'sa_saves|sa_forgejo'
+# want: a user:sa_saves:allow ACE; NO sa_forgejo access
 ```
 
 ### Step 3 — [YOU] Carry cookies + the provecho profile into `cookies/`
@@ -525,11 +532,9 @@ scp -r cookies/provecho.co_profile <you>@192.168.1.201:~/saves-cookies/
 cd /volume1/docker/saves/app
 sudo mkdir -p cookies
 sudo cp -r ~/saves-cookies/. cookies/
-sudo chown -R 1031:root cookies           # sa_saves owns; NO service group (sa_forgejo is in it)
-sudo chmod 700 cookies                    # credentials: owner-only
-sudo find cookies -type f -exec chmod 600 {} \;
-sudo find cookies -type d -exec chmod 2700 {} \;
-stat -c '%n  %U:%G  %a' cookies           # want: sa_saves:root  700
+# NO chown/chmod — the sa_saves ACE on /volume1/docker/saves inherits down to cookies/.
+# Verify instead:
+sudo synoacltool -get cookies | grep -E 'sa_saves|sa_forgejo'
 ```
 
 **Shrink the profile (optional):** most of the ~160 MB is disposable cache. Auth lives in
@@ -542,17 +547,15 @@ You may exclude `Default/Cache`, `Default/Code Cache`, `Default/GPUCache`, `Defa
 
 ```bash
 sudo mkdir -p /volume1/docker/saves/state
-sudo chown 1031:administrators /volume1/docker/saves/state   # app writes, admins inspect
-sudo chmod 2750                /volume1/docker/saves/state
+# NO chown/chmod — inherited from the /volume1/docker/saves ACL.
 
 # keep learned folder routing (vault-relative paths → portable):
 #   from the WORKSTATION:  scp preferences.json <you>@192.168.1.201:~/
 sudo mv ~/preferences.json /volume1/docker/saves/state/
-sudo chown 1031:administrators /volume1/docker/saves/state/preferences.json
-sudo chmod 640        /volume1/docker/saves/state/preferences.json
+# (inherits the sa_saves ACE — nothing to set)
 
-stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
-# want: sa_saves:administrators  2750
+sudo synoacltool -get /volume1/docker/saves/state | grep sa_saves
+# want: a user:sa_saves:allow ACE with write (inherited from the project root)
 ```
 
 **Do NOT copy** `processing_state.json`, `pending_approvals.json`, or `queue_state.json` from DEV — PROD starts with an **empty** save-history on purpose (the real vault doesn't have DEV's test saves). `queue_state.json` is created empty on first run.
@@ -561,8 +564,7 @@ stat -c '%n  %U:%G  %a' /volume1/docker/saves/state
 
 ```bash
 cd /volume1/docker/saves/app
-sudo mkdir -p logs
-sudo chown 1031:administrators logs && sudo chmod 2750 logs
+sudo mkdir -p logs      # inherits the sa_saves ACE from /volume1/docker/saves
 ```
 Without this, compose creates `logs/` as **root** on first `up` and the non-root container
 cannot open `logs/processor.log` — startup fails immediately.
