@@ -148,11 +148,54 @@ deleted.** SAVES media is effectively append-only (zero delete calls; existing f
 rewritten except by a deliberate re-save), so dozens of snapshots of it cost almost nothing.
 Mixed into a folder that churns, those same snapshots capture every change and cost real space.
 
-| Shared folder | Holds | Churn | Snapshot schedule | ☑ Immutable, protection period | Shared-folder WORM |
-|---|---|---|---|---|---|
-| **`OBSIDIAN_BACKUP`** (new) | backup of **all** vaults | high churn, tiny files | hourly · 24h/30d/12w/12m ≈ 78 | **7 days** to start | ❌ **off** — would block Drive's backup writes |
-| **`ARCHIVE`** (new) | SAVES media (`media_root`) | append-only | daily · 30d/12w/12m ≈ 54 | **30 days** — cheap here | ❌ **off** — would block re-save downloads |
-| **`MEDIA`** (existing) | general media | churns | your call | — | ❌ off |
+| Shared folder | Holds | Written by | Churn | Shared-folder WORM |
+|---|---|---|---|---|
+| **`OBSIDIAN_BACKUP`** | backup of **all** vaults | Synology Drive Client (Backup Task) | high churn, tiny files | ❌ **off** — would block Drive's backup writes |
+| **`SAVES_MEDIA`** | SAVES media — this is `media_root` | **SAVES itself**, live over SMB | **append-only** | ❌ **off** — would block re-save downloads |
+| **`MEDIA`** (existing) | general media | you | churns | ❌ off — not part of SAVES |
+
+> **Snapshots are not a destination.** You do not copy anything *into* a snapshot. A snapshot
+> is a point-in-time view DSM takes **of** a shared folder, in place — invisible day to day.
+> **You use these folders completely normally**; the snapshots accumulate behind them.
+> Restoring is the only time you open one: *Snapshot Replication → Recovery → browse → copy out*.
+
+### Retention — what the numbers mean
+
+DSM would otherwise keep every snapshot forever. The retention policy thins them as they age,
+on one principle: **fine detail recently, coarse detail further back.** Broke something this
+afternoon? You want 2pm exactly. Last year? "Sometime in March" is plenty.
+
+#### `OBSIDIAN_BACKUP`
+
+| Setting | Value | Meaning |
+|---|---|---|
+| Schedule | **every hour** | a snapshot each hour |
+| Keep hourly | **24** | the last day, hour by hour |
+| Keep daily | **30** | one per day, last month |
+| Keep weekly | **12** | one per week, ~3 months |
+| Keep monthly | **12** | one per month, last year |
+| ☑ Immutable — protection period | **7 days** | undeletable by anyone for its first week |
+
+≈ **78 snapshots.** Hourly because notes are edited all day: mangle something at 2pm and notice
+at 5pm, and you need a 1pm snapshot to go back to.
+
+#### `SAVES_MEDIA`
+
+| Setting | Value | Meaning |
+|---|---|---|
+| Schedule | **once a day** | one snapshot per day |
+| Keep daily | **30** | one per day, last month |
+| Keep weekly | **12** | ~3 months |
+| Keep monthly | **12** | last year |
+| ☑ Immutable — protection period | **30 days** | undeletable for its first month |
+
+≈ **54 snapshots.** Daily, not hourly, because media is only ever *added* — hourly would produce
+24 identical snapshots a day capturing nothing. The 30-day lock is affordable here precisely
+because append-only data makes each snapshot nearly free; on the vault the same lock would pin
+real disk space, which is why it's 7 days there.
+
+> ⚠️ **Do not set hourly + "keep 30 days" on the vault** — that is 720 snapshots, well past the
+> cap. The stepped policy above buys a year of coverage while staying inside it.
 
 Cap is **256** snapshots per shared folder, so both policies sit well inside it.
 
